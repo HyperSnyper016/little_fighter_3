@@ -52,6 +52,10 @@ class Game:
                 die_just_pressed=pygame.K_n in pressed_actions,
                 revive_just_pressed=pygame.K_m in pressed_actions,
                 break_block_just_pressed=pygame.K_g in pressed_actions,
+                drink_just_pressed=pygame.K_q in pressed_actions,
+                fire_knock_just_pressed=pygame.K_f in pressed_actions,
+                ice_knock_just_pressed=pygame.K_i in pressed_actions,
+                hurt_just_pressed=pygame.K_h in pressed_actions,
             )
 
             if isinstance(self.scene, BattleScene):
@@ -68,6 +72,6 @@ class Game:
             self.screen.fill(BG_COLOR)
             self.scene.draw(self.screen)
             if isinstance(self.scene, BattleScene):
-                hint = self.font.render("Arrows move, Shift runs, Z jump, X attack, C block, Move+C dodge, V knockdown, B lift, G break, N die, M revive", True, TEXT_COLOR)
+                hint = self.font.render("Arrows move, Shift runs, Z jump, X attack, C block, Move+C dodge, V knockdown, B lift, G break, N die, M revive, Q drink, F fire knock, I ice knock, H hurt", True, TEXT_COLOR)
                 self.screen.blit(hint, (20, 18))
             pygame.display.flip()

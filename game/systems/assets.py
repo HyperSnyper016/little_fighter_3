@@ -15,8 +15,28 @@ def _placeholder_surface(size: tuple[int, int], label: str) -> pygame.Surface:
     return surface
 
 
+def _load_sheet_frame(sheet_path: Path, frame_rect: tuple[int, int, int, int], scale: int, animation_name: str) -> pygame.Surface:
+    if not sheet_path.exists():
+        return _placeholder_surface((64 * scale, 64 * scale), animation_name)
+
+    sheet = pygame.image.load(str(sheet_path)).convert()
+    sheet.set_colorkey((0, 0, 0))
+    x, y, width, height = frame_rect
+    frame = pygame.Surface((width, height)).convert()
+    frame.blit(sheet, (0, 0), pygame.Rect(x, y, width, height))
+    frame.set_colorkey((0, 0, 0))
+    return pygame.transform.scale(frame, (width * scale, height * scale))
+
+
 def _load_animation_frames(animation_name: str, animation: dict, scale: int) -> list[pygame.Surface]:
     surfaces: list[pygame.Surface] = []
+
+    if "sheet" in animation and "frames" in animation:
+        sheet_path = Path(animation["sheet"])
+        for frame_rect in animation["frames"]:
+            surfaces.append(_load_sheet_frame(sheet_path, tuple(frame_rect), scale, animation_name))
+        if surfaces:
+            return surfaces
 
     for raw_path in animation.get("files", []):
         frame_path = Path(raw_path)

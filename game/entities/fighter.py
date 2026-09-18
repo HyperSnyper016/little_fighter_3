@@ -33,13 +33,32 @@ class FighterInput:
     die_just_pressed: bool = False
     revive_just_pressed: bool = False
     break_block_just_pressed: bool = False
+    drink_just_pressed: bool = False
+    fire_knock_just_pressed: bool = False
+    ice_knock_just_pressed: bool = False
+    hurt_just_pressed: bool = False
+
+
+@dataclass
+class FighterSnapshot:
+    x: float
+    lane_y: float
+    z: float
+    facing: int
+    state: str
+    block_broken: bool
+    controls_enabled: bool
+    health: int
+    mana: int
+    defense_cooldown: float
 
 
 class Fighter:
-    def __init__(self, config: FighterConfig, start_pos: tuple[float, float]) -> None:
+    def __init__(self, config: FighterConfig, start_pos: tuple[float, float], x_bounds: tuple[float, float] = (60.0, 900.0)) -> None:
         self.name = config.name
         self.definition = config.definition
         self.x, self.lane_y = start_pos
+        self.min_x, self.max_x = x_bounds
         self.lane_y = max(LANE_MIN_Y, min(LANE_MAX_Y, self.lane_y))
         self.z = 0.0
         self.velocity_z = 0.0
@@ -48,6 +67,8 @@ class Fighter:
         self.attack_timer = 0.0
         self.state_timer = 0.0
         self.knock_hold_timer = 0.0
+        self.freeze_timer = 0.0
+        self.freeze_cooldown = 0.0
         self.is_defending = False
         self.attack_animation = "attack_punch"
         self.next_attack_animation = "attack_punch"
@@ -57,74 +78,213 @@ class Fighter:
         self.controls_enabled = True
         self.block_strength = 1
         self.block_hold_timer = 0.0
+        self.defense_cooldown = 0.0
         self.block_broken = False
         self.dodge_invulnerable = False
         self.push_velocity_x = 0.0
         self.grapple_target: Fighter | None = None
         self.grapple_hit_timer = 0.0
-        self.current_jump_animation = "jump_vertical"
-        self.jump_locked_forward = False
+        self.current_jump_animation = "jump_normal"
+        self.jump_stage = 0
+        self.jump_horizontal_velocity = 0.0
+        self.jump_attack_active = False
         self.movement = self.definition["movement"]
         self.combat = self.definition["combat"]
+        self.stats = self.definition.get("stats", {})
         self.shadow_size = self.definition["shadow_size"]
+        self.max_health = int(self.stats.get("max_health", 20))
+        self.health = self.max_health
+        self.max_mana = int(self.stats.get("max_mana", 100))
+        self.mana = self.max_mana
+        self.touch_damage = int(self.stats.get("touch_damage", 1))
+        hitbox_width, hitbox_height = self.stats.get("hitbox", (72, 148))
+        self.hitbox_size = (int(hitbox_width), int(hitbox_height))
+        self.damage_cooldown = 0.0
+        self.has_applied_attack_damage = False
+        self.attack_started = False
+        self.last_step_state = False
+        self.step_cycle_timer = 0.0
+        self.just_landed = False
+        self.just_jumped = False
+        self.just_knocked_down = False
         animations = load_character_sheet(self.definition)
         self.animation_player = AnimationPlayer(animations, "idle")
 
-    @property
-    def draw_pos(self) -> tuple[int, int]:
+    def draw_pos(self, camera_x: float = 0.0) -> tuple[int, int]:
         frame = self.animation_player.current_frame
         frame_rect = frame.get_rect()
-        return int(self.x - frame_rect.width / 2), int(GROUND_Y + self.lane_y - self.z - frame_rect.height)
+        return int(self.x - camera_x - (frame_rect.width / 2)), int(GROUND_Y + self.lane_y - self.z - frame_rect.height)
+
+    @property
+    def snapshot(self) -> FighterSnapshot:
+        return FighterSnapshot(
+            x=self.x,
+            lane_y=self.lane_y,
+            z=self.z,
+            facing=self.facing,
+            state=self.state,
+            block_broken=self.block_broken,
+            controls_enabled=self.controls_enabled,
+            health=self.health,
+            mana=self.mana,
+            defense_cooldown=self.defense_cooldown,
+        )
+
+    @property
+    def is_dead(self) -> bool:
+        return self.state in {"die", "dead"}
+
+    @property
+    def is_invulnerable(self) -> bool:
+        return self.state in {"knocked", "knocked_fire", "knocked_freeze", "get_up", "grappled"} or self.dodge_invulnerable
+
+    def hitbox_rect(self, camera_x: float = 0.0) -> pygame.Rect:
+        width, height = self.hitbox_size
+        draw_x, draw_y = self.draw_pos(camera_x)
+        frame = self.animation_player.current_frame
+        x = draw_x + max(0, (frame.get_width() - width) // 2)
+        y = draw_y + max(0, frame.get_height() - height)
+        return pygame.Rect(x, y, width, height)
+
+    def world_hitbox_rect(self) -> pygame.Rect:
+        width, height = self.hitbox_size
+        x = int(self.x - (width / 2))
+        y = int(GROUND_Y + self.lane_y - self.z - height)
+        return pygame.Rect(x, y, width, height)
 
     def _start_knockdown(self) -> None:
         self.state = "knocked"
-        self.state_timer = 0.70
-        self.knock_hold_timer = 1.0
+        self.state_timer = 0.48
+        self.knock_hold_timer = 0.7
+        self.freeze_timer = 0.0
+        self.freeze_cooldown = 0.0
         self.attack_timer = 0.0
         self.block_hold_timer = 0.0
-        self.push_velocity_x = -self.facing * 140.0
-        self.jump_locked_forward = False
+        self.push_velocity_x = -self.facing * 160.0
+        self.jump_stage = 0
+        self.jump_horizontal_velocity = 0.0
+        self.jump_attack_active = False
         self.grapple_target = None
+        self.just_knocked_down = True
+
+    def _start_fire_knockdown(self) -> None:
+        self.state = "knocked_fire"
+        self.state_timer = 0.52
+        self.knock_hold_timer = 0.7
+        self.freeze_timer = 0.0
+        self.freeze_cooldown = 0.0
+        self.attack_timer = 0.0
+        self.block_hold_timer = 0.0
+        self.push_velocity_x = -self.facing * 180.0
+        self.jump_stage = 0
+        self.jump_horizontal_velocity = 0.0
+        self.jump_attack_active = False
+        self.grapple_target = None
+        self.just_knocked_down = True
+
+    def _start_ice_knockdown(self) -> None:
+        self.state = "knocked_freeze"
+        self.state_timer = 5.0
+        self.knock_hold_timer = 0.9
+        self.freeze_timer = 5.0
+        self.freeze_cooldown = 0.0
+        self.attack_timer = 0.0
+        self.block_hold_timer = 0.0
+        self.push_velocity_x = -self.facing * 150.0
+        self.jump_stage = 0
+        self.jump_horizontal_velocity = 0.0
+        self.jump_attack_active = False
+        self.grapple_target = None
+        self.just_knocked_down = True
 
     def _start_death(self) -> None:
         self.state = "die"
-        self.state_timer = 0.84
+        self.state_timer = 0.55
         self.controls_enabled = False
         self.attack_timer = 0.0
+        self.has_applied_attack_damage = False
         self.block_hold_timer = 0.0
         self.push_velocity_x = self.facing * 120.0
-        self.jump_locked_forward = False
+        self.jump_stage = 0
+        self.jump_horizontal_velocity = 0.0
+        self.jump_attack_active = False
         self.grapple_target = None
 
     def _start_revive(self) -> None:
         self.state = "get_up"
-        self.state_timer = 0.45
+        self.state_timer = 0.36
         self.controls_enabled = True
         self.block_broken = False
         self.block_strength = 1
+        self.freeze_timer = 0.0
+        self.freeze_cooldown = 0.0
+        self.defense_cooldown = 0.0
         self.revive_flash_count = 10
         self.revive_flash_timer = self.revive_flash_interval
         self.push_velocity_x = 0.0
-        self.jump_locked_forward = False
+        self.jump_stage = 0
+        self.jump_horizontal_velocity = 0.0
+        self.jump_attack_active = False
         self.grapple_target = None
 
     def _start_block_break(self) -> None:
         self.state = "block_break"
-        self.state_timer = 0.36
+        self.state_timer = 0.22
         self.block_broken = True
         self.block_strength = 0
         self.block_hold_timer = 0.0
+
+    def _start_hurt(self) -> None:
+        self.state = "hurt"
+        self.state_timer = 0.28
+        self.freeze_timer = 0.0
+        self.freeze_cooldown = 0.0
+        self.attack_timer = 0.0
+        self.has_applied_attack_damage = False
+        self.jump_attack_active = False
 
     def _apply_grapple_hit(self) -> None:
         self.state = "grappled_hit"
         self.state_timer = 0.22
 
-    def _start_jump(self, use_forward_jump: bool) -> None:
-        self.state = "jump_forward" if use_forward_jump else "jump_vertical"
-        self.current_jump_animation = "jump_forward" if use_forward_jump else "jump_vertical"
-        self.jump_locked_forward = use_forward_jump
+    def receive_damage(self, amount: int) -> None:
+        if amount <= 0 or self.is_dead or self.damage_cooldown > 0 or self.is_invulnerable:
+            return
+
+        self.health = max(0, self.health - amount)
+        self.damage_cooldown = 0.18
+        if self.health == 0:
+            self._start_death()
+            return
+
+        self._start_hurt()
+
+    def _start_jump(self) -> None:
+        self.state = "jump"
+        self.current_jump_animation = "jump_normal"
+        self.jump_stage = 1
+        self.jump_horizontal_velocity = 0.0
+        self.jump_attack_active = False
         self.velocity_z = self.movement["jump_velocity"]
         self.z = 1
+
+    def _start_second_jump(self) -> None:
+        self.state = "jump"
+        self.current_jump_animation = "jump_second"
+        self.jump_stage = 2
+        self.jump_horizontal_velocity = self.facing * self.movement["run_speed"] * 1.7
+        self.jump_attack_active = False
+        self.velocity_z = self.movement["jump_velocity"] * 1.18
+        if self.z <= 0:
+            self.z = 1
+
+    def _start_jump_attack(self) -> None:
+        self.state = "jump"
+        self.current_jump_animation = "jump_attack"
+        self.jump_attack_active = True
+        self.attack_timer = self.combat["attack_duration"]
+        self.has_applied_attack_damage = False
+        self.attack_started = True
 
     def try_start_grapple(self, target: Fighter | None, attack_pressed: bool) -> bool:
         if target is None:
@@ -133,7 +293,7 @@ class Fighter:
             return False
         if not target.block_broken:
             return False
-        if target.state in {"die", "dead", "knocked", "get_up"}:
+        if target.state in {"die", "dead", "knocked", "knocked_fire", "knocked_freeze", "get_up"}:
             return False
 
         self.state = "grapple"
@@ -155,6 +315,14 @@ class Fighter:
         revive_just_pressed = controlled and inputs.revive_just_pressed
         break_block_just_pressed = controlled and inputs.break_block_just_pressed
         jump_just_pressed = controlled and inputs.jump_just_pressed
+        drink_just_pressed = controlled and inputs.drink_just_pressed
+        fire_knock_just_pressed = controlled and inputs.fire_knock_just_pressed
+        ice_knock_just_pressed = controlled and inputs.ice_knock_just_pressed
+        hurt_just_pressed = controlled and inputs.hurt_just_pressed
+        was_airborne = self.z > 0 or self.velocity_z != 0
+        self.just_landed = False
+        self.just_jumped = False
+        self.just_knocked_down = False
 
         move_x = 0
         move_y = 0
@@ -175,10 +343,18 @@ class Fighter:
             self.state_timer = max(0.0, self.state_timer - dt)
         if self.knock_hold_timer > 0:
             self.knock_hold_timer = max(0.0, self.knock_hold_timer - dt)
+        if self.freeze_timer > 0:
+            self.freeze_timer = max(0.0, self.freeze_timer - dt)
+        if self.freeze_cooldown > 0:
+            self.freeze_cooldown = max(0.0, self.freeze_cooldown - dt)
         if self.attack_timer > 0:
             self.attack_timer = max(0.0, self.attack_timer - dt)
+        if self.damage_cooldown > 0:
+            self.damage_cooldown = max(0.0, self.damage_cooldown - dt)
         if self.block_hold_timer > 0:
             self.block_hold_timer = max(0.0, self.block_hold_timer - dt)
+        if self.defense_cooldown > 0:
+            self.defense_cooldown = max(0.0, self.defense_cooldown - dt)
         if self.grapple_hit_timer > 0:
             self.grapple_hit_timer = max(0.0, self.grapple_hit_timer - dt)
         if self.revive_flash_count > 0:
@@ -187,6 +363,12 @@ class Fighter:
                 self.revive_flash_count -= 1
                 if self.revive_flash_count > 0:
                     self.revive_flash_timer = self.revive_flash_interval
+
+        if self.state == "knocked_freeze" and self.freeze_timer <= 0:
+            self.state = "knocked"
+            self.state_timer = 0.48
+            self.freeze_cooldown = 0.25
+            self.animation_player.frame_index = 0
 
         if self.push_velocity_x != 0:
             self.x += self.push_velocity_x * dt
@@ -210,13 +392,29 @@ class Fighter:
 
         if self.attack_timer == 0 and self.state in {"attack", "move_attack"}:
             self.state = "idle"
+            self.has_applied_attack_damage = False
+            self.attack_started = False
+        if self.attack_timer == 0 and self.state in {"sprint_punch", "throw"}:
+            self.state = "idle"
+            self.has_applied_attack_damage = False
+            self.attack_started = False
+        if self.attack_timer == 0 and self.current_jump_animation == "jump_attack":
+            self.current_jump_animation = "jump_second" if self.jump_stage == 2 else "jump_normal"
+            self.jump_attack_active = False
+            self.has_applied_attack_damage = False
+            self.attack_started = False
         if self.state == "knocked" and self.state_timer == 0 and self.knock_hold_timer == 0:
             self.state = "get_up"
-            self.state_timer = 0.45
+            self.state_timer = 0.36
+        if self.state == "knocked_fire" and self.state_timer == 0 and self.knock_hold_timer == 0:
+            self.state = "get_up"
+            self.state_timer = 0.36
         if self.state_timer == 0 and self.state in {"get_up", "lift_heavy", "block_break", "block_dodge", "grappled_hit"}:
             self.state = "idle"
             self.block_strength = 1
             self.dodge_invulnerable = False
+        if self.state == "hurt" and self.state_timer == 0:
+            self.state = "idle"
         if self.state_timer == 0 and self.state == "die":
             self.state = "dead"
         if self.state_timer == 0 and self.state == "grappled":
@@ -229,9 +427,13 @@ class Fighter:
             if self.z <= 0:
                 self.z = 0
                 self.velocity_z = 0
-                if self.state in {"jump_vertical", "jump_forward"}:
+                if self.state == "jump":
                     self.state = "idle"
-                    self.jump_locked_forward = False
+                    self.jump_stage = 0
+                    self.jump_horizontal_velocity = 0.0
+                    self.jump_attack_active = False
+                    self.current_jump_animation = "jump_normal"
+                    self.just_landed = True
 
         if revive_just_pressed and self.state in {"die", "dead"}:
             self._start_revive()
@@ -239,23 +441,34 @@ class Fighter:
             self._start_death()
         elif knock_just_pressed and self.z == 0 and self.state not in {"die", "dead"}:
             self._start_knockdown()
+        elif fire_knock_just_pressed and self.z == 0 and self.state not in {"die", "dead"}:
+            self._start_fire_knockdown()
+        elif ice_knock_just_pressed and self.z == 0 and self.state not in {"die", "dead"}:
+            self._start_ice_knockdown()
+        elif hurt_just_pressed and self.z == 0 and self.state not in {"die", "dead"}:
+            self._start_hurt()
+        elif drink_just_pressed and self.z == 0 and self.state not in {"die", "dead", "attack", "move_attack", "grapple", "grappled", "jump"}:
+            self.state = "drink"
+            self.state_timer = 0.55
         elif break_block_just_pressed and self.state == "block":
             self._start_block_break()
-        elif self.state not in {"attack", "move_attack", "knocked", "lift_heavy", "get_up", "die", "dead", "block_break", "block_dodge", "grapple", "grappled", "grappled_hit"} and self.z == 0 and self.velocity_z == 0:
+        elif self.state not in {"attack", "move_attack", "knocked", "knocked_fire", "knocked_freeze", "lift_heavy", "get_up", "die", "dead", "block_break", "block_dodge", "grapple", "grappled", "grappled_hit", "jump", "drink", "hurt"} and self.z == 0 and self.velocity_z == 0:
             self.is_defending = controlled and self.controls_enabled and block_pressed and self.z == 0
             self.dodge_invulnerable = False
 
             if self.is_defending and (move_x or move_y):
                 self.state = "block_dodge"
-                self.state_timer = 0.32
+                self.state_timer = 0.22
                 self.dodge_invulnerable = True
                 self.block_hold_timer = 0.0
+                self.defense_cooldown = 0.5
                 if move_x != 0:
                     self.push_velocity_x = move_x * 320.0
-            elif self.is_defending:
+            elif self.is_defending and self.defense_cooldown == 0.0:
                 if self.state != "block":
                     self.block_hold_timer = 1.0
                     self.block_strength = 1
+                    self.defense_cooldown = 0.5
                 self.state = "block"
                 if attack_just_pressed and self.block_strength > 0:
                     self.block_strength = 0
@@ -267,45 +480,67 @@ class Fighter:
                 self.block_strength = 1
             elif lift_just_pressed and self.z == 0:
                 self.state = "lift_heavy"
-                self.state_timer = 0.66
+                self.state_timer = 0.48
             elif attack_pressed and self.block_broken and self.z == 0 and self.try_start_grapple(target, attack_pressed):
                 pass
+            elif attack_just_pressed and self.z == 0 and (move_x or move_y) and running:
+                self.state = "sprint_punch"
+                self.attack_timer = self.combat["attack_duration"]
+                self.push_velocity_x = self.facing * 160.0
+                self.has_applied_attack_damage = False
+                self.attack_started = True
             elif attack_just_pressed and self.z == 0 and (move_x or move_y):
                 self.state = "move_attack"
                 self.attack_timer = self.combat["attack_duration"]
+                self.has_applied_attack_damage = False
+                self.attack_started = True
             elif attack_just_pressed and self.z == 0:
                 self.state = "attack"
                 self.attack_animation = self.next_attack_animation
                 self.next_attack_animation = "attack_kick" if self.next_attack_animation == "attack_punch" else "attack_punch"
                 self.attack_timer = self.combat["attack_duration"]
+                self.has_applied_attack_damage = False
+                self.attack_started = True
             elif jump_just_pressed and self.z == 0:
-                self._start_jump(use_forward_jump=inputs.horizontal_move_active)
+                self._start_jump()
+                self.just_jumped = True
             elif move_x or move_y:
                 self.state = "run" if running else "walk"
             elif self.z == 0:
                 self.state = "idle"
+        elif self.state == "jump" and attack_just_pressed and self.attack_timer == 0:
+            self._start_jump_attack()
 
-        if jump_just_pressed and self.z > 0 and self.state in {"jump_vertical", "jump_forward"}:
-            self.current_jump_animation = "jump_forward" if self.jump_locked_forward else "jump_vertical"
+        if jump_just_pressed and was_airborne and self.state == "jump" and self.jump_stage == 1:
+            self._start_second_jump()
+            self.just_jumped = True
 
-        if (self.z > 0 or self.velocity_z != 0) and self.state not in {"jump_vertical", "jump_forward"}:
-            self.state = "jump_forward" if self.jump_locked_forward else "jump_vertical"
+        if (self.z > 0 or self.velocity_z != 0) and self.state != "jump":
+            self.state = "jump"
 
         if self.state in {"walk", "run"}:
             speed = self.movement["run_speed"] if self.state == "run" else self.movement["walk_speed"]
             self.x += move_x * speed * dt
             self.lane_y += move_y * self.movement["lane_speed"] * dt
-        elif self.state in {"jump_vertical", "jump_forward"}:
-            horizontal_speed = 0.0
-            jump_lane_move = move_y
-            if self.jump_locked_forward:
-                horizontal_speed = self.movement["walk_speed"]
-                jump_lane_move = 0
-            self.x += self.facing * horizontal_speed * dt
-            self.lane_y += jump_lane_move * self.movement["lane_speed"] * dt
+        elif self.state == "jump":
+            air_horizontal_speed = self.movement["walk_speed"] * (1.6 if self.jump_stage == 2 else 1.2)
+            if move_x != 0:
+                self.jump_horizontal_velocity = move_x * air_horizontal_speed
+            else:
+                self.jump_horizontal_velocity *= max(0.0, 1.0 - (4.5 * dt))
 
-        self.x = max(60, min(900, self.x))
+            self.x += self.jump_horizontal_velocity * dt
+            self.lane_y += move_y * self.movement["lane_speed"] * dt
+
+        self.x = max(self.min_x, min(self.max_x, self.x))
         self.lane_y = max(LANE_MIN_Y, min(LANE_MAX_Y, self.lane_y))
+
+        is_moving_on_ground = self.z == 0 and self.state in {"walk", "run"}
+        if is_moving_on_ground:
+            self.step_cycle_timer = max(0.0, self.step_cycle_timer - dt)
+        else:
+            self.step_cycle_timer = 0.0
+            self.last_step_state = False
 
         if self.state == "attack":
             animation_name = self.attack_animation
@@ -319,6 +554,12 @@ class Fighter:
             animation_name = "grappled_hit"
         elif self.state == "knocked":
             animation_name = "knocked"
+        elif self.state == "knocked_fire":
+            animation_name = "knocked_fire"
+        elif self.state == "knocked_freeze":
+            animation_name = "knocked_freeze"
+        elif self.state == "drink":
+            animation_name = "drink"
         elif self.state == "get_up":
             animation_name = "get_up"
         elif self.state == "lift_heavy":
@@ -331,28 +572,38 @@ class Fighter:
             animation_name = "block_dodge"
         elif self.state in {"die", "dead"}:
             animation_name = "die"
+        elif self.state == "throw":
+            animation_name = "throw"
         elif self.state == "run":
             animation_name = "run"
         elif self.state == "walk":
             animation_name = "walk"
-        elif self.state in {"jump_vertical", "jump_forward"}:
+        elif self.state == "sprint_punch":
+            animation_name = "sprint_punch"
+        elif self.state == "hurt":
+            animation_name = "hurt"
+        elif self.state == "jump":
             animation_name = self.current_jump_animation
         else:
             animation_name = "idle"
-
         self.animation_player.play(animation_name)
+        if self.state == "knocked_freeze":
+            if self.freeze_timer > 0.0:
+                self.animation_player.frame_index = 1
+            else:
+                self.animation_player.frame_index = 0
         self.animation_player.update(dt, facing=self.facing)
         if animation_name == "block" and self.block_strength == 0:
             self.animation_player.frame_index = min(1, len(self.animation_player.animations["block"]["surfaces"]) - 1)
             frame = self.animation_player.animations["block"]["surfaces"][self.animation_player.frame_index]
             self.animation_player.current_frame = frame if self.facing == 1 else pygame.transform.flip(frame, True, False)
 
-    def draw(self, surface: pygame.Surface) -> None:
+    def draw(self, surface: pygame.Surface, camera_x: float = 0.0) -> None:
         shadow = pygame.Surface(self.shadow_size, pygame.SRCALPHA)
         pygame.draw.ellipse(shadow, SHADOW_COLOR, shadow.get_rect())
-        shadow_rect = shadow.get_rect(center=(int(self.x), int(GROUND_Y + self.lane_y - 6)))
+        shadow_rect = shadow.get_rect(center=(int(self.x - camera_x), int(GROUND_Y + self.lane_y - 6)))
         surface.blit(shadow, shadow_rect)
         frame = self.animation_player.current_frame.copy()
         if self.revive_flash_count > 0 and self.revive_flash_count % 2 == 0:
             frame.set_alpha(100)
-        surface.blit(frame, self.draw_pos)
+        surface.blit(frame, self.draw_pos(camera_x))

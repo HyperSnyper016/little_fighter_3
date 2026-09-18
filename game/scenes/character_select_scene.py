@@ -29,8 +29,8 @@ class CharacterSelectScene:
             return characters
 
         for directory in sorted(path for path in self.sprites_root.iterdir() if path.is_dir()):
-            profile_path = directory / f"{directory.name.capitalize()}.bmp"
-            if not profile_path.exists():
+            profile_path = self._resolve_profile_path(directory)
+            if profile_path is None:
                 continue
 
             profile = pygame.image.load(str(profile_path)).convert()
@@ -45,6 +45,37 @@ class CharacterSelectScene:
                 }
             )
         return characters
+
+    def _resolve_profile_path(self, directory: Path) -> Path | None:
+        preferred_names = (
+            f"{directory.name}.bmp",
+            f"{directory.name}.png",
+            f"{directory.name}_profile.bmp",
+            f"{directory.name}_profile.png",
+            f"{directory.name.capitalize()}.bmp",
+            f"{directory.name.capitalize()}.png",
+        )
+
+        for filename in preferred_names:
+            candidate = directory / filename
+            if candidate.exists():
+                return candidate
+
+        fallback_profiles = sorted(
+            path
+            for path in directory.iterdir()
+            if path.is_file()
+            and path.suffix.lower() in {".bmp", ".png"}
+            and "profile" in path.stem.lower()
+        )
+        if fallback_profiles:
+            return fallback_profiles[0]
+
+        fallback_frames = sorted(path for path in directory.iterdir() if path.is_file() and path.suffix.lower() in {".bmp", ".png"})
+        if fallback_frames:
+            return fallback_frames[0]
+
+        return None
 
     def update(self, dt: float) -> None:
         _ = dt
