@@ -33,8 +33,8 @@ PyCharm-friendly Python prototype for a Little Fighter 2-inspired side-scrolling
 
 - Left / Right: move
 - Up / Down: lane movement
-- Z: jump
-- X: attack
-- C: defend
+- K: jump
+- J: attack
+- L: defend
 - Left Shift: run
 - Escape: quit

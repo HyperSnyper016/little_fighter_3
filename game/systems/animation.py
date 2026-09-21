@@ -11,13 +11,15 @@ class AnimationPlayer:
         self.timer = 0.0
         self.current_frame = self.animations[initial_animation]["surfaces"][0]
         self.facing = 1
+        self.finished = False
 
     def play(self, name: str) -> None:
-        if name == self.current_name:
+        if name == self.current_name and not self.finished:
             return
         self.current_name = name
         self.frame_index = 0
         self.timer = 0.0
+        self.finished = False
 
     def update(self, dt: float, facing: int) -> None:
         animation = self.animations[self.current_name]
@@ -29,7 +31,13 @@ class AnimationPlayer:
             self.timer -= duration
             self.frame_index += 1
             if self.frame_index >= len(surfaces):
-                self.frame_index = 0 if animation["loop"] else len(surfaces) - 1
+                if animation["loop"]:
+                    self.frame_index = 0
+                else:
+                    self.frame_index = len(surfaces) - 1
+                    self.finished = True
+                    self.timer = 0.0
+                    break
 
         frame = surfaces[self.frame_index]
         if facing != self.facing:

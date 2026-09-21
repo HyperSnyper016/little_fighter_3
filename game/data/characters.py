@@ -1,9 +1,28 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _character_path(*parts: str) -> Path:
+    return PROJECT_ROOT / "assets" / "sprites" / "characters" / Path(*parts)
+
+
+def _natural_sort_key(path: Path) -> list[str | int]:
+    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", path.name)]
+
+
+def _animation_files(*parts: str) -> list[Path]:
+    folder = _character_path(*parts)
+    return sorted((path for path in folder.iterdir() if path.is_file()), key=_natural_sort_key)
+
+
+def _prefixed_animation_files(prefix: str, *parts: str) -> list[Path]:
+    folder = _character_path(*parts)
+    return sorted((path for path in folder.iterdir() if path.is_file() and path.name.startswith(prefix)), key=_natural_sort_key)
 
 
 CHARACTERS = {
@@ -15,7 +34,7 @@ CHARACTERS = {
             "max_health": 20,
             "max_mana": 100,
             "touch_damage": 1,
-            "hitbox": (72, 148),
+            "hitbox": (92, 160),
         },
         "animations": {
             "idle": {
@@ -194,27 +213,27 @@ CHARACTERS = {
             },
             "attack_punch": {
                 "files": [
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "bandit" / "attack" / "bandit_punch_1.bmp",
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "bandit" / "attack" / "bandit_punch_2.bmp",
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "bandit" / "attack" / "bandit_punch_3.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "bandit" / "basic_attack" / "bandit_punch_1.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "bandit" / "basic_attack" / "bandit_punch_2.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "bandit" / "basic_attack" / "bandit_punch_3.bmp",
                 ],
                 "frame_duration": 0.07,
                 "loop": False,
             },
             "attack_kick": {
                 "files": [
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "bandit" / "attack" / "bandit_kick_1.bmp",
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "bandit" / "attack" / "bandit_kick_2.bmp",
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "bandit" / "attack" / "bandit_kick_3.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "bandit" / "basic_attack" / "bandit_kick_1.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "bandit" / "basic_attack" / "bandit_kick_2.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "bandit" / "basic_attack" / "bandit_kick_3.bmp",
                 ],
                 "frame_duration": 0.07,
                 "loop": False,
             },
-            "move_attack": {
+            "heavy_attack": {
                 "files": [
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "bandit" / "move_attack" / "bandit_0_38.bmp",
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "bandit" / "move_attack" / "bandit_0_39.bmp",
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "bandit" / "move_attack" / "bandit_0_40.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "bandit" / "heavy_attack" / "bandit_0_38.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "bandit" / "heavy_attack" / "bandit_0_39.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "bandit" / "heavy_attack" / "bandit_0_40.bmp",
                 ],
                 "frame_duration": 0.07,
                 "loop": False,
@@ -235,10 +254,10 @@ CHARACTERS = {
                 "frame_duration": 0.12,
                 "loop": False,
             },
-            "grappled_hit": {
+            "grapple_hit": {
                 "files": [
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "bandit" / "grapple" / "grappled_hit" / "bandit_0_55.bmp",
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "bandit" / "grapple" / "grappled_hit" / "bandit_0_56.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "bandit" / "grapple" / "grapple_hit" / "bandit_0_55.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "bandit" / "grapple" / "grapple_hit" / "bandit_0_56.bmp",
                 ],
                 "frame_duration": 0.10,
                 "loop": False,
@@ -267,6 +286,7 @@ CHARACTERS = {
         "combat": {
             "attack_duration": 0.18,
         },
+        "basic_attack_cycle": ["attack_punch", "attack_kick"],
     },
     "hunter": {
         "display_name": "Hunter",
@@ -276,7 +296,7 @@ CHARACTERS = {
             "max_health": 20,
             "max_mana": 100,
             "touch_damage": 1,
-            "hitbox": (72, 148),
+            "hitbox": (92, 160),
         },
         "animations": {
             "idle": {
@@ -446,35 +466,35 @@ CHARACTERS = {
             },
             "attack_punch": {
                 "files": [
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "attack" / "hunter_0_11.bmp",
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "attack" / "hunter_0_12.bmp",
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "attack" / "hunter_0_13.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "basic_attack" / "hunter_0_11.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "basic_attack" / "hunter_0_12.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "basic_attack" / "hunter_0_13.bmp",
                 ],
                 "frame_duration": 0.07,
                 "loop": False,
             },
             "attack_kick": {
                 "files": [
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "attack" / "hunter_0_14.bmp",
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "attack" / "hunter_0_15.bmp",
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "attack" / "hunter_0_16.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "basic_attack" / "hunter_0_14.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "basic_attack" / "hunter_0_15.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "basic_attack" / "hunter_0_16.bmp",
                 ],
                 "frame_duration": 0.07,
                 "loop": False,
             },
-            "move_attack": {
+            "heavy_attack": {
                 "files": [
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "move_attack" / "hunter_0_38.bmp",
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "move_attack" / "hunter_0_40.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "heavy_attack" / "hunter_0_38.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "heavy_attack" / "hunter_0_40.bmp",
                 ],
                 "frame_duration": 0.07,
                 "loop": False,
             },
             "grapple": {
                 "files": [
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "grapple" / "grappled_hit" / "hunter_0_51.bmp",
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "grapple" / "grappled_hit" / "hunter_0_52.bmp",
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "grapple" / "grappled_hit" / "hunter_0_53.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "grapple" / "grapple_hit" / "hunter_0_51.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "grapple" / "grapple_hit" / "hunter_0_52.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "grapple" / "grapple_hit" / "hunter_0_53.bmp",
                 ],
                 "frame_duration": 0.10,
                 "loop": False,
@@ -488,11 +508,11 @@ CHARACTERS = {
                 "frame_duration": 0.12,
                 "loop": False,
             },
-            "grappled_hit": {
+            "grapple_hit": {
                 "files": [
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "grapple" / "grappled_hit" / "hunter_0_51.bmp",
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "grapple" / "grappled_hit" / "hunter_0_52.bmp",
-                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "grapple" / "grappled_hit" / "hunter_0_53.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "grapple" / "grapple_hit" / "hunter_0_51.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "grapple" / "grapple_hit" / "hunter_0_52.bmp",
+                    PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "grapple" / "grapple_hit" / "hunter_0_53.bmp",
                 ],
                 "frame_duration": 0.10,
                 "loop": False,
@@ -521,6 +541,7 @@ CHARACTERS = {
         "combat": {
             "attack_duration": 0.18,
         },
+        "basic_attack_cycle": ["attack_punch", "attack_kick"],
     },
     "template": {
         "display_name": "Template",
@@ -530,165 +551,141 @@ CHARACTERS = {
             "max_health": 20,
             "max_mana": 100,
             "touch_damage": 1,
-            "hitbox": (72, 148),
+            "hitbox": (92, 160),
         },
         "animations": {
             "idle": {
-                "sheet": PROJECT_ROOT / "assets" / "sprites" / "characters" / "template" / "0.bmp",
-                "frames": [
-                    (0, 0, 400, 280),
-                    (0, 0, 400, 280),
-                ],
+                "files": _animation_files("template", "idle"),
                 "frame_duration": 0.18,
                 "loop": True,
             },
             "walk": {
-                "sheet": PROJECT_ROOT / "assets" / "sprites" / "characters" / "template" / "0.bmp",
-                "frames": [
-                    (400, 0, 400, 280),
-                    (400, 0, 400, 280),
-                ],
+                "files": _animation_files("template", "walk"),
                 "frame_duration": 0.12,
                 "loop": True,
             },
             "run": {
-                "sheet": PROJECT_ROOT / "assets" / "sprites" / "characters" / "template" / "0.bmp",
-                "frames": [
-                    (0, 280, 400, 280),
-                    (0, 280, 400, 280),
-                ],
+                "files": _animation_files("template", "run"),
                 "frame_duration": 0.10,
                 "loop": True,
             },
             "lift_heavy": {
-                "sheet": PROJECT_ROOT / "assets" / "sprites" / "characters" / "template" / "0.bmp",
-                "frames": [
-                    (400, 280, 400, 280),
-                ],
+                "files": _animation_files("template", "lift_heavy"),
                 "frame_duration": 0.11,
                 "loop": False,
             },
             "knocked": {
-                "sheet": PROJECT_ROOT / "assets" / "sprites" / "characters" / "template" / "1.bmp",
-                "frames": [
-                    (0, 0, 400, 280),
-                    (0, 0, 400, 280),
-                ],
+                "files": _animation_files("template", "knocked"),
                 "frame_duration": 0.10,
                 "loop": False,
             },
             "get_up": {
-                "sheet": PROJECT_ROOT / "assets" / "sprites" / "characters" / "template" / "1.bmp",
-                "frames": [
-                    (400, 0, 400, 280),
-                ],
+                "files": _animation_files("template", "get_up"),
                 "frame_duration": 0.12,
                 "loop": False,
             },
             "jump_normal": {
-                "sheet": PROJECT_ROOT / "assets" / "sprites" / "characters" / "template" / "1.bmp",
-                "frames": [
-                    (0, 280, 400, 280),
-                    (0, 280, 400, 280),
-                ],
+                "files": _animation_files("template", "jump", "normal"),
                 "frame_duration": 0.12,
                 "loop": False,
             },
             "jump_second": {
-                "sheet": PROJECT_ROOT / "assets" / "sprites" / "characters" / "template" / "1.bmp",
-                "frames": [
-                    (400, 280, 400, 280),
-                    (400, 280, 400, 280),
-                ],
+                "files": _animation_files("template", "jump", "second"),
                 "frame_duration": 0.12,
                 "loop": False,
             },
+            "jump_attack": {
+                "files": _animation_files("template", "jump_attack"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "drink": {
+                "files": _animation_files("template", "drink"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "hurt": {
+                "files": _animation_files("template", "hurt"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
             "block": {
-                "sheet": PROJECT_ROOT / "assets" / "sprites" / "characters" / "template" / "0.bmp",
-                "frames": [
-                    (0, 0, 400, 280),
-                    (0, 0, 400, 280),
-                ],
+                "files": _animation_files("template", "block"),
                 "frame_duration": 0.10,
                 "loop": False,
             },
             "block_break": {
-                "sheet": PROJECT_ROOT / "assets" / "sprites" / "characters" / "template" / "1.bmp",
-                "frames": [
-                    (0, 0, 400, 280),
-                    (400, 0, 400, 280),
-                ],
+                "files": _animation_files("template", "block_break"),
                 "frame_duration": 0.10,
                 "loop": False,
             },
             "block_dodge": {
-                "sheet": PROJECT_ROOT / "assets" / "sprites" / "characters" / "template" / "0.bmp",
-                "frames": [
-                    (400, 0, 400, 280),
-                    (0, 280, 400, 280),
-                ],
+                "files": _animation_files("template", "block_dodge"),
                 "frame_duration": 0.08,
                 "loop": False,
             },
-            "attack_punch": {
-                "sheet": PROJECT_ROOT / "assets" / "sprites" / "characters" / "template" / "0.bmp",
-                "frames": [
-                    (0, 280, 400, 280),
-                    (400, 280, 400, 280),
-                ],
+            "attack_1": {
+                "files": _prefixed_animation_files("attack_1_", "template", "basic_attack"),
                 "frame_duration": 0.10,
                 "loop": False,
             },
-            "attack_kick": {
-                "sheet": PROJECT_ROOT / "assets" / "sprites" / "characters" / "template" / "1.bmp",
-                "frames": [
-                    (0, 0, 400, 280),
-                    (400, 0, 400, 280),
-                ],
+            "attack_2": {
+                "files": _prefixed_animation_files("attack_2_", "template", "basic_attack"),
                 "frame_duration": 0.10,
                 "loop": False,
             },
-            "move_attack": {
-                "sheet": PROJECT_ROOT / "assets" / "sprites" / "characters" / "template" / "1.bmp",
-                "frames": [
-                    (0, 280, 400, 280),
-                    (400, 280, 400, 280),
-                ],
+            "attack_3": {
+                "files": _prefixed_animation_files("attack_3_", "template", "basic_attack"),
+                "frame_duration": 0.10,
+                "loop": False,
+            },
+            "heavy_attack": {
+                "files": _animation_files("template", "heavy_attack"),
                 "frame_duration": 0.09,
                 "loop": False,
             },
+            "sp_move_attack": {
+                "files": _animation_files("template", "sp_move_attack"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "sp_vert_attack": {
+                "files": _animation_files("template", "sp_vert_attack"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "sprint_punch": {
+                "files": _animation_files("template", "sprint_punch"),
+                "frame_duration": 0.07,
+                "loop": False,
+            },
+            "throw": {
+                "files": _animation_files("template", "throw"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "throw_heavy": {
+                "files": _animation_files("template", "throw_heavy"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
             "grapple": {
-                "sheet": PROJECT_ROOT / "assets" / "sprites" / "characters" / "template" / "0.bmp",
-                "frames": [
-                    (0, 0, 400, 280),
-                    (400, 0, 400, 280),
-                ],
+                "files": _animation_files("template", "grapple"),
                 "frame_duration": 0.10,
                 "loop": False,
             },
             "grappled": {
-                "sheet": PROJECT_ROOT / "assets" / "sprites" / "characters" / "template" / "1.bmp",
-                "frames": [
-                    (0, 0, 400, 280),
-                ],
+                "files": _animation_files("template", "grapple", "grappled"),
                 "frame_duration": 0.12,
                 "loop": False,
             },
-            "grappled_hit": {
-                "sheet": PROJECT_ROOT / "assets" / "sprites" / "characters" / "template" / "1.bmp",
-                "frames": [
-                    (400, 0, 400, 280),
-                    (400, 0, 400, 280),
-                ],
+            "grapple_hit": {
+                "files": _animation_files("template", "grapple", "grapple_hit"),
                 "frame_duration": 0.10,
                 "loop": False,
             },
             "die": {
-                "sheet": PROJECT_ROOT / "assets" / "sprites" / "characters" / "template" / "1.bmp",
-                "frames": [
-                    (0, 280, 400, 280),
-                    (400, 280, 400, 280),
-                ],
+                "files": _animation_files("template", "die"),
                 "frame_duration": 0.12,
                 "loop": False,
             },
@@ -702,6 +699,8 @@ CHARACTERS = {
         },
         "combat": {
             "attack_duration": 0.30,
+            "special_projectile_interval": 0.5,
         },
+        "basic_attack_cycle": ["attack_1", "attack_2", "attack_3"],
     },
 }

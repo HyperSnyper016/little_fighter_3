@@ -6,7 +6,7 @@ import pygame
 
 from game.constants import GROUND_Y, SCREEN_HEIGHT, SCREEN_WIDTH, TEXT_COLOR
 from game.data.characters import CHARACTERS
-from game.entities.fighter import Fighter, FighterConfig, FighterInput, FighterSnapshot
+from game.entities.fighter import COMBAT_ATTACK_STATES, Fighter, FighterConfig, FighterInput, FighterSnapshot
 from game.systems.audio import AudioBank
 from game.systems.stage import ForestStage
 
@@ -17,7 +17,7 @@ class ArrowProjectile:
         self.x = float(x)
         self.y = float(y)
         self.facing = 1 if facing >= 0 else -1
-        self.speed_x = 340.0
+        self.speed_x = 480.0
         self.velocity_y = -300.0
         self.gravity = 480.0
         self.ground_y = GROUND_Y + owner.lane_y - 18.0
@@ -101,7 +101,89 @@ class ArrowProjectile:
         surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
 
 
+class BallProjectile:
+    def __init__(self, owner: Fighter, x: float, y: float, facing: int, ball_index: int) -> None:
+        self.owner = owner
+        self.x = float(x)
+        self.y = float(y)
+        self.facing = 1 if facing >= 0 else -1
+        self.speed_x = 110.0
+        self.max_speed_x = 560.0
+        self.acceleration_x = 62.0
+        self.damage = 1
+        self.phase = "fly"
+        self.can_damage = True
+        self.finished = False
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        self.use_fast_frames = False
+        self.fly_time = 0.0
+        root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "blue_ball" / f"ball_{ball_index}"
+        self.slow_frames = self._load_frames(root / "slow")
+        self.fast_frames = self._load_frames(root / "fast")
+        self.burst_frames = self._load_frames(root.parent / "ball_burst")
+        self.frames = self.slow_frames or self.fast_frames or [pygame.Surface((16, 16), pygame.SRCALPHA)]
+
+    def _load_frames(self, folder: Path) -> list[pygame.Surface]:
+        frames: list[pygame.Surface] = []
+        if not folder.exists():
+            return frames
+        for path in sorted(folder.iterdir()):
+            if not path.is_file() or path.suffix.lower() not in {".png", ".bmp"}:
+                continue
+            frame = pygame.image.load(str(path)).convert()
+            frame.set_colorkey((0, 0, 0))
+            frames.append(frame)
+        return frames
+
+    def _start_burst(self) -> None:
+        if self.phase == "burst":
+            return
+        self.phase = "burst"
+        self.can_damage = False
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        self.frames = self.burst_frames or self.frames
+
+    def rect(self) -> pygame.Rect:
+        frame = self.frames[self.frame_index]
+        return pygame.Rect(int(self.x - frame.get_width() / 2), int(self.y - frame.get_height() / 2), frame.get_width(), frame.get_height())
+
+    def update(self, dt: float) -> None:
+        if self.phase == "fly":
+            self.fly_time += dt
+            speed_gain = self.acceleration_x * dt * (1.0 + (self.fly_time * 2.5))
+            self.speed_x = min(self.max_speed_x, self.speed_x + speed_gain)
+            self.use_fast_frames = self.speed_x >= 180.0 and bool(self.fast_frames)
+            self.frames = self.fast_frames if self.use_fast_frames else (self.slow_frames or self.fast_frames or self.frames)
+            self.x += self.facing * self.speed_x * dt
+            if self.x < -240 or self.x > SCREEN_WIDTH + 240:
+                self.finished = True
+        else:
+            self.frame_timer += dt
+            while self.frame_timer >= 0.05:
+                self.frame_timer -= 0.05
+                self.frame_index += 1
+                if self.frame_index >= len(self.frames):
+                    self.frame_index = len(self.frames) - 1 if self.frames else 0
+                    self.finished = True
+                    break
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        frame = self.frames[self.frame_index]
+        if self.facing < 0:
+            frame = pygame.transform.flip(frame, True, False)
+        surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
+
+
 class EnemyBrain:
+    def __init__(self) -> None:
+        self.attack_cooldown = 0.0
+
+    def update(self, dt: float) -> None:
+        if self.attack_cooldown > 0.0:
+            self.attack_cooldown = max(0.0, self.attack_cooldown - dt)
+
     def build_input(self, fighter: FighterSnapshot, target: FighterSnapshot) -> FighterInput:
         input_state = FighterInput()
         lane_delta = target.lane_y - fighter.lane_y
@@ -128,14 +210,19 @@ class EnemyBrain:
         elif horizontal_delta > 26:
             input_state.right = True
 
+        if self.attack_cooldown > 0.0:
+            input_state.horizontal_move_active = input_state.left or input_state.right
+            return input_state
+
         if distance > 280:
             input_state.run = True
         elif distance < 56 and fighter.block_broken:
             input_state.attack_pressed = True
             input_state.attack_just_pressed = True
+            self.attack_cooldown = 0.7
             return input_state
 
-        if target.state in {"attack", "move_attack", "sprint_punch", "jump"} and fighter.defense_cooldown == 0.0 and distance < 96 and abs(lane_delta) < 30:
+        if target.state in (COMBAT_ATTACK_STATES | {"jump"}) and fighter.defense_cooldown == 0.0 and distance < 96 and abs(lane_delta) < 30:
             input_state.block_pressed = True
             if distance < 72:
                 if horizontal_delta < 0:
@@ -147,13 +234,16 @@ class EnemyBrain:
         if fighter.block_broken and distance < 56 and abs(lane_delta) < 18:
             input_state.attack_pressed = True
             input_state.attack_just_pressed = True
+            self.attack_cooldown = 0.7
         elif fighter.z == 0 and target.z == 0 and 96 <= distance <= 132 and abs(lane_delta) < 18:
             if input_state.run and distance < 120:
                 input_state.attack_pressed = True
                 input_state.attack_just_pressed = True
+                self.attack_cooldown = 0.45
             elif distance < 108:
                 input_state.attack_pressed = True
                 input_state.attack_just_pressed = True
+                self.attack_cooldown = 0.45
 
         if fighter.z == 0 and target.z == 0 and 210 <= distance <= 320 and abs(lane_delta) < 18:
             input_state.jump_just_pressed = True
@@ -166,7 +256,9 @@ class BattleScene:
     def __init__(self, character_name: str = "bandit", include_idle_enemy: bool = True) -> None:
         self.font = pygame.font.Font(None, 32)
         self.small_font = pygame.font.Font(None, 24)
+        self.pause_font = pygame.font.Font(None, 54)
         self.projectiles: list[ArrowProjectile] = []
+        self.paused = False
         stage_root = Path(__file__).resolve().parents[2] / "assets" / "maps" / "Forrest"
         sounds_root = Path(__file__).resolve().parents[2] / "assets" / "sounds"
         self.stage = ForestStage(stage_root)
@@ -189,9 +281,9 @@ class BattleScene:
         for attacker, defender in ((self.fighter, self.enemy), (self.enemy, self.fighter)):
             if attacker.is_dead or defender.is_dead:
                 continue
-            if attacker.state not in {"attack", "move_attack", "sprint_punch", "jump"}:
+            if attacker.state not in (COMBAT_ATTACK_STATES | {"jump"}):
                 continue
-            if attacker.name == "hunter" and attacker.state == "attack":
+            if attacker.name == "hunter" and attacker.state == "basic_attack":
                 continue
             if attacker.state == "jump" and not attacker.jump_attack_active:
                 continue
@@ -208,7 +300,7 @@ class BattleScene:
                 attacker.attack_started = False
                 self.audio.play_hit_miss()
                 continue
-            if not attacker.world_hitbox_rect().inflate(40, 0).colliderect(defender.world_hitbox_rect()):
+            if not attacker.world_hitbox_rect().inflate(72, 0).colliderect(defender.world_hitbox_rect()):
                 attacker.has_applied_attack_damage = True
                 attacker.attack_started = False
                 self.audio.play_hit_miss()
@@ -254,7 +346,7 @@ class BattleScene:
     def _spawn_hunter_projectile(self, fighter: Fighter) -> None:
         if fighter.name != "hunter":
             return
-        if fighter.state != "attack":
+        if fighter.state != "basic_attack":
             return
         if not fighter.attack_started or fighter.attack_projectile_fired:
             return
@@ -263,6 +355,21 @@ class BattleScene:
         origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.42)
         origin_y = GROUND_Y + fighter.lane_y - fighter.z - 58.0
         self.projectiles.append(ArrowProjectile(fighter, origin_x, origin_y, fighter.facing))
+
+    def _spawn_template_projectile(self, fighter: Fighter) -> None:
+        if fighter.name != "template":
+            return
+        if fighter.state != "sp_move_attack":
+            return
+        if not fighter.attack_started or fighter.attack_projectile_fired:
+            return
+
+        fighter.attack_projectile_fired = True
+        ball_index = fighter.next_special_move_projectile_index()
+        origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.42)
+        origin_y = GROUND_Y + fighter.lane_y - fighter.z - 56.0
+        self.projectiles.append(BallProjectile(fighter, origin_x, origin_y, fighter.facing, ball_index))
+        fighter.special_move_projectile_timer = fighter.combat.get("special_projectile_interval", 0.2)
 
     def _update_projectiles(self, dt: float) -> None:
         for projectile in list(self.projectiles):
@@ -293,7 +400,10 @@ class BattleScene:
                     target.receive_damage(projectile.damage)
                     self.audio.play("hit_success")
 
-                self.projectiles.remove(projectile)
+                if hasattr(projectile, "_start_burst"):
+                    projectile._start_burst()
+                else:
+                    self.projectiles.remove(projectile)
                 return
 
     def _draw_hud_bar(self, surface: pygame.Surface, x: int, y: int, width: int, height: int, value: int, maximum: int, color: tuple[int, int, int], label: str) -> None:
@@ -321,14 +431,18 @@ class BattleScene:
             surface.blit(marker, rect)
 
     def update(self, dt: float, inputs: FighterInput) -> None:
+        if self.paused:
+            return
         self.fighter.update(dt, inputs, target=self.enemy, controlled=True)
         if self.enemy is not None:
+            self.enemy_brain.update(dt)
             enemy_input = self.enemy_brain.build_input(self.enemy.snapshot, self.fighter.snapshot)
             self.enemy.update(dt, enemy_input, target=self.fighter, controlled=True)
 
         for fighter in (self.fighter, self.enemy):
             if fighter is not None:
                 self._spawn_hunter_projectile(fighter)
+                self._spawn_template_projectile(fighter)
 
         self._update_projectiles(dt)
         self._handle_combat()
@@ -358,3 +472,13 @@ class BattleScene:
 
         self._draw_marker(surface, self.fighter, camera_x, "P1")
         self._draw_hud(surface)
+        if self.paused:
+            overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 150))
+            surface.blit(overlay, (0, 0))
+            paused = self.pause_font.render("Paused", True, TEXT_COLOR)
+            resume = self.small_font.render("Esc: Resume", True, TEXT_COLOR)
+            menu = self.small_font.render("M: Main Menu", True, TEXT_COLOR)
+            surface.blit(paused, paused.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 40)))
+            surface.blit(resume, resume.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 10)))
+            surface.blit(menu, menu.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 40)))

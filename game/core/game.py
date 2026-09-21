@@ -22,31 +22,57 @@ class Game:
         self.scene = MainMenuScene()
         self.sprites_root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "characters"
         self.input_state = FighterInput()
+        self.left_tap_time = 0.0
+        self.right_tap_time = 0.0
+        self.sprint_direction = 0
+        self.double_tap_window = 0.24
 
     def run(self) -> None:
         while True:
             dt = self.clock.tick(FPS) / 1000.0
             pressed_actions = set()
+            left_pressed = False
+            right_pressed = False
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     pygame.quit()
                     sys.exit()
                 if event.type == pygame.KEYDOWN:
                     pressed_actions.add(event.key)
+                    if event.key == pygame.K_LEFT:
+                        if self.left_tap_time <= self.double_tap_window:
+                            self.sprint_direction = -1
+                        self.left_tap_time = 0.0
+                    elif event.key == pygame.K_RIGHT:
+                        if self.right_tap_time <= self.double_tap_window:
+                            self.sprint_direction = 1
+                        self.right_tap_time = 0.0
+                if event.type == pygame.KEYUP:
+                    if event.key == pygame.K_LEFT and self.sprint_direction == -1:
+                        self.sprint_direction = 0
+                    elif event.key == pygame.K_RIGHT and self.sprint_direction == 1:
+                        self.sprint_direction = 0
 
             keys = pygame.key.get_pressed()
+            left_pressed = keys[pygame.K_LEFT]
+            right_pressed = keys[pygame.K_RIGHT]
+            self.left_tap_time += dt
+            self.right_tap_time += dt
             self.input_state = FighterInput(
-                left=keys[pygame.K_LEFT],
-                right=keys[pygame.K_RIGHT],
+                left=left_pressed,
+                right=right_pressed,
                 up=keys[pygame.K_UP],
                 down=keys[pygame.K_DOWN],
-                run=keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT],
-                horizontal_move_active=keys[pygame.K_LEFT] or keys[pygame.K_RIGHT],
-                attack_pressed=keys[pygame.K_x],
-                attack_just_pressed=pygame.K_x in pressed_actions,
-                block_pressed=keys[pygame.K_c],
-                block_just_pressed=pygame.K_c in pressed_actions,
-                jump_just_pressed=pygame.K_z in pressed_actions,
+                run=keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT] or (self.sprint_direction == -1 and left_pressed) or (self.sprint_direction == 1 and right_pressed),
+                horizontal_move_active=left_pressed or right_pressed,
+                attack_pressed=keys[pygame.K_j],
+                attack_just_pressed=pygame.K_j in pressed_actions,
+                block_pressed=keys[pygame.K_l],
+                block_just_pressed=pygame.K_l in pressed_actions,
+                jump_pressed=keys[pygame.K_k],
+                jump_just_pressed=pygame.K_k in pressed_actions,
+                left_just_pressed=pygame.K_LEFT in pressed_actions,
+                right_just_pressed=pygame.K_RIGHT in pressed_actions,
                 knock_just_pressed=pygame.K_v in pressed_actions,
                 lift_just_pressed=pygame.K_b in pressed_actions,
                 die_just_pressed=pygame.K_n in pressed_actions,
@@ -57,6 +83,15 @@ class Game:
                 ice_knock_just_pressed=pygame.K_i in pressed_actions,
                 hurt_just_pressed=pygame.K_h in pressed_actions,
             )
+
+            if isinstance(self.scene, BattleScene):
+                if pygame.K_ESCAPE in pressed_actions:
+                    if self.scene.paused:
+                        self.scene.paused = False
+                    else:
+                        self.scene.paused = True
+                if self.scene.paused and pygame.K_m in pressed_actions:
+                    self.scene = MainMenuScene()
 
             if isinstance(self.scene, BattleScene):
                 self.scene.update(dt, self.input_state)
@@ -72,6 +107,6 @@ class Game:
             self.screen.fill(BG_COLOR)
             self.scene.draw(self.screen)
             if isinstance(self.scene, BattleScene):
-                hint = self.font.render("Arrows move, Shift runs, Z jump, X attack, C block, Move+C dodge, V knockdown, B lift, G break, N die, M revive, Q drink, F fire knock, I ice knock, H hurt", True, TEXT_COLOR)
+                hint = self.font.render("Arrows move, Shift runs, J attack, K jump, L defend, V knockdown, B lift, G break, N die, M revive, Q drink, F fire knock, I ice knock, H hurt", True, TEXT_COLOR)
                 self.screen.blit(hint, (20, 18))
             pygame.display.flip()
