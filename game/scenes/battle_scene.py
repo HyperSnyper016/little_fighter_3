@@ -4,11 +4,101 @@ from pathlib import Path
 
 import pygame
 
-from game.constants import SCREEN_HEIGHT, SCREEN_WIDTH, TEXT_COLOR
+from game.constants import GROUND_Y, SCREEN_HEIGHT, SCREEN_WIDTH, TEXT_COLOR
 from game.data.characters import CHARACTERS
 from game.entities.fighter import Fighter, FighterConfig, FighterInput, FighterSnapshot
 from game.systems.audio import AudioBank
 from game.systems.stage import ForestStage
+
+
+class ArrowProjectile:
+    def __init__(self, owner: Fighter, x: float, y: float, facing: int) -> None:
+        self.owner = owner
+        self.x = float(x)
+        self.y = float(y)
+        self.facing = 1 if facing >= 0 else -1
+        self.speed_x = 340.0
+        self.velocity_y = -300.0
+        self.gravity = 480.0
+        self.ground_y = GROUND_Y + owner.lane_y - 18.0
+        self.damage = 1
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        self.after_peak_timer = 0.0
+        self.phase = "fly"
+        self.can_damage = True
+        self.finished = False
+        arrows_root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "arrow"
+        self.fly_frames = self._load_frames(arrows_root, "fly", 7)
+        self.break_frames = self._load_frames(arrows_root, "arrowbreak", 10)
+        self.frames = self.fly_frames if self.fly_frames else [pygame.Surface((12, 12), pygame.SRCALPHA)]
+
+    def _load_frames(self, arrows_root: Path, prefix: str, count: int) -> list[pygame.Surface]:
+        frames: list[pygame.Surface] = []
+        for index in range(1, count + 1):
+            path = arrows_root / f"{prefix}{index}.bmp"
+            if not path.exists():
+                continue
+            frame = pygame.image.load(str(path)).convert()
+            frame.set_colorkey((0, 0, 0))
+            frames.append(frame)
+        return frames
+
+    def _start_break(self) -> None:
+        if self.phase == "break":
+            return
+        self.phase = "break"
+        self.can_damage = False
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        self.after_peak_timer = 0.0
+        self.frames = self.break_frames or self.frames
+        self.velocity_y = 120.0
+
+    def rect(self) -> pygame.Rect:
+        frame = self.frames[self.frame_index]
+        return pygame.Rect(int(self.x - frame.get_width() / 2), int(self.y - frame.get_height() / 2), frame.get_width(), frame.get_height())
+
+    def update(self, dt: float) -> None:
+        if self.phase == "fly":
+            if self.velocity_y < -90.0:
+                self.frame_index = 0
+                self.after_peak_timer = 0.0
+            elif self.velocity_y < 30.0:
+                self.frame_index = 1 if len(self.fly_frames) > 1 else 0
+                self.after_peak_timer = 0.0
+            else:
+                self.after_peak_timer += dt
+                descent_frame = 2 + int(self.after_peak_timer / 0.12)
+                self.frame_index = min(max(0, len(self.fly_frames) - 1), descent_frame) if self.fly_frames else 0
+
+            self.x += self.facing * self.speed_x * dt
+            self.velocity_y += self.gravity * dt
+            self.y += self.velocity_y * dt
+            if self.y >= self.ground_y:
+                self.y = self.ground_y
+                self._start_break()
+        else:
+            self.frame_timer += dt
+            while self.frame_timer >= 0.05:
+                self.frame_timer -= 0.05
+                self.frame_index += 1
+                if self.frame_index >= len(self.break_frames):
+                    self.frame_index = len(self.break_frames) - 1 if self.break_frames else 0
+                    self.finished = True
+                    break
+
+            self.x += self.facing * self.speed_x * dt
+            self.y += self.velocity_y * dt
+            if self.y >= self.ground_y:
+                self.y = self.ground_y
+                self.velocity_y = 0.0
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        frame = self.frames[self.frame_index]
+        if self.facing < 0:
+            frame = pygame.transform.flip(frame, True, False)
+        surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
 
 
 class EnemyBrain:
@@ -76,6 +166,7 @@ class BattleScene:
     def __init__(self, character_name: str = "bandit", include_idle_enemy: bool = True) -> None:
         self.font = pygame.font.Font(None, 32)
         self.small_font = pygame.font.Font(None, 24)
+        self.projectiles: list[ArrowProjectile] = []
         stage_root = Path(__file__).resolve().parents[2] / "assets" / "maps" / "Forrest"
         sounds_root = Path(__file__).resolve().parents[2] / "assets" / "sounds"
         self.stage = ForestStage(stage_root)
@@ -99,6 +190,8 @@ class BattleScene:
             if attacker.is_dead or defender.is_dead:
                 continue
             if attacker.state not in {"attack", "move_attack", "sprint_punch", "jump"}:
+                continue
+            if attacker.name == "hunter" and attacker.state == "attack":
                 continue
             if attacker.state == "jump" and not attacker.jump_attack_active:
                 continue
@@ -158,6 +251,51 @@ class BattleScene:
             else:
                 fighter.step_cycle_timer = 0.0
 
+    def _spawn_hunter_projectile(self, fighter: Fighter) -> None:
+        if fighter.name != "hunter":
+            return
+        if fighter.state != "attack":
+            return
+        if not fighter.attack_started or fighter.attack_projectile_fired:
+            return
+
+        fighter.attack_projectile_fired = True
+        origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.42)
+        origin_y = GROUND_Y + fighter.lane_y - fighter.z - 58.0
+        self.projectiles.append(ArrowProjectile(fighter, origin_x, origin_y, fighter.facing))
+
+    def _update_projectiles(self, dt: float) -> None:
+        for projectile in list(self.projectiles):
+            projectile.update(dt)
+            if projectile.finished:
+                self.projectiles.remove(projectile)
+                continue
+            if projectile.x < -200 or projectile.x > SCREEN_WIDTH + 400:
+                self.projectiles.remove(projectile)
+                continue
+
+            for target in (self.fighter, self.enemy):
+                if target is None or target is projectile.owner or target.is_dead:
+                    continue
+                if not projectile.can_damage:
+                    continue
+                if not projectile.rect().colliderect(target.world_hitbox_rect()):
+                    continue
+
+                if target.state == "block" and target.block_strength > 0:
+                    target.block_strength = 0
+                    target.block_hold_timer = 0.0
+                    self.audio.play("hit_guard")
+                elif target.state == "block" and target.block_strength == 0:
+                    target._start_block_break()
+                    self.audio.play("hit_guard")
+                else:
+                    target.receive_damage(projectile.damage)
+                    self.audio.play("hit_success")
+
+                self.projectiles.remove(projectile)
+                return
+
     def _draw_hud_bar(self, surface: pygame.Surface, x: int, y: int, width: int, height: int, value: int, maximum: int, color: tuple[int, int, int], label: str) -> None:
         pygame.draw.rect(surface, (28, 28, 32), (x, y, width, height), border_radius=6)
         pygame.draw.rect(surface, (215, 215, 220), (x, y, width, height), 2, border_radius=6)
@@ -187,6 +325,12 @@ class BattleScene:
         if self.enemy is not None:
             enemy_input = self.enemy_brain.build_input(self.enemy.snapshot, self.fighter.snapshot)
             self.enemy.update(dt, enemy_input, target=self.fighter, controlled=True)
+
+        for fighter in (self.fighter, self.enemy):
+            if fighter is not None:
+                self._spawn_hunter_projectile(fighter)
+
+        self._update_projectiles(dt)
         self._handle_combat()
         self._handle_audio(dt)
 
@@ -201,6 +345,9 @@ class BattleScene:
 
         camera_x = self.stage.camera_x(focus_x)
         self.stage.draw(surface, focus_x)
+
+        for projectile in self.projectiles:
+            projectile.draw(surface, camera_x)
 
         fighters = [self.fighter]
         if self.enemy is not None:

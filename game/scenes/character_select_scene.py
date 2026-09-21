@@ -113,7 +113,7 @@ class CharacterSelectScene:
         surface.blit(prompt, prompt.get_rect(center=(SCREEN_WIDTH // 2, 110)))
 
         if not self.characters:
-            empty = self.name_font.render("No playable characters found in assets\\sprites", True, TEXT_COLOR)
+            empty = self.name_font.render("No playable characters found in assets\\sprites\\characters", True, TEXT_COLOR)
             surface.blit(empty, empty.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2)))
             return
 

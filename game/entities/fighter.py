@@ -102,6 +102,7 @@ class Fighter:
         self.damage_cooldown = 0.0
         self.has_applied_attack_damage = False
         self.attack_started = False
+        self.attack_projectile_fired = False
         self.last_step_state = False
         self.step_cycle_timer = 0.0
         self.just_landed = False
@@ -285,6 +286,7 @@ class Fighter:
         self.attack_timer = self.combat["attack_duration"]
         self.has_applied_attack_damage = False
         self.attack_started = True
+        self.attack_projectile_fired = False
 
     def try_start_grapple(self, target: Fighter | None, attack_pressed: bool) -> bool:
         if target is None:
@@ -394,15 +396,18 @@ class Fighter:
             self.state = "idle"
             self.has_applied_attack_damage = False
             self.attack_started = False
+            self.attack_projectile_fired = False
         if self.attack_timer == 0 and self.state in {"sprint_punch", "throw"}:
             self.state = "idle"
             self.has_applied_attack_damage = False
             self.attack_started = False
+            self.attack_projectile_fired = False
         if self.attack_timer == 0 and self.current_jump_animation == "jump_attack":
             self.current_jump_animation = "jump_second" if self.jump_stage == 2 else "jump_normal"
             self.jump_attack_active = False
             self.has_applied_attack_damage = False
             self.attack_started = False
+            self.attack_projectile_fired = False
         if self.state == "knocked" and self.state_timer == 0 and self.knock_hold_timer == 0:
             self.state = "get_up"
             self.state_timer = 0.36
@@ -489,11 +494,13 @@ class Fighter:
                 self.push_velocity_x = self.facing * 160.0
                 self.has_applied_attack_damage = False
                 self.attack_started = True
+                self.attack_projectile_fired = False
             elif attack_just_pressed and self.z == 0 and (move_x or move_y):
                 self.state = "move_attack"
                 self.attack_timer = self.combat["attack_duration"]
                 self.has_applied_attack_damage = False
                 self.attack_started = True
+                self.attack_projectile_fired = False
             elif attack_just_pressed and self.z == 0:
                 self.state = "attack"
                 self.attack_animation = self.next_attack_animation
@@ -501,6 +508,7 @@ class Fighter:
                 self.attack_timer = self.combat["attack_duration"]
                 self.has_applied_attack_damage = False
                 self.attack_started = True
+                self.attack_projectile_fired = False
             elif jump_just_pressed and self.z == 0:
                 self._start_jump()
                 self.just_jumped = True

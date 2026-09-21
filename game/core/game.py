@@ -20,7 +20,7 @@ class Game:
         self.clock = pygame.time.Clock()
         self.font = pygame.font.Font(None, 28)
         self.scene = MainMenuScene()
-        self.sprites_root = Path(__file__).resolve().parents[2] / "assets" / "sprites"
+        self.sprites_root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "characters"
         self.input_state = FighterInput()
 
     def run(self) -> None:
