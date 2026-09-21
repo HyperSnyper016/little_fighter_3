@@ -568,7 +568,8 @@ class Fighter:
                         self.block_strength = 0
                     if self.block_strength == 0 and break_block_just_pressed:
                         self._start_block_break()
-                elif self.state == "block":
+                elif not self.is_defending and self.state == "block":
+                    # only exit block state when the defend key is released
                     self.state = "idle"
                     self.block_hold_timer = 0.0
                     self.block_strength = 1

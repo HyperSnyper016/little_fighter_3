@@ -122,7 +122,7 @@ CHARACTERS = {
                     PROJECT_ROOT / "assets" / "sprites" / "characters" / "bandit" / "drink" / "bandit_1_65.bmp",
                 ],
                 "frame_duration": 0.08,
-                "loop": False,
+                "loop": True,
             },
             "sprint_punch": {
                 "files": [
@@ -377,7 +377,7 @@ CHARACTERS = {
                     PROJECT_ROOT / "assets" / "sprites" / "characters" / "hunter" / "drink" / "hunter_1_65.bmp",
                 ],
                 "frame_duration": 0.08,
-                "loop": False,
+                "loop": True,
             },
             "sprint_punch": {
                 "files": [
@@ -602,7 +602,7 @@ CHARACTERS = {
             "drink": {
                 "files": _animation_files("template", "drink"),
                 "frame_duration": 0.08,
-                "loop": False,
+                "loop": True,
             },
             "hurt": {
                 "files": _animation_files("template", "hurt"),
@@ -702,5 +702,170 @@ CHARACTERS = {
             "special_projectile_interval": 0.5,
         },
         "basic_attack_cycle": ["attack_1", "attack_2", "attack_3"],
+    },
+    "deep": {
+        "display_name": "Deep",
+        "scale": 2,
+        "shadow_size": (56, 18),
+        "stats": {
+            "max_health": 20,
+            "max_mana": 100,
+            "touch_damage": 1,
+            "hitbox": (92, 160),
+        },
+        "animations": {
+            "idle": {
+                "files": _animation_files("deep", "idle"),
+                "frame_duration": 0.18,
+                "loop": True,
+            },
+            "walk": {
+                "files": _animation_files("deep", "walk"),
+                "frame_duration": 0.12,
+                "loop": True,
+            },
+            "run": {
+                "files": _animation_files("deep", "run"),
+                "frame_duration": 0.10,
+                "loop": True,
+            },
+            "lift_heavy": {
+                "files": _animation_files("deep", "lift_heavy"),
+                "frame_duration": 0.11,
+                "loop": False,
+            },
+            "knocked": {
+                "files": _animation_files("deep", "knocked"),
+                "frame_duration": 0.10,
+                "loop": False,
+            },
+            "get_up": {
+                "files": _animation_files("deep", "get_up"),
+                "frame_duration": 0.12,
+                "loop": False,
+            },
+            "jump_normal": {
+                "files": _animation_files("deep", "jump", "normal"),
+                "frame_duration": 0.12,
+                "loop": False,
+            },
+            "jump_second": {
+                "files": _animation_files("deep", "jump", "second"),
+                "frame_duration": 0.12,
+                "loop": False,
+            },
+            "jump_attack": {
+                "files": _animation_files("deep", "jump_attack"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "drink": {
+                "files": _animation_files("deep", "drink"),
+                "frame_duration": 0.08,
+                "loop": True,
+            },
+            "hurt": {
+                "files": _animation_files("deep", "hurt"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "block": {
+                "files": _animation_files("deep", "block"),
+                "frame_duration": 0.10,
+                "loop": False,
+            },
+            "block_break": {
+                "files": _animation_files("deep", "block_break"),
+                "frame_duration": 0.10,
+                "loop": False,
+            },
+            "block_dodge": {
+                "files": _animation_files("deep", "block_dodge"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "attack_1": {
+                "files": _prefixed_animation_files("attack_1_", "deep", "basic_attack"),
+                "frame_duration": 0.10,
+                "loop": False,
+            },
+            "attack_2": {
+                "files": _prefixed_animation_files("attack_2_", "deep", "basic_attack"),
+                "frame_duration": 0.10,
+                "loop": False,
+            },
+            "heavy_attack": {
+                "files": _animation_files("deep", "heavy_attack"),
+                "frame_duration": 0.09,
+                "loop": False,
+            },
+            "sp_move_attack": {
+                "files": _animation_files("deep", "sp_move_attack"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "sp_move_attack_2": {
+                "files": _animation_files("deep", "sp_move_attack_2"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "sp_vert_attack": {
+                "files": _animation_files("deep", "sp_vert_attack"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "sp_vert_attack_2": {
+                "files": _animation_files("deep", "sp_vert_attack_2"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "sprint_punch": {
+                "files": _animation_files("deep", "sprint_punch"),
+                "frame_duration": 0.07,
+                "loop": False,
+            },
+            "throw": {
+                "files": _animation_files("deep", "throw"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "throw_heavy": {
+                "files": _animation_files("deep", "throw_heavy"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "grapple": {
+                "files": _animation_files("deep", "grapple"),
+                "frame_duration": 0.10,
+                "loop": False,
+            },
+            "grappled": {
+                "files": _animation_files("deep", "grapple", "grappled"),
+                "frame_duration": 0.12,
+                "loop": False,
+            },
+            "grapple_hit": {
+                "files": _animation_files("deep", "grapple", "grapple_hit"),
+                "frame_duration": 0.10,
+                "loop": False,
+            },
+            "die": {
+                "files": _animation_files("deep", "die"),
+                "frame_duration": 0.12,
+                "loop": False,
+            },
+        },
+        "movement": {
+            "walk_speed": 180.0,
+            "run_speed": 300.0,
+            "lane_speed": 130.0,
+            "jump_velocity": -520.0,
+            "gravity": 1200.0,
+        },
+        "combat": {
+            "attack_duration": 0.30,
+            "special_projectile_interval": 0.5,
+        },
+        "basic_attack_cycle": ["attack_1", "attack_2"],
     },
 }

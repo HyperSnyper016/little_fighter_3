@@ -29,6 +29,9 @@ class CharacterSelectScene:
             return characters
 
         for directory in sorted(path for path in self.sprites_root.iterdir() if path.is_dir()):
+            # skip placeholder folders (e.g. _example_asset)
+            if directory.name.startswith("_"):
+                continue
             profile_path = self._resolve_profile_path(directory)
             if profile_path is None:
                 continue
