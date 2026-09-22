@@ -15,8 +15,10 @@ COMBAT_ATTACK_STATES = {
     "sprint_punch",
     "throw",
     "throw_heavy",
-    "sp_move_attack",
-    "sp_vert_attack",
+    "sp_move_attack_1",
+    "sp_move_attack_2",
+    "sp_vert_attack_1",
+    "sp_vert_attack_2",
 }
 
 
@@ -115,6 +117,8 @@ class Fighter:
         self.has_applied_attack_damage = False
         self.attack_started = False
         self.attack_projectile_fired = False
+        self.hunter_draw_arrow_sfx_pending = False
+        self.hunter_shoot_arrow_sfx_pending = False
         self.last_step_state = False
         self.step_cycle_timer = 0.0
         self.just_landed = False
@@ -153,6 +157,8 @@ class Fighter:
         self.attack_started = True
         self.attack_projectile_fired = False
         self.push_velocity_x = push_velocity_x
+        if self.name == "hunter" and state == "basic_attack":
+            self.hunter_draw_arrow_sfx_pending = True
 
     def draw_pos(self, camera_x: float = 0.0) -> tuple[int, int]:
         frame = self.animation_player.current_frame
@@ -384,17 +390,29 @@ class Fighter:
             move_y += 1
 
         running = controlled and self.controls_enabled and inputs.run
-        move_special_chord = attack_pressed and block_pressed and move_x != 0
-        vert_special_chord = attack_pressed and jump_pressed and inputs.up
+        move_special_1_chord = attack_pressed and block_pressed and move_x != 0
+        move_special_2_chord = attack_pressed and jump_pressed and move_x != 0
+        vert_special_1_chord = attack_pressed and block_pressed and inputs.up
+        vert_special_2_chord = attack_pressed and jump_pressed and inputs.up
         if controlled and self.controls_enabled and block_pressed and move_x != 0:
             self.special_move_buffer = 0.20
+        if controlled and self.controls_enabled and jump_pressed and move_x != 0:
+            self.special_move_buffer = 0.20
+        if controlled and self.controls_enabled and block_pressed and inputs.up:
+            self.special_vert_buffer = 0.20
         if controlled and self.controls_enabled and jump_pressed and inputs.up:
             self.special_vert_buffer = 0.20
-        move_special_ready = self.special_move_buffer > 0.0 or (block_pressed and move_x != 0)
-        vert_special_ready = self.special_vert_buffer > 0.0 or (jump_pressed and inputs.up)
-        if self.special_attack_lock == "move" and not move_special_chord:
+        move_special_1_ready = self.special_move_buffer > 0.0 or (block_pressed and move_x != 0)
+        move_special_2_ready = self.special_move_buffer > 0.0 or (jump_pressed and move_x != 0)
+        vert_special_1_ready = self.special_vert_buffer > 0.0 or (block_pressed and inputs.up)
+        vert_special_2_ready = self.special_vert_buffer > 0.0 or (jump_pressed and inputs.up)
+        if self.special_attack_lock == "sp_move_attack_1" and not move_special_1_chord:
             self.special_attack_lock = None
-        if self.special_attack_lock == "vert" and not vert_special_chord:
+        if self.special_attack_lock == "sp_move_attack_2" and not move_special_2_chord:
+            self.special_attack_lock = None
+        if self.special_attack_lock == "sp_vert_attack_1" and not vert_special_1_chord:
+            self.special_attack_lock = None
+        if self.special_attack_lock == "sp_vert_attack_2" and not vert_special_2_chord:
             self.special_attack_lock = None
 
         if self.state_timer > 0:
@@ -452,7 +470,7 @@ class Fighter:
                 self.grapple_target.state_timer = 0.22
                 self.grapple_hit_timer = 0.22
 
-        if self.state == "sp_move_attack" and self.special_attack_lock == "move":
+        if self.state.startswith("sp_move_attack") and self.special_attack_lock == self.state:
             if attack_pressed:
                 self.special_move_projectile_timer = max(0.0, self.special_move_projectile_timer - dt)
                 if self.special_move_projectile_timer == 0.0 and self.attack_projectile_fired:
@@ -462,16 +480,26 @@ class Fighter:
         else:
             self.special_move_projectile_timer = 0.0
 
-        if self.state == "sp_move_attack" and self.attack_timer == 0 and self.animation_player.finished and move_special_ready and self.special_attack_lock == "move":
+        if self.state == "sp_move_attack_1" and self.attack_timer == 0 and self.animation_player.finished and move_special_1_ready and self.special_attack_lock == "sp_move_attack_1":
             self.attack_timer = 0.01
-        if self.state == "sp_vert_attack" and self.attack_timer == 0 and self.animation_player.finished and vert_special_ready and self.special_attack_lock == "vert":
+        if self.state == "sp_move_attack_2" and self.attack_timer == 0 and self.animation_player.finished and move_special_2_ready and self.special_attack_lock == "sp_move_attack_2":
+            self.attack_timer = 0.01
+        if self.state == "sp_vert_attack_1" and self.attack_timer == 0 and self.animation_player.finished and vert_special_1_ready and self.special_attack_lock == "sp_vert_attack_1":
+            self.attack_timer = 0.01
+        if self.state == "sp_vert_attack_2" and self.attack_timer == 0 and self.animation_player.finished and vert_special_2_ready and self.special_attack_lock == "sp_vert_attack_2":
             self.attack_timer = 0.01
         if self.attack_timer == 0 and self.state in COMBAT_ATTACK_STATES and self.animation_player.finished:
-            if self.state == "sp_move_attack" and move_special_ready and self.special_attack_lock == "move":
+            if self.state == "sp_move_attack_1" and move_special_1_ready and self.special_attack_lock == "sp_move_attack_1":
                 pass
-            elif self.state == "sp_vert_attack" and vert_special_ready and self.special_attack_lock == "vert":
+            elif self.state == "sp_move_attack_2" and move_special_2_ready and self.special_attack_lock == "sp_move_attack_2":
+                pass
+            elif self.state == "sp_vert_attack_1" and vert_special_1_ready and self.special_attack_lock == "sp_vert_attack_1":
+                pass
+            elif self.state == "sp_vert_attack_2" and vert_special_2_ready and self.special_attack_lock == "sp_vert_attack_2":
                 pass
             else:
+                if self.name == "hunter" and self.state == "basic_attack":
+                    self.hunter_shoot_arrow_sfx_pending = True
                 self.state = "idle"
                 self.has_applied_attack_damage = False
                 self.attack_started = False
@@ -533,24 +561,37 @@ class Fighter:
             self._start_block_break()
         elif self.state not in (COMBAT_ATTACK_STATES | {"knocked", "knocked_fire", "knocked_freeze", "lift_heavy", "get_up", "die", "dead", "block_break", "block_dodge", "grapple", "grappled", "grapple_hit", "jump", "drink", "hurt"}) and self.z == 0 and self.velocity_z == 0:
             special_attack_started = False
-            can_move_special = "sp_move_attack" in self.animations
-            can_vert_special = "sp_vert_attack" in self.animations
-            if attack_just_pressed and self.z == 0 and move_special_ready and self.special_attack_lock is None and can_move_special:
-                self.state = "sp_move_attack"
-                self._start_attack_state("sp_move_attack")
+            can_move_special_1 = "sp_move_attack_1" in self.animations
+            can_move_special_2 = "sp_move_attack_2" in self.animations
+            can_vert_special_1 = "sp_vert_attack_1" in self.animations
+            can_vert_special_2 = "sp_vert_attack_2" in self.animations
+            if attack_just_pressed and self.z == 0 and move_special_1_ready and self.special_attack_lock is None and can_move_special_1:
+                self.state = "sp_move_attack_1"
+                self._start_attack_state("sp_move_attack_1")
                 special_attack_started = True
-                self.special_attack_lock = "move"
+                self.special_attack_lock = "sp_move_attack_1"
                 self.special_move_projectile_timer = 0.0
-            elif attack_just_pressed and self.z == 0 and vert_special_ready and self.special_attack_lock is None and can_vert_special:
-                self.state = "sp_vert_attack"
-                self._start_attack_state("sp_vert_attack")
+            elif attack_just_pressed and self.z == 0 and move_special_2_ready and self.special_attack_lock is None and can_move_special_2:
+                self.state = "sp_move_attack_2"
+                self._start_attack_state("sp_move_attack_2")
                 special_attack_started = True
-                self.special_attack_lock = "vert"
+                self.special_attack_lock = "sp_move_attack_2"
+                self.special_move_projectile_timer = 0.0
+            elif attack_just_pressed and self.z == 0 and vert_special_1_ready and self.special_attack_lock is None and can_vert_special_1:
+                self.state = "sp_vert_attack_1"
+                self._start_attack_state("sp_vert_attack_1")
+                special_attack_started = True
+                self.special_attack_lock = "sp_vert_attack_1"
+            elif attack_just_pressed and self.z == 0 and vert_special_2_ready and self.special_attack_lock is None and can_vert_special_2:
+                self.state = "sp_vert_attack_2"
+                self._start_attack_state("sp_vert_attack_2")
+                special_attack_started = True
+                self.special_attack_lock = "sp_vert_attack_2"
             if not special_attack_started:
                 self.is_defending = controlled and self.controls_enabled and block_pressed and self.z == 0
                 self.dodge_invulnerable = False
 
-                if self.is_defending and block_just_pressed and (move_x or move_y):
+                if self.is_defending and block_just_pressed and (move_x or move_y) and self.defense_cooldown == 0.0:
                     self.state = "block_dodge"
                     self.state_timer = 0.22
                     self.dodge_invulnerable = True
@@ -558,11 +599,10 @@ class Fighter:
                     self.defense_cooldown = 0.5
                     if move_x != 0:
                         self.push_velocity_x = move_x * 320.0
-                elif self.is_defending and self.defense_cooldown == 0.0:
+                elif self.is_defending:
                     if self.state != "block":
                         self.block_hold_timer = 1.0
                         self.block_strength = 1
-                        self.defense_cooldown = 0.5
                     self.state = "block"
                     if attack_just_pressed and self.block_strength > 0:
                         self.block_strength = 0
@@ -592,8 +632,12 @@ class Fighter:
                     self.attack_animation = self._next_basic_attack_animation()
                     self._start_attack_state("basic_attack")
                 elif jump_just_pressed and self.z == 0:
-                    self._start_jump()
-                    self.just_jumped = True
+                    if running:
+                        self._start_second_jump()
+                        self.just_jumped = True
+                    else:
+                        self._start_jump()
+                        self.just_jumped = True
                 elif move_x or move_y:
                     self.state = "run" if running else "walk"
                 elif self.z == 0:
@@ -638,10 +682,14 @@ class Fighter:
             animation_name = self.attack_animation
         elif self.state == "heavy_attack":
             animation_name = "heavy_attack"
-        elif self.state == "sp_move_attack":
-            animation_name = "sp_move_attack" if "sp_move_attack" in self.animations else ("heavy_attack" if "heavy_attack" in self.animations else "idle")
-        elif self.state == "sp_vert_attack":
-            animation_name = "sp_vert_attack" if "sp_vert_attack" in self.animations else ("jump_attack" if "jump_attack" in self.animations else ("jump_normal" if "jump_normal" in self.animations else "idle"))
+        elif self.state == "sp_move_attack_1":
+            animation_name = "sp_move_attack_1" if "sp_move_attack_1" in self.animations else ("heavy_attack" if "heavy_attack" in self.animations else "idle")
+        elif self.state == "sp_move_attack_2":
+            animation_name = "sp_move_attack_2" if "sp_move_attack_2" in self.animations else ("heavy_attack" if "heavy_attack" in self.animations else "idle")
+        elif self.state == "sp_vert_attack_1":
+            animation_name = "sp_vert_attack_1" if "sp_vert_attack_1" in self.animations else ("jump_attack" if "jump_attack" in self.animations else ("jump_normal" if "jump_normal" in self.animations else "idle"))
+        elif self.state == "sp_vert_attack_2":
+            animation_name = "sp_vert_attack_2" if "sp_vert_attack_2" in self.animations else ("jump_attack" if "jump_attack" in self.animations else ("jump_normal" if "jump_normal" in self.animations else "idle"))
         elif self.state == "grapple":
             animation_name = "grapple"
         elif self.state == "grappled":

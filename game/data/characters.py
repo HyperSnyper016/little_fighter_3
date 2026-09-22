@@ -644,13 +644,13 @@ CHARACTERS = {
                 "frame_duration": 0.09,
                 "loop": False,
             },
-            "sp_move_attack": {
-                "files": _animation_files("template", "sp_move_attack"),
+            "sp_move_attack_1": {
+                "files": _animation_files("template", "sp_move_attack_1"),
                 "frame_duration": 0.08,
                 "loop": False,
             },
-            "sp_vert_attack": {
-                "files": _animation_files("template", "sp_vert_attack"),
+            "sp_vert_attack_1": {
+                "files": _animation_files("template", "sp_vert_attack_1"),
                 "frame_duration": 0.08,
                 "loop": False,
             },
@@ -799,8 +799,8 @@ CHARACTERS = {
                 "frame_duration": 0.09,
                 "loop": False,
             },
-            "sp_move_attack": {
-                "files": _animation_files("deep", "sp_move_attack"),
+            "sp_move_attack_1": {
+                "files": _animation_files("deep", "sp_move_attack_1"),
                 "frame_duration": 0.08,
                 "loop": False,
             },
@@ -809,8 +809,8 @@ CHARACTERS = {
                 "frame_duration": 0.08,
                 "loop": False,
             },
-            "sp_vert_attack": {
-                "files": _animation_files("deep", "sp_vert_attack"),
+            "sp_vert_attack_1": {
+                "files": _animation_files("deep", "sp_vert_attack_1"),
                 "frame_duration": 0.08,
                 "loop": False,
             },

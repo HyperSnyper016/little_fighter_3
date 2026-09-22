@@ -22,6 +22,9 @@ class AudioBank:
         return {
             "footsteps1": self._load_sound("footsteps1.wav"),
             "footsteps2": self._load_sound("footsteps2.wav"),
+            "draw_arrow": self._load_sound("draw_arrow.wav"),
+            "shoot_arrow": self._load_sound("shoot_arrow.wav"),
+            "broken_arrow": self._load_sound("broken_arrow.wav"),
             "hit_guard": self._load_sound("hit_guard.wav"),
             "hit_miss1": self._load_sound("hit_miss1.wav"),
             "hit_miss2": self._load_sound("hit_miss2.wav"),

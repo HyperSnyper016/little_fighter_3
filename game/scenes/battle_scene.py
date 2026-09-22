@@ -28,6 +28,7 @@ class ArrowProjectile:
         self.phase = "fly"
         self.can_damage = True
         self.finished = False
+        self.just_broke = False
         arrows_root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "arrow"
         self.fly_frames = self._load_frames(arrows_root, "fly", 7)
         self.break_frames = self._load_frames(arrows_root, "arrowbreak", 10)
@@ -48,6 +49,7 @@ class ArrowProjectile:
         if self.phase == "break":
             return
         self.phase = "break"
+        self.just_broke = True
         self.can_damage = False
         self.frame_timer = 0.0
         self.frame_index = 0
@@ -329,6 +331,12 @@ class BattleScene:
             fighters.append(self.enemy)
 
         for fighter in fighters:
+            if fighter.hunter_draw_arrow_sfx_pending:
+                self.audio.play("draw_arrow")
+                fighter.hunter_draw_arrow_sfx_pending = False
+            if fighter.hunter_shoot_arrow_sfx_pending:
+                self.audio.play("shoot_arrow")
+                fighter.hunter_shoot_arrow_sfx_pending = False
             if fighter.just_knocked_down:
                 self.audio.play("knockdown")
             if fighter.just_jumped:
@@ -359,7 +367,7 @@ class BattleScene:
     def _spawn_template_projectile(self, fighter: Fighter) -> None:
         if fighter.name != "template":
             return
-        if fighter.state != "sp_move_attack":
+        if not fighter.state.startswith("sp_move_attack"):
             return
         if not fighter.attack_started or fighter.attack_projectile_fired:
             return
@@ -374,6 +382,9 @@ class BattleScene:
     def _update_projectiles(self, dt: float) -> None:
         for projectile in list(self.projectiles):
             projectile.update(dt)
+            if getattr(projectile, "just_broke", False):
+                self.audio.play("broken_arrow")
+                projectile.just_broke = False
             if projectile.finished:
                 self.projectiles.remove(projectile)
                 continue
