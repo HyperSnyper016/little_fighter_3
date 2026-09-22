@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pygame
 
-from game.constants import BG_COLOR, FPS, SCREEN_HEIGHT, SCREEN_WIDTH, TEXT_COLOR
+from game.constants import BG_COLOR, FPS, SCREEN_HEIGHT, SCREEN_WIDTH, TEXT_COLOR, VERSION
 from game.entities.fighter import FighterInput
 from game.scenes.battle_scene import BattleScene
 from game.scenes.character_select_scene import CharacterSelectScene
@@ -16,7 +16,7 @@ class Game:
     def __init__(self) -> None:
         pygame.init()
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-        pygame.display.set_caption("little_fighter_3")
+        pygame.display.set_caption(f"little_fighter_3 {VERSION}")
         self.clock = pygame.time.Clock()
         self.font = pygame.font.Font(None, 28)
         self.scene = MainMenuScene()
@@ -103,10 +103,10 @@ class Game:
                     confirm_already_pressed=keys[pygame.K_RETURN] or keys[pygame.K_SPACE],
                 )
             elif isinstance(self.scene, CharacterSelectScene) and self.scene.selection_confirmed and self.scene.selected_character:
-                self.scene = BattleScene(self.scene.selected_character, include_idle_enemy=self.scene.include_idle_enemy)
+                self.scene = BattleScene(self.scene.selected_character)
             self.screen.fill(BG_COLOR)
             self.scene.draw(self.screen)
             if isinstance(self.scene, BattleScene):
-                hint = self.font.render("Arrows move, Shift runs, J attack, K jump, L defend, V knockdown, B lift, G break, N die, M revive, Q drink, F fire knock, I ice knock, H hurt", True, TEXT_COLOR)
+                hint = self.font.render("Arrows move, Shift runs, J attack, K jump_throw, L defend_actions, V knockdown, B lift, G break, N die, M revive, Q drink, F fire knock, I ice knock, H hurt", True, TEXT_COLOR)
                 self.screen.blit(hint, (20, 18))
             pygame.display.flip()

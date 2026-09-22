@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from pathlib import Path
 
 import pygame
@@ -9,6 +10,73 @@ from game.data.characters import CHARACTERS
 from game.entities.fighter import COMBAT_ATTACK_STATES, Fighter, FighterConfig, FighterInput, FighterSnapshot
 from game.systems.audio import AudioBank
 from game.systems.stage import ForestStage
+
+
+class BanditBrain:
+    def __init__(self) -> None:
+        self.throw_prep = False
+        self.block_hold = False
+        self.jump_cooldown = 0.0
+        self.throw_cooldown = 0.0
+        self.attack_cooldown = 0.0
+
+    def update(self, dt: float) -> None:
+        self.jump_cooldown = max(0.0, self.jump_cooldown - dt)
+        self.throw_cooldown = max(0.0, self.throw_cooldown - dt)
+        self.attack_cooldown = max(0.0, self.attack_cooldown - dt)
+
+    def build_input(self, self_snapshot: FighterSnapshot, target_snapshot: FighterSnapshot) -> FighterInput:
+        result = FighterInput()
+        dx = target_snapshot.x - self_snapshot.x
+        dy = target_snapshot.lane_y - self_snapshot.lane_y
+        abs_dx = abs(dx)
+        same_lane = abs(dy) <= 28.0
+        facing_right = dx >= 0
+        target_attacking = target_snapshot.state in COMBAT_ATTACK_STATES or target_snapshot.state == "jump_throw"
+
+        if self.throw_prep and self_snapshot.state == "lift_heavy":
+            result.attack_pressed = True
+            result.attack_just_pressed = True
+            self.throw_prep = False
+            self.throw_cooldown = 2.0
+            self.attack_cooldown = 0.9
+            return result
+
+        if self_snapshot.state == "lift_heavy":
+            result.attack_pressed = True
+            result.attack_just_pressed = True
+            return result
+
+        if target_attacking and same_lane and abs_dx < 95.0 and random.random() < 0.18:
+            result.block_pressed = True
+            result.block_just_pressed = not self.block_hold
+            self.block_hold = True
+            return result
+        self.block_hold = False
+
+        if same_lane and abs_dx < 80.0 and self.throw_cooldown == 0.0 and not self.throw_prep and self_snapshot.state not in {"block", "block_break", "throw_heavy"}:
+            result.lift_just_pressed = True
+            self.throw_prep = True
+            return result
+
+        if abs_dx > 260.0 and self.jump_cooldown == 0.0 and self_snapshot.z == 0 and target_snapshot.z == 0:
+            result.jump_just_pressed = True
+            self.jump_cooldown = 1.8
+            return result
+
+        if facing_right:
+            result.right = True
+        else:
+            result.left = True
+
+        if abs_dx > 180.0:
+            result.run = True
+
+        if self.attack_cooldown == 0.0 and same_lane and abs_dx < 145.0 and self_snapshot.state not in {"basic_attack", "heavy_attack", "sprint_punch", "throw", "throw_heavy", "lift_heavy"}:
+            result.attack_just_pressed = True
+            self.attack_cooldown = 0.75
+
+        return result
 
 
 class ArrowProjectile:
@@ -178,84 +246,58 @@ class BallProjectile:
         surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
 
 
-class EnemyBrain:
-    def __init__(self) -> None:
-        self.attack_cooldown = 0.0
+class BladeSwipeProjectile:
+    def __init__(self, owner: Fighter, x: float, y: float, facing: int) -> None:
+        self.owner = owner
+        self.x = float(x)
+        self.y = float(y)
+        self.facing = 1 if facing >= 0 else -1
+        self.speed_x = 720.0
+        self.damage = 1
+        self.can_damage = True
+        self.finished = False
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "blade_swipe"
+        self.frames = self._load_frames(root) or [pygame.Surface((64, 48), pygame.SRCALPHA)]
+
+    def _load_frames(self, folder: Path) -> list[pygame.Surface]:
+        frames: list[pygame.Surface] = []
+        if not folder.exists():
+            return frames
+        for path in sorted(folder.iterdir()):
+            if not path.is_file() or path.suffix.lower() not in {".png", ".bmp"}:
+                continue
+            frame = pygame.image.load(str(path)).convert()
+            frame.set_colorkey((0, 0, 0))
+            frame = pygame.transform.scale(frame, (int(frame.get_width() * 2.0), int(frame.get_height() * 2.0)))
+            frames.append(frame)
+        return frames
+
+    def rect(self) -> pygame.Rect:
+        frame = self.frames[self.frame_index]
+        return pygame.Rect(int(self.x - frame.get_width() / 2), int(self.y - frame.get_height() / 2), frame.get_width(), frame.get_height())
 
     def update(self, dt: float) -> None:
-        if self.attack_cooldown > 0.0:
-            self.attack_cooldown = max(0.0, self.attack_cooldown - dt)
+        self.frame_timer += dt
+        while self.frame_timer >= 0.05:
+            self.frame_timer -= 0.05
+            self.frame_index += 1
+            if self.frame_index >= len(self.frames):
+                self.frame_index = len(self.frames) - 1 if self.frames else 0
+                self.finished = True
+                break
+        self.x += self.facing * self.speed_x * dt
 
-    def build_input(self, fighter: FighterSnapshot, target: FighterSnapshot) -> FighterInput:
-        input_state = FighterInput()
-        lane_delta = target.lane_y - fighter.lane_y
-        horizontal_delta = target.x - fighter.x
-        distance = abs(horizontal_delta)
-
-        if not fighter.controls_enabled:
-            return input_state
-
-        if target.state in {"knocked", "knocked_fire", "knocked_freeze"} and distance < 72 and fighter.z == 0:
-            input_state.lift_just_pressed = True
-            return input_state
-
-        if fighter.state in {"knocked", "knocked_fire", "knocked_freeze", "get_up", "hurt", "die", "dead"}:
-            return input_state
-
-        if lane_delta < -12:
-            input_state.up = True
-        elif lane_delta > 12:
-            input_state.down = True
-
-        if horizontal_delta < -26:
-            input_state.left = True
-        elif horizontal_delta > 26:
-            input_state.right = True
-
-        if self.attack_cooldown > 0.0:
-            input_state.horizontal_move_active = input_state.left or input_state.right
-            return input_state
-
-        if distance > 280:
-            input_state.run = True
-        elif distance < 56 and fighter.block_broken:
-            input_state.attack_pressed = True
-            input_state.attack_just_pressed = True
-            self.attack_cooldown = 0.7
-            return input_state
-
-        if target.state in (COMBAT_ATTACK_STATES | {"jump"}) and fighter.defense_cooldown == 0.0 and distance < 96 and abs(lane_delta) < 30:
-            input_state.block_pressed = True
-            if distance < 72:
-                if horizontal_delta < 0:
-                    input_state.right = True
-                else:
-                    input_state.left = True
-            return input_state
-
-        if fighter.block_broken and distance < 56 and abs(lane_delta) < 18:
-            input_state.attack_pressed = True
-            input_state.attack_just_pressed = True
-            self.attack_cooldown = 0.7
-        elif fighter.z == 0 and target.z == 0 and 96 <= distance <= 132 and abs(lane_delta) < 18:
-            if input_state.run and distance < 120:
-                input_state.attack_pressed = True
-                input_state.attack_just_pressed = True
-                self.attack_cooldown = 0.45
-            elif distance < 108:
-                input_state.attack_pressed = True
-                input_state.attack_just_pressed = True
-                self.attack_cooldown = 0.45
-
-        if fighter.z == 0 and target.z == 0 and 210 <= distance <= 320 and abs(lane_delta) < 18:
-            input_state.jump_just_pressed = True
-
-        input_state.horizontal_move_active = input_state.left or input_state.right
-        return input_state
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        frame = self.frames[self.frame_index]
+        if self.facing < 0:
+            frame = pygame.transform.flip(frame, True, False)
+        surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
 
 
 class BattleScene:
-    def __init__(self, character_name: str = "bandit", include_idle_enemy: bool = True) -> None:
+    def __init__(self, character_name: str = "bandit") -> None:
         self.font = pygame.font.Font(None, 32)
         self.small_font = pygame.font.Font(None, 24)
         self.pause_font = pygame.font.Font(None, 54)
@@ -268,26 +310,46 @@ class BattleScene:
         x_bounds = (self.stage.play_min_x, self.stage.play_max_x)
         start_x = SCREEN_WIDTH / 2
         self.fighter = Fighter(FighterConfig(character_name, CHARACTERS[character_name]), (start_x, 0), x_bounds=x_bounds)
-        self.enemy = Fighter(FighterConfig("bandit", CHARACTERS["bandit"]), (start_x + 180, 0), x_bounds=x_bounds) if include_idle_enemy else None
-        if self.enemy is not None:
-            self.enemy.max_health = 10
-            self.enemy.health = 10
-        self.enemy_brain = EnemyBrain()
-        if self.enemy is not None:
-            self.enemy.facing = -1
+        self.enemy = Fighter(FighterConfig("bandit", CHARACTERS["bandit"]), (start_x + 220.0, 0), x_bounds=x_bounds)
+        self.enemy.max_health = 8
+        self.enemy.health = 8
+        self.enemy.controls_enabled = True
+        self.enemy_brain = BanditBrain()
+        self.victory_played = False
+        self.victory_played = False
+
+    def _draw_speech_bubble(self, surface: pygame.Surface, fighter: Fighter, camera_x: float) -> None:
+        if not fighter.speech_text:
+            return
+        text = self.small_font.render(fighter.speech_text, True, (24, 24, 24))
+        bubble_width = max(text.get_width() + 24, 156)
+        bubble_height = text.get_height() + 20
+        bubble = pygame.Surface((bubble_width, bubble_height + 14), pygame.SRCALPHA)
+        bubble_rect = bubble.get_rect()
+        white = (255, 255, 255)
+        outline = (32, 32, 32)
+        pygame.draw.ellipse(bubble, white, bubble_rect.inflate(-6, -14))
+        pygame.draw.ellipse(bubble, outline, bubble_rect.inflate(-6, -14), 2)
+        tail = [
+            (bubble_rect.centerx - 10, bubble_rect.bottom - 12),
+            (bubble_rect.centerx + 8, bubble_rect.bottom - 12),
+            (bubble_rect.centerx - 2, bubble_rect.bottom + 2),
+        ]
+        pygame.draw.polygon(bubble, white, tail)
+        pygame.draw.polygon(bubble, outline, tail, 2)
+        bubble.blit(text, text.get_rect(center=(bubble_rect.centerx, bubble_rect.centery - 2)))
+        bubble_pos = bubble.get_rect(midbottom=(fighter.world_hitbox_rect().centerx - int(camera_x), fighter.world_hitbox_rect().top - 10))
+        surface.blit(bubble, bubble_pos)
 
     def _handle_combat(self) -> None:
-        if self.enemy is None:
-            return
-
         for attacker, defender in ((self.fighter, self.enemy), (self.enemy, self.fighter)):
             if attacker.is_dead or defender.is_dead:
                 continue
-            if attacker.state not in (COMBAT_ATTACK_STATES | {"jump"}):
+            if attacker.state not in (COMBAT_ATTACK_STATES | {"jump_throw"}):
                 continue
             if attacker.name == "hunter" and attacker.state == "basic_attack":
                 continue
-            if attacker.state == "jump" and not attacker.jump_attack_active:
+            if attacker.state == "jump_throw" and not attacker.jump_attack_active:
                 continue
             if attacker.has_applied_attack_damage:
                 continue
@@ -321,14 +383,12 @@ class BattleScene:
                 continue
 
             defender.receive_damage(attacker.touch_damage)
-            if attacker.state == "jump" and attacker.jump_attack_active and not defender.is_dead:
+            if attacker.state == "jump_throw" and attacker.jump_attack_active and not defender.is_dead:
                 defender._start_knockdown()
-            self.audio.play("hit_success")
+            self.audio.play("sword_cut" if attacker.name == "deep" else "hit_success")
 
     def _handle_audio(self, dt: float) -> None:
-        fighters = [self.fighter]
-        if self.enemy is not None:
-            fighters.append(self.enemy)
+        fighters = [self.fighter, self.enemy]
 
         for fighter in fighters:
             if fighter.hunter_draw_arrow_sfx_pending:
@@ -337,10 +397,13 @@ class BattleScene:
             if fighter.hunter_shoot_arrow_sfx_pending:
                 self.audio.play("shoot_arrow")
                 fighter.hunter_shoot_arrow_sfx_pending = False
+            if fighter.deep_sword_swing_sfx_pending:
+                self.audio.play("sword_swing")
+                fighter.deep_sword_swing_sfx_pending = False
             if fighter.just_knocked_down:
                 self.audio.play("knockdown")
             if fighter.just_jumped:
-                self.audio.play("jump")
+                self.audio.play("jump_throw")
             if fighter.just_landed:
                 self.audio.play("jump_land")
 
@@ -350,6 +413,10 @@ class BattleScene:
                     fighter.step_cycle_timer = 0.22 if fighter.state == "walk" else 0.16
             else:
                 fighter.step_cycle_timer = 0.0
+
+        if self.enemy.is_dead and not self.victory_played:
+            self.audio.play("win")
+            self.victory_played = True
 
     def _spawn_hunter_projectile(self, fighter: Fighter) -> None:
         if fighter.name != "hunter":
@@ -379,6 +446,16 @@ class BattleScene:
         self.projectiles.append(BallProjectile(fighter, origin_x, origin_y, fighter.facing, ball_index))
         fighter.special_move_projectile_timer = fighter.combat.get("special_projectile_interval", 0.2)
 
+    def _spawn_deep_projectile(self, fighter: Fighter) -> None:
+        if fighter.name != "deep" or fighter.pending_projectile != "blade_swipe" or fighter.attack_projectile_fired:
+            return
+        fighter.attack_projectile_fired = True
+        fighter.pending_projectile = None
+        origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.55)
+        origin_y = GROUND_Y + fighter.lane_y - fighter.z - 64.0
+        self.projectiles.append(BladeSwipeProjectile(fighter, origin_x, origin_y, fighter.facing))
+        self.audio.play("blade_swipe_sound")
+
     def _update_projectiles(self, dt: float) -> None:
         for projectile in list(self.projectiles):
             projectile.update(dt)
@@ -388,7 +465,7 @@ class BattleScene:
             if projectile.finished:
                 self.projectiles.remove(projectile)
                 continue
-            if projectile.x < -200 or projectile.x > SCREEN_WIDTH + 400:
+            if projectile.x < -400 or projectile.x > SCREEN_WIDTH + 800:
                 self.projectiles.remove(projectile)
                 continue
 
@@ -409,7 +486,12 @@ class BattleScene:
                     self.audio.play("hit_guard")
                 else:
                     target.receive_damage(projectile.damage)
-                    self.audio.play("hit_success")
+                    if isinstance(projectile, ArrowProjectile):
+                        self.audio.play("arrow_hit")
+                    elif projectile.owner.name == "deep":
+                        self.audio.play("sword_cut")
+                    else:
+                        self.audio.play("hit_success")
 
                 if hasattr(projectile, "_start_burst"):
                     projectile._start_burst()
@@ -445,15 +527,14 @@ class BattleScene:
         if self.paused:
             return
         self.fighter.update(dt, inputs, target=self.enemy, controlled=True)
-        if self.enemy is not None:
-            self.enemy_brain.update(dt)
-            enemy_input = self.enemy_brain.build_input(self.enemy.snapshot, self.fighter.snapshot)
-            self.enemy.update(dt, enemy_input, target=self.fighter, controlled=True)
+        self.enemy_brain.update(dt)
+        enemy_input = self.enemy_brain.build_input(self.enemy.snapshot, self.fighter.snapshot)
+        self.enemy.update(dt, enemy_input, target=self.fighter, controlled=True)
 
         for fighter in (self.fighter, self.enemy):
-            if fighter is not None:
-                self._spawn_hunter_projectile(fighter)
-                self._spawn_template_projectile(fighter)
+            self._spawn_hunter_projectile(fighter)
+            self._spawn_template_projectile(fighter)
+            self._spawn_deep_projectile(fighter)
 
         self._update_projectiles(dt)
         self._handle_combat()
@@ -461,12 +542,11 @@ class BattleScene:
 
     def draw(self, surface: pygame.Surface) -> None:
         focus_x = self.fighter.x
-        if self.enemy is not None:
-            player_margin = SCREEN_WIDTH * 0.3
-            min_focus = self.fighter.x - player_margin
-            max_focus = self.fighter.x + player_margin
-            enemy_focus = (self.fighter.x + self.enemy.x) / 2
-            focus_x = max(min_focus, min(max_focus, enemy_focus))
+        player_margin = SCREEN_WIDTH * 0.3
+        min_focus = self.fighter.x - player_margin
+        max_focus = self.fighter.x + player_margin
+        enemy_focus = (self.fighter.x + self.enemy.x) / 2
+        focus_x = max(min_focus, min(max_focus, enemy_focus))
 
         camera_x = self.stage.camera_x(focus_x)
         self.stage.draw(surface, focus_x)
@@ -474,12 +554,11 @@ class BattleScene:
         for projectile in self.projectiles:
             projectile.draw(surface, camera_x)
 
-        fighters = [self.fighter]
-        if self.enemy is not None:
-            fighters.append(self.enemy)
+        fighters = [self.fighter, self.enemy]
         fighters.sort(key=lambda fighter: fighter.lane_y)
         for fighter in fighters:
             fighter.draw(surface, camera_x)
+            self._draw_speech_bubble(surface, fighter, camera_x)
 
         self._draw_marker(surface, self.fighter, camera_x, "P1")
         self._draw_hud(surface)

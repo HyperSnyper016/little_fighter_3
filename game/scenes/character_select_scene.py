@@ -17,10 +17,8 @@ class CharacterSelectScene:
         self.selected_index = 0
         self.selection_confirmed = False
         self.selected_character = self.characters[0]["key"] if self.characters else None
-        self.include_idle_enemy = True
         self._up_pressed = False
         self._down_pressed = False
-        self._toggle_pressed = False
         self._confirm_pressed = confirm_already_pressed
 
     def _discover_characters(self) -> list[dict]:
@@ -78,6 +76,14 @@ class CharacterSelectScene:
         if fallback_frames:
             return fallback_frames[0]
 
+        nested_frames = sorted(
+            path
+            for path in directory.rglob("*")
+            if path.is_file() and path.suffix.lower() in {".bmp", ".png"}
+        )
+        if nested_frames:
+            return nested_frames[0]
+
         return None
 
     def update(self, dt: float) -> None:
@@ -86,7 +92,6 @@ class CharacterSelectScene:
 
         up_pressed = keys[pygame.K_UP]
         down_pressed = keys[pygame.K_DOWN]
-        toggle_pressed = keys[pygame.K_e]
         confirm_pressed = keys[pygame.K_RETURN] or keys[pygame.K_SPACE]
 
         if self.characters:
@@ -97,15 +102,11 @@ class CharacterSelectScene:
 
             self.selected_character = self.characters[self.selected_index]["key"]
 
-            if toggle_pressed and not self._toggle_pressed:
-                self.include_idle_enemy = not self.include_idle_enemy
-
             if confirm_pressed and not self._confirm_pressed:
                 self.selection_confirmed = True
 
         self._up_pressed = up_pressed
         self._down_pressed = down_pressed
-        self._toggle_pressed = toggle_pressed
         self._confirm_pressed = confirm_pressed
 
     def draw(self, surface: pygame.Surface) -> None:
@@ -127,10 +128,6 @@ class CharacterSelectScene:
 
         name = self.name_font.render(selected["display_name"], True, TEXT_COLOR)
         surface.blit(name, name.get_rect(center=(SCREEN_WIDTH // 2, 360)))
-        enemy_text = "Idle Enemy: ON" if self.include_idle_enemy else "Idle Enemy: OFF"
-        enemy_prompt = self.prompt_font.render(f"E to toggle idle enemy ({enemy_text})", True, TEXT_COLOR)
-        surface.blit(enemy_prompt, enemy_prompt.get_rect(center=(SCREEN_WIDTH // 2, 395)))
-
         for index, character in enumerate(self.characters):
             prefix = ">" if index == self.selected_index else " "
             option = self.prompt_font.render(f"{prefix} {character['display_name']}", True, TEXT_COLOR)

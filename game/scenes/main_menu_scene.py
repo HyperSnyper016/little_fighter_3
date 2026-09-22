@@ -6,6 +6,7 @@ from pathlib import Path
 import pygame
 
 from game.constants import SCREEN_HEIGHT, SCREEN_WIDTH, TEXT_COLOR
+from game.systems.audio import AudioBank
 
 
 class MainMenuScene:
@@ -23,6 +24,9 @@ class MainMenuScene:
         self.scroll_speed_y = 18.0
         self.grid_seed = random.randrange(1, 1_000_000_000)
         self.background_tiles = self._load_background_tiles()
+        sounds_root = Path(__file__).resolve().parents[2] / "assets" / "sounds"
+        self.audio = AudioBank(sounds_root)
+        self.audio.play("menu_start")
 
     def _resolve_background_path(self, directory: Path) -> Path | None:
         preferred_names = (
@@ -69,6 +73,8 @@ class MainMenuScene:
         keys = pygame.key.get_pressed()
         confirm_pressed = keys[pygame.K_RETURN] or keys[pygame.K_SPACE]
         self.start_requested = confirm_pressed and not self._confirm_pressed
+        if self.start_requested:
+            self.audio.play("menu_accept")
         self._confirm_pressed = confirm_pressed
         self.scroll_x = (self.scroll_x + (self.scroll_speed_x * dt)) % self.tile_size[0]
         self.scroll_y = (self.scroll_y + (self.scroll_speed_y * dt)) % self.tile_size[1]
