@@ -134,6 +134,7 @@ class Fighter:
         self.freeze_break_timer = 0.0
         self.freeze_recovery_timer = 0.0
         self.freeze_break_started = False
+        self.facing_lock_until_get_up = False
         self.block_dodge_animation = "block_dodge"
         self.next_block_dodge_animation = "block_dodge"
         self.block_dodge_cycle: list[str] = ["block_dodge"]
@@ -310,6 +311,7 @@ class Fighter:
         self.jump_attack_active = False
         self.grapple_target = None
         self.just_knocked_down = True
+        self.facing_lock_until_get_up = True
 
     def _start_launch_knockdown(self) -> None:
         self._start_knockdown()
@@ -332,6 +334,7 @@ class Fighter:
         self.grapple_target = None
         self.just_knocked_down = True
         self.fire_knock_sfx_pending = True
+        self.facing_lock_until_get_up = True
 
     def _start_ice_knockdown(self) -> None:
         self.state = "knocked_freeze"
@@ -350,6 +353,7 @@ class Fighter:
         self.jump_attack_active = False
         self.grapple_target = None
         self.just_knocked_down = True
+        self.facing_lock_until_get_up = True
 
     def _start_death(self) -> None:
         self.state = "die"
@@ -486,10 +490,12 @@ class Fighter:
         move_y = 0
         if controlled and self.controls_enabled and inputs.left:
             move_x -= 1
-            self.facing = -1
+            if not self.facing_lock_until_get_up or self.state not in {"fall", "knocked_fire", "knocked_freeze", "get_up"}:
+                self.facing = -1
         if controlled and self.controls_enabled and inputs.right:
             move_x += 1
-            self.facing = 1
+            if not self.facing_lock_until_get_up or self.state not in {"fall", "knocked_fire", "knocked_freeze", "get_up"}:
+                self.facing = 1
         if controlled and self.controls_enabled and inputs.up:
             move_y -= 1
         if controlled and self.controls_enabled and inputs.down:
@@ -642,6 +648,8 @@ class Fighter:
             self.state = "idle"
             self.block_strength = 1
             self.dodge_invulnerable = False
+            if self.state != "get_up":
+                pass
         if self.state == "hurt" and self.state_timer == 0:
             self.state = "idle"
         if self.state_timer == 0 and self.state == "die":
@@ -649,6 +657,8 @@ class Fighter:
         if self.state_timer == 0 and self.state == "grappled":
             self.state = "idle"
             self.controls_enabled = True
+        if self.state == "idle" and self.facing_lock_until_get_up and self.knock_hold_timer == 0:
+            self.facing_lock_until_get_up = False
 
         if self.z > 0 or self.velocity_z != 0:
             self.velocity_z += self.movement["gravity"] * dt

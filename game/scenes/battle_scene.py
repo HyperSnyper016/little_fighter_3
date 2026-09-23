@@ -20,18 +20,60 @@ class BanditBrain:
         self.jump_cooldown = 0.0
         self.throw_cooldown = 0.0
         self.attack_cooldown = 0.0
-        self.strafe_timer = 0.0
-        self.strafe_direction = 0
-        self.wander_timer = 0.0
-        self.wander_horizontal = 0
-        self.wander_vertical = 0
+        self.behavior_timer = 0.0
+        self.behavior_mode = "advance"
+        self.turn_lock = 0.0
+        self.roam_target_x = 0.0
+        self.roam_target_lane = 0.0
+        self.last_mode_was_close = False
 
     def update(self, dt: float) -> None:
         self.jump_cooldown = max(0.0, self.jump_cooldown - dt)
         self.throw_cooldown = max(0.0, self.throw_cooldown - dt)
         self.attack_cooldown = max(0.0, self.attack_cooldown - dt)
-        self.strafe_timer = max(0.0, self.strafe_timer - dt)
-        self.wander_timer = max(0.0, self.wander_timer - dt)
+        self.behavior_timer = max(0.0, self.behavior_timer - dt)
+        self.turn_lock = max(0.0, self.turn_lock - dt)
+
+    def _pick_behavior(self, self_snapshot: FighterSnapshot, target_snapshot: FighterSnapshot, dx: float, dy: float, same_lane: bool, target_attacking: bool) -> None:
+        if self.behavior_timer > 0.0:
+            return
+
+        abs_dx = abs(dx)
+        facing_to_target = 1 if dx >= 0 else -1
+        if target_attacking and same_lane and abs_dx < 150.0:
+            self.behavior_mode = random.choice(("defend", "dodge", "retreat"))
+        elif abs_dx > 360.0:
+            self.behavior_mode = random.choice(("advance", "advance", "jump", "flank"))
+        elif abs_dx > 180.0:
+            self.behavior_mode = random.choice(("advance", "pressure", "jump", "flank"))
+        else:
+            self.behavior_mode = random.choice(("pressure", "retreat", "dodge", "defend", "jump"))
+
+        if self.behavior_mode == "advance":
+            self.roam_target_x = target_snapshot.x - (facing_to_target * 150.0)
+            self.roam_target_lane = target_snapshot.lane_y
+            self.behavior_timer = random.uniform(0.7, 1.2)
+        elif self.behavior_mode == "pressure":
+            self.roam_target_x = target_snapshot.x - (facing_to_target * 80.0)
+            self.roam_target_lane = target_snapshot.lane_y + random.uniform(-18.0, 18.0)
+            self.behavior_timer = random.uniform(0.55, 1.0)
+        elif self.behavior_mode == "flank":
+            self.roam_target_x = target_snapshot.x + (facing_to_target * random.uniform(220.0, 520.0))
+            self.roam_target_lane = target_snapshot.lane_y + random.uniform(-40.0, 40.0)
+            self.behavior_timer = random.uniform(0.8, 1.4)
+        elif self.behavior_mode == "retreat":
+            self.roam_target_x = self_snapshot.x - (facing_to_target * random.uniform(260.0, 620.0))
+            self.roam_target_lane = self_snapshot.lane_y + random.uniform(-60.0, 60.0)
+            self.behavior_timer = random.uniform(0.65, 1.15)
+        elif self.behavior_mode == "dodge":
+            self.roam_target_x = self_snapshot.x + (-facing_to_target * random.uniform(200.0, 420.0))
+            self.roam_target_lane = self_snapshot.lane_y + random.uniform(-70.0, 70.0)
+            self.behavior_timer = random.uniform(0.45, 0.85)
+        else:
+            self.roam_target_x = self_snapshot.x + random.uniform(-420.0, 420.0)
+            self.roam_target_lane = self_snapshot.lane_y + random.uniform(-88.0, 88.0)
+            self.behavior_timer = random.uniform(0.6, 1.1)
+        self.last_mode_was_close = abs_dx < 180.0
 
     def build_input(self, self_snapshot: FighterSnapshot, target_snapshot: FighterSnapshot) -> FighterInput:
         result = FighterInput()
@@ -41,6 +83,7 @@ class BanditBrain:
         same_lane = abs(dy) <= 28.0
         facing_right = dx >= 0
         target_attacking = target_snapshot.state in COMBAT_ATTACK_STATES or target_snapshot.state == "jump_throw"
+        facing_to_target = 1 if facing_right else -1
 
         if self.throw_prep and self_snapshot.state == "lift_heavy":
             result.attack_pressed = True
@@ -67,50 +110,75 @@ class BanditBrain:
             self.throw_prep = True
             return result
 
-        if abs_dx > 260.0 and self.jump_cooldown == 0.0 and self_snapshot.z == 0 and target_snapshot.z == 0:
+        self._pick_behavior(self_snapshot, target_snapshot, dx, dy, same_lane, target_attacking)
+
+        if abs_dx > 260.0 and self.jump_cooldown == 0.0 and self_snapshot.z == 0 and target_snapshot.z == 0 and self.behavior_mode == "jump":
             result.jump_just_pressed = True
             self.jump_cooldown = 1.8
             return result
 
-        if self.wander_timer == 0.0:
-            self.wander_timer = random.uniform(0.8, 2.0)
-            self.wander_horizontal = random.choice((-1, 0, 1))
-            self.wander_vertical = random.choice((-1, 0, 1))
+        desired_x = self.roam_target_x
+        desired_lane = self.roam_target_lane
+        if self.behavior_mode == "advance":
+            desired_x = target_snapshot.x - (facing_to_target * 150.0)
+        elif self.behavior_mode == "pressure":
+            desired_x = target_snapshot.x - (facing_to_target * 80.0)
+        elif self.behavior_mode == "flank":
+            desired_x = self.roam_target_x
+        elif self.behavior_mode == "retreat":
+            desired_x = self.roam_target_x
+        elif self.behavior_mode == "dodge":
+            desired_x = self.roam_target_x
+        elif self.behavior_mode == "defend":
+            desired_x = self_snapshot.x
 
-        move_toward_target = abs_dx > 240.0 or (same_lane and 120.0 < abs_dx < 210.0 and random.random() < 0.65)
-        keep_space = abs_dx < 90.0
-
-        if move_toward_target:
-            if facing_right:
+        if self.turn_lock == 0.0 and abs(desired_x - self_snapshot.x) > 64.0:
+            if desired_x > self_snapshot.x:
                 result.right = True
+                if self_snapshot.facing != 1:
+                    self.turn_lock = 0.28
             else:
                 result.left = True
-            result.run = abs_dx > 320.0
-        elif keep_space:
+                if self_snapshot.facing != -1:
+                    self.turn_lock = 0.28
+        elif abs(desired_x - self_snapshot.x) <= 64.0 and self.behavior_mode in {"retreat", "dodge"}:
             if facing_right:
                 result.left = True
             else:
                 result.right = True
-            if self.strafe_timer == 0.0:
-                self.strafe_timer = random.uniform(0.35, 0.9)
-                self.strafe_direction = random.choice((-1, 1))
-            if self.strafe_direction > 0:
+
+        lane_delta = desired_lane - self_snapshot.lane_y
+        if abs(lane_delta) > 18.0:
+            if lane_delta > 0:
                 result.down = True
             else:
                 result.up = True
-        else:
-            if self.wander_horizontal > 0:
-                result.right = True
-            elif self.wander_horizontal < 0:
-                result.left = True
-            if self.wander_vertical > 0:
-                result.down = True
-            elif self.wander_vertical < 0:
-                result.up = True
+
+        if self.behavior_mode in {"pressure", "flank"} and abs_dx < 260.0:
+            result.run = True
+        elif abs_dx > 340.0:
+            result.run = True
+
+        if self.behavior_mode == "dodge" and self_snapshot.z == 0 and self.jump_cooldown == 0.0:
+            result.jump_just_pressed = True
+            self.jump_cooldown = 1.2
+            return result
+
+        if target_attacking and same_lane and abs_dx < 115.0 and random.random() < 0.4:
+            result.block_pressed = True
+            result.block_just_pressed = not self.block_hold
+            self.block_hold = True
+            return result
+        self.block_hold = False
+
+        if self.behavior_mode == "jump" and self_snapshot.z == 0 and self.jump_cooldown == 0.0 and abs_dx > 120.0:
+            result.jump_just_pressed = True
+            self.jump_cooldown = 1.6
+            return result
 
         if self.attack_cooldown == 0.0 and same_lane and abs_dx < 185.0 and self_snapshot.state not in {"basic_attack", "heavy_attack", "sprint_punch", "throw", "throw_heavy", "lift_heavy"}:
             result.attack_just_pressed = True
-            self.attack_cooldown = 0.9
+            self.attack_cooldown = 0.85
 
         return result
 
@@ -216,7 +284,7 @@ class LaserProjectile:
         self.origin_y = float(y)
         self.beam_y = owner.world_hitbox_rect().centery
         self.x = float(x)
-        self.y = float(y)
+        self.y = self.beam_y
         self.facing = 1 if facing >= 0 else -1
         self.speed_x = 1320.0
         self.damage = 1
@@ -229,7 +297,7 @@ class LaserProjectile:
         self.impact_x = self.x
         self.impact_y = self.y
         root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "laser"
-        self.point_frames = self._load_frames(root / "lazer_point")
+        self.point_frames = self._load_frames(root / "lazer_point")[:1]
         self.hit_frames = self._load_frames(root / "lazer_hit")
         self.frames = [self.point_frames[0]] if self.point_frames else [pygame.Surface((12, 12), pygame.SRCALPHA)]
 
@@ -311,8 +379,8 @@ class BatSummonProjectile:
         self.y = float(y)
         self.facing = 1 if facing >= 0 else -1
         self.summon_index = summon_index
-        self.speed_x = 330.0
-        self.speed_y = 215.0
+        self.speed_x = 980.0
+        self.speed_y = 28.0
         self.damage = 1
         self.can_damage = True
         self.finished = False
@@ -322,6 +390,8 @@ class BatSummonProjectile:
         self.life_timer = 0.0
         self.wobble_phase = random.uniform(0.0, math.tau)
         self.roam_phase = random.uniform(0.0, math.tau)
+        self.targeting_factor = 0.5
+        self.swing_width = 360.0
         self.impact_x = self.x
         self.impact_y = self.y
         root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "summons" / "bats"
@@ -373,16 +443,20 @@ class BatSummonProjectile:
                 dy = target_y - self.y
                 distance = max(1.0, math.hypot(dx, dy))
                 self.facing = 1 if dx >= 0 else -1
-                homing_strength = 0.14 + min(0.12, distance / 2200.0)
-                slide_x = (dx / distance) * self.speed_x * homing_strength
-                slide_y = (dy / distance) * self.speed_y * homing_strength
-                self.x += slide_x * dt
-                self.y += slide_y * dt
-                self.x += self.facing * self.speed_x * 0.34 * dt
-                self.y += math.sin(self.life_timer * 2.8 + self.wobble_phase) * 14.0 * dt
+                homing_strength = (0.02 + min(0.03, distance / 6500.0)) * self.targeting_factor
+                swing_phase = self.life_timer * 2.4 + self.wobble_phase
+                vertical_ratio = min(1.0, abs(dy) / 90.0)
+                swing_width = self.swing_width + (self.swing_width * 1.1 * vertical_ratio)
+                swing_bias = math.copysign(self.swing_width * (0.75 + (0.35 * vertical_ratio)), dy if dy != 0 else self.facing)
+                swing_x = (math.sin(swing_phase) * swing_width) + swing_bias
+                swing_y = math.cos(swing_phase) * self.speed_y * (0.10 + (0.10 * vertical_ratio))
+                self.x += (self.facing * self.speed_x * 0.18 + swing_x) * dt
+                self.y += (((dy / distance) * self.speed_y * homing_strength) + swing_y) * dt
             else:
-                self.x += self.facing * self.speed_x * 0.58 * dt
-                self.y += math.sin(self.life_timer * 2.4 + self.roam_phase) * 18.0 * dt
+                roam_phase = self.life_timer * 2.0 + self.roam_phase
+                swing_x = (math.sin(roam_phase) * self.swing_width * 1.35) + (self.facing * self.swing_width * 0.7)
+                self.x += (self.facing * self.speed_x * 0.22 + swing_x) * dt
+                self.y += math.sin(roam_phase * 0.85) * self.speed_y * 0.18 * dt
             self.frame_timer += dt
             while self.frame_timer >= 0.08:
                 self.frame_timer -= 0.08
