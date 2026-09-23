@@ -19,11 +19,18 @@ class BanditBrain:
         self.jump_cooldown = 0.0
         self.throw_cooldown = 0.0
         self.attack_cooldown = 0.0
+        self.strafe_timer = 0.0
+        self.strafe_direction = 0
+        self.wander_timer = 0.0
+        self.wander_horizontal = 0
+        self.wander_vertical = 0
 
     def update(self, dt: float) -> None:
         self.jump_cooldown = max(0.0, self.jump_cooldown - dt)
         self.throw_cooldown = max(0.0, self.throw_cooldown - dt)
         self.attack_cooldown = max(0.0, self.attack_cooldown - dt)
+        self.strafe_timer = max(0.0, self.strafe_timer - dt)
+        self.wander_timer = max(0.0, self.wander_timer - dt)
 
     def build_input(self, self_snapshot: FighterSnapshot, target_snapshot: FighterSnapshot) -> FighterInput:
         result = FighterInput()
@@ -64,13 +71,41 @@ class BanditBrain:
             self.jump_cooldown = 1.8
             return result
 
-        if facing_right:
-            result.right = True
-        else:
-            result.left = True
+        if self.wander_timer == 0.0:
+            self.wander_timer = random.uniform(0.8, 2.0)
+            self.wander_horizontal = random.choice((-1, 0, 1))
+            self.wander_vertical = random.choice((-1, 0, 1))
 
-        if abs_dx > 180.0:
-            result.run = True
+        move_toward_target = abs_dx > 240.0 or (same_lane and 120.0 < abs_dx < 210.0 and random.random() < 0.65)
+        keep_space = abs_dx < 90.0
+
+        if move_toward_target:
+            if facing_right:
+                result.right = True
+            else:
+                result.left = True
+            result.run = abs_dx > 320.0
+        elif keep_space:
+            if facing_right:
+                result.left = True
+            else:
+                result.right = True
+            if self.strafe_timer == 0.0:
+                self.strafe_timer = random.uniform(0.35, 0.9)
+                self.strafe_direction = random.choice((-1, 1))
+            if self.strafe_direction > 0:
+                result.down = True
+            else:
+                result.up = True
+        else:
+            if self.wander_horizontal > 0:
+                result.right = True
+            elif self.wander_horizontal < 0:
+                result.left = True
+            if self.wander_vertical > 0:
+                result.down = True
+            elif self.wander_vertical < 0:
+                result.up = True
 
         if self.attack_cooldown == 0.0 and same_lane and abs_dx < 185.0 and self_snapshot.state not in {"basic_attack", "heavy_attack", "sprint_punch", "throw", "throw_heavy", "lift_heavy"}:
             result.attack_just_pressed = True
@@ -80,14 +115,15 @@ class BanditBrain:
 
 
 class ArrowProjectile:
-    def __init__(self, owner: Fighter, x: float, y: float, facing: int) -> None:
+    def __init__(self, owner: Fighter, x: float, y: float, facing: int, style: str = "basic") -> None:
         self.owner = owner
         self.x = float(x)
         self.y = float(y)
         self.facing = 1 if facing >= 0 else -1
-        self.speed_x = 480.0
-        self.velocity_y = -300.0
-        self.gravity = 480.0
+        self.style = style
+        self.speed_x = 720.0
+        self.velocity_y = -300.0 if style == "basic" else 180.0
+        self.gravity = 480.0 if style == "basic" else 960.0
         self.ground_y = GROUND_Y + owner.lane_y - 18.0
         self.damage = 1
         self.frame_timer = 0.0
@@ -98,7 +134,8 @@ class ArrowProjectile:
         self.finished = False
         self.just_broke = False
         arrows_root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "arrow"
-        self.fly_frames = self._load_frames(arrows_root, "fly", 7)
+        fly_frames = self._load_frames(arrows_root, "fly", 7)
+        self.fly_frames = fly_frames if style == "basic" else fly_frames[4:7]
         self.break_frames = self._load_frames(arrows_root, "arrowbreak", 10)
         self.frames = self.fly_frames if self.fly_frames else [pygame.Surface((12, 12), pygame.SRCALPHA)]
 
@@ -184,6 +221,7 @@ class BallProjectile:
         self.phase = "fly"
         self.can_damage = True
         self.finished = False
+        self.just_burst = False
         self.frame_timer = 0.0
         self.frame_index = 0
         self.use_fast_frames = False
@@ -211,6 +249,7 @@ class BallProjectile:
             return
         self.phase = "burst"
         self.can_damage = False
+        self.just_burst = True
         self.frame_timer = 0.0
         self.frame_index = 0
         self.frames = self.burst_frames or self.frames
@@ -227,8 +266,6 @@ class BallProjectile:
             self.use_fast_frames = self.speed_x >= 180.0 and bool(self.fast_frames)
             self.frames = self.fast_frames if self.use_fast_frames else (self.slow_frames or self.fast_frames or self.frames)
             self.x += self.facing * self.speed_x * dt
-            if self.x < -240 or self.x > SCREEN_WIDTH + 240:
-                self.finished = True
         else:
             self.frame_timer += dt
             while self.frame_timer >= 0.05:
@@ -383,9 +420,20 @@ class BattleScene:
                 continue
 
             defender.receive_damage(attacker.touch_damage)
-            if attacker.state == "jump_throw" and attacker.jump_attack_active and not defender.is_dead:
-                defender._start_knockdown()
-            self.audio.play("sword_cut" if attacker.name == "deep" else "hit_success")
+            if not defender.is_dead:
+                if attacker.state == "jump_throw" and attacker.jump_attack_active:
+                    defender._start_knockdown()
+                elif attacker.state == "sp_vert_attack_1":
+                    if attacker.name in {"deep", "template"}:
+                        defender._start_launch_knockdown()
+                    else:
+                        defender._start_knockdown()
+            if attacker.name == "deep" and attacker.state in {"sp_vert_attack_1", "sp_vert_attack_2", "sp_move_attack_2"}:
+                self.audio.play("sword_cut")
+            elif attacker.name == "deep":
+                self.audio.play("sword_cut")
+            else:
+                self.audio.play("hit_success")
 
     def _handle_audio(self, dt: float) -> None:
         fighters = [self.fighter, self.enemy]
@@ -400,6 +448,15 @@ class BattleScene:
             if fighter.deep_sword_swing_sfx_pending:
                 self.audio.play("sword_swing")
                 fighter.deep_sword_swing_sfx_pending = False
+            if fighter.template_uppercut_shear_sfx_pending:
+                self.audio.play("uppercut_shear")
+                fighter.template_uppercut_shear_sfx_pending = False
+            if fighter.ice_break_sfx_pending:
+                self.audio.play("ice_break")
+                fighter.ice_break_sfx_pending = False
+            if fighter.fire_knock_sfx_pending:
+                self.audio.play("fire_knock")
+                fighter.fire_knock_sfx_pending = False
             if fighter.just_knocked_down:
                 self.audio.play("knockdown")
             if fighter.just_jumped:
@@ -421,7 +478,7 @@ class BattleScene:
     def _spawn_hunter_projectile(self, fighter: Fighter) -> None:
         if fighter.name != "hunter":
             return
-        if fighter.state != "basic_attack":
+        if fighter.state not in {"basic_attack", "jump_throw"}:
             return
         if not fighter.attack_started or fighter.attack_projectile_fired:
             return
@@ -429,7 +486,8 @@ class BattleScene:
         fighter.attack_projectile_fired = True
         origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.42)
         origin_y = GROUND_Y + fighter.lane_y - fighter.z - 58.0
-        self.projectiles.append(ArrowProjectile(fighter, origin_x, origin_y, fighter.facing))
+        self.projectiles.append(ArrowProjectile(fighter, origin_x, origin_y, fighter.facing, fighter.hunter_projectile_style))
+        fighter.hunter_shoot_arrow_sfx_pending = True
 
     def _spawn_template_projectile(self, fighter: Fighter) -> None:
         if fighter.name != "template":
@@ -444,6 +502,7 @@ class BattleScene:
         origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.42)
         origin_y = GROUND_Y + fighter.lane_y - fighter.z - 56.0
         self.projectiles.append(BallProjectile(fighter, origin_x, origin_y, fighter.facing, ball_index))
+        self.audio.play("orb")
         fighter.special_move_projectile_timer = fighter.combat.get("special_projectile_interval", 0.2)
 
     def _spawn_deep_projectile(self, fighter: Fighter) -> None:
@@ -457,15 +516,31 @@ class BattleScene:
         self.audio.play("blade_swipe_sound")
 
     def _update_projectiles(self, dt: float) -> None:
+        focus_x = self.fighter.x
+        player_margin = SCREEN_WIDTH * 0.3
+        min_focus = self.fighter.x - player_margin
+        max_focus = self.fighter.x + player_margin
+        enemy_focus = (self.fighter.x + self.enemy.x) / 2
+        focus_x = max(min_focus, min(max_focus, enemy_focus))
+        camera_x = self.stage.camera_x(focus_x)
+        visible_left = camera_x
+        visible_right = camera_x + SCREEN_WIDTH
         for projectile in list(self.projectiles):
             projectile.update(dt)
             if getattr(projectile, "just_broke", False):
                 self.audio.play("broken_arrow")
                 projectile.just_broke = False
+            if getattr(projectile, "just_burst", False):
+                self.audio.play("orb_burst")
+                projectile.just_burst = False
             if projectile.finished:
                 self.projectiles.remove(projectile)
                 continue
-            if projectile.x < -400 or projectile.x > SCREEN_WIDTH + 800:
+            if isinstance(projectile, BallProjectile) and projectile.phase == "fly":
+                if projectile.x <= visible_left or projectile.x >= visible_right:
+                    projectile.x = max(visible_left, min(visible_right, projectile.x))
+                    projectile._start_burst()
+            if projectile.x < self.stage.play_min_x - 400 or projectile.x > self.stage.play_max_x + 400:
                 self.projectiles.remove(projectile)
                 continue
 
@@ -473,6 +548,13 @@ class BattleScene:
                 if target is None or target is projectile.owner or target.is_dead:
                     continue
                 if not projectile.can_damage:
+                    continue
+                if abs(projectile.y - target.world_hitbox_rect().centery) > 42:
+                    continue
+                target_center_x = target.world_hitbox_rect().centerx
+                if projectile.facing > 0 and target_center_x < projectile.x:
+                    continue
+                if projectile.facing < 0 and target_center_x > projectile.x:
                     continue
                 if not projectile.rect().colliderect(target.world_hitbox_rect()):
                     continue

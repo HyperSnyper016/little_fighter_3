@@ -92,7 +92,7 @@ class CharacterSelectScene:
 
         up_pressed = keys[pygame.K_UP]
         down_pressed = keys[pygame.K_DOWN]
-        confirm_pressed = keys[pygame.K_RETURN] or keys[pygame.K_SPACE]
+        confirm_pressed = keys[pygame.K_j]
 
         if self.characters:
             if up_pressed and not self._up_pressed:
@@ -111,7 +111,7 @@ class CharacterSelectScene:
 
     def draw(self, surface: pygame.Surface) -> None:
         title = self.title_font.render("Choose Your Fighter", True, TEXT_COLOR)
-        prompt = self.prompt_font.render("Up/Down to select, Enter or Space to start", True, TEXT_COLOR)
+        prompt = self.prompt_font.render("Up/Down to select, Attack Key to start", True, TEXT_COLOR)
 
         surface.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 70)))
         surface.blit(prompt, prompt.get_rect(center=(SCREEN_WIDTH // 2, 110)))

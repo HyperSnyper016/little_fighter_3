@@ -71,7 +71,7 @@ class MainMenuScene:
 
     def update(self, dt: float) -> None:
         keys = pygame.key.get_pressed()
-        confirm_pressed = keys[pygame.K_RETURN] or keys[pygame.K_SPACE]
+        confirm_pressed = keys[pygame.K_j]
         self.start_requested = confirm_pressed and not self._confirm_pressed
         if self.start_requested:
             self.audio.play("menu_accept")
@@ -109,7 +109,7 @@ class MainMenuScene:
     def _draw_title(self, surface: pygame.Surface) -> None:
         title = self.title_font.render("Little Fighter 3", True, TEXT_COLOR)
         option = self.option_font.render("Test Game", True, TEXT_COLOR)
-        prompt = self.credit_font.render("Press Enter or Space", True, TEXT_COLOR)
+        prompt = self.credit_font.render("Press Attack Key", True, TEXT_COLOR)
         credit = self.credit_font.render("Official game by Josh Olsson", True, TEXT_COLOR)
 
         shadow_offset = (3, 3)

@@ -108,7 +108,7 @@ class Game:
             if isinstance(self.scene, MainMenuScene) and self.scene.start_requested:
                 self.scene = CharacterSelectScene(
                     self.sprites_root,
-                    confirm_already_pressed=keys[pygame.K_RETURN] or keys[pygame.K_SPACE],
+                    confirm_already_pressed=keys[pygame.K_j],
                 )
             elif isinstance(self.scene, CharacterSelectScene) and self.scene.selection_confirmed and self.scene.selected_character:
                 self.scene = BattleScene(self.scene.selected_character)
