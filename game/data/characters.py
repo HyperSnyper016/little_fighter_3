@@ -716,6 +716,186 @@ CHARACTERS = {
         },
         "basic_attack_cycle": ["attack_1", "attack_2"],
     },
+    "bat": {
+        "display_name": "Bat",
+        "scale": 2,
+        "shadow_size": (56, 18),
+        "stats": {
+            "max_health": 20,
+            "max_mana": 100,
+            "touch_damage": 1,
+            "hitbox": (92, 160),
+        },
+        "animations": {
+            "idle": {
+                "files": _animation_files("bat", "idle"),
+                "frame_duration": 0.12,
+                "loop": True,
+            },
+            "walk": {
+                "files": _animation_files("bat", "movement", "walking"),
+                "frame_duration": 0.09,
+                "loop": True,
+            },
+            "run": {
+                "files": _animation_files("bat", "movement", "sprinting"),
+                "frame_duration": 0.07,
+                "loop": True,
+            },
+            "lift_heavy": {
+                "files": _animation_files("bat", "hold_item", "heavy_carry", "walk"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "fall": {
+                "files": _animation_files("bat", "fall", "knocked_down", "basic"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "knocked_fire": {
+                "files": _animation_files("bat", "fall", "knocked_down", "fire"),
+                "frame_duration": 0.07,
+                "loop": False,
+            },
+            "knocked_freeze": {
+                "files": _animation_files("bat", "fall", "knocked_down", "ice", "freeze"),
+                "frame_duration": 0.16,
+                "loop": False,
+            },
+            "knocked_freeze_break": {
+                "files": _animation_files("bat", "fall", "knocked_down", "ice", "freeze_break"),
+                "frame_duration": 0.16,
+                "loop": False,
+            },
+            "get_up": {
+                "files": _animation_files("bat", "fall", "get_up"),
+                "frame_duration": 0.12,
+                "loop": False,
+            },
+            "jump_normal": {
+                "files": _animation_files("bat", "movement", "jump_actions", "basic_jump"),
+                "frame_duration": 0.12,
+                "loop": False,
+            },
+            "jump_second": {
+                "files": _animation_files("bat", "movement", "jump_actions", "second_jump"),
+                "frame_duration": 0.12,
+                "loop": False,
+            },
+            "jump_attack": {
+                "files": _animation_files("bat", "actions", "jump_attack"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "drink": {
+                "files": _animation_files("bat", "hold_item", "drink"),
+                "frame_duration": 0.08,
+                "loop": True,
+            },
+            "hurt": {
+                "files": _animation_files("bat", "hurt", "basic_hurt"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "block": {
+                "files": _animation_files("bat", "actions", "defend_actions", "defend"),
+                "frame_duration": 0.10,
+                "loop": False,
+            },
+            "block_break": {
+                "files": _animation_files("bat", "actions", "defend_actions", "defend_break"),
+                "frame_duration": 0.10,
+                "loop": False,
+            },
+            "block_dodge": {
+                "files": _prefixed_animation_files("dodge_1_", "bat", "actions", "defend_actions", "dodge"),
+                "frame_duration": 0.06,
+                "loop": False,
+            },
+            "attack_1": {
+                "files": _prefixed_animation_files("attack_1_", "bat", "actions", "basic_attack"),
+                "frame_duration": 0.07,
+                "loop": False,
+            },
+            "attack_2": {
+                "files": _prefixed_animation_files("attack_2_", "bat", "actions", "basic_attack"),
+                "frame_duration": 0.07,
+                "loop": False,
+            },
+            "heavy_attack": {
+                "files": _animation_files("bat", "actions", "sp_move_attack_1"),
+                "frame_duration": 0.09,
+                "loop": False,
+            },
+            "sp_move_attack_1": {
+                "files": _animation_files("bat", "actions", "sp_move_attack_1"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "sp_move_attack_2": {
+                "files": _animation_files("bat", "actions", "sp_move_attack_2"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "sp_vert_attack_1": {
+                "files": _animation_files("bat", "actions", "sp_vert_attack_1"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "sp_vert_attack_2": {
+                "files": _animation_files("bat", "actions", "sp_vert_attack_2"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "sprint_punch": {
+                "files": _animation_files("bat", "movement", "sprint_basic_attack"),
+                "frame_duration": 0.07,
+                "loop": False,
+            },
+            "throw": {
+                "files": _animation_files("bat", "hold_item", "throw_item", "ground_throw"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "throw_heavy": {
+                "files": _animation_files("bat", "hold_item", "heavy_carry", "throw"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "grapple": {
+                "files": _animation_files("bat", "actions", "grapple_actions", "grappling"),
+                "frame_duration": 0.10,
+                "loop": False,
+            },
+            "grappled": {
+                "files": _animation_files("bat", "actions", "grapple_actions", "grappled"),
+                "frame_duration": 0.12,
+                "loop": False,
+            },
+            "grapple_hit": {
+                "files": _animation_files("bat", "actions", "grapple_actions", "grappled", "hit_grappled"),
+                "frame_duration": 0.10,
+                "loop": False,
+            },
+            "die": {
+                "files": _animation_files("bat", "hurt", "died"),
+                "frame_duration": 0.12,
+                "loop": False,
+            },
+        },
+        "movement": {
+            "walk_speed": 220.0,
+            "run_speed": 380.0,
+            "lane_speed": 150.0,
+            "jump_velocity": -520.0,
+            "gravity": 1200.0,
+        },
+        "combat": {
+            "attack_duration": 0.30,
+            "special_projectile_interval": 0.5,
+        },
+        "basic_attack_cycle": ["attack_1", "attack_2"],
+    },
     "dummy": {
         "display_name": "Dummy",
         "scale": 2,

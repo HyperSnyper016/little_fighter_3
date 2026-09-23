@@ -143,6 +143,9 @@ class Fighter:
         self.deep_sword_swing_sfx_pending = False
         self.deep_sword_swing_loop_timer = 0.0
         self.template_uppercut_shear_sfx_pending = False
+        self.bat_shadow_step_sfx_pending = False
+        self.bat_lazer_sfx_pending = False
+        self.bat_summon_bats_sfx_pending = False
         self.ice_break_sfx_pending = False
         self.fire_knock_sfx_pending = False
         self.hunter_projectile_style = "basic"
@@ -188,6 +191,12 @@ class Fighter:
                 self.deep_sword_swing_loop_timer = 0.18
         if self.name == "template" and state == "sp_vert_attack_1":
             self.template_uppercut_shear_sfx_pending = True
+        if self.name == "bat" and state == "sp_vert_attack_1":
+            self.bat_shadow_step_sfx_pending = True
+        if self.name == "bat" and state == "sp_move_attack_2":
+            self.bat_lazer_sfx_pending = True
+        if self.name == "bat" and state == "sp_vert_attack_2":
+            self.bat_summon_bats_sfx_pending = True
 
     def _can_continue_special(self, state: str, hold_active: bool) -> bool:
         return self.name in {"deep", "template"} and self.special_move_followup_state == state and hold_active
@@ -769,9 +778,10 @@ class Fighter:
                 elif attack_just_pressed and self.z == 0 and move_x != 0 and running and not block_pressed and self.state in {"run", "walk"}:
                     self.state = "sprint_punch"
                     self._start_attack_state("sprint_punch", push_velocity_x=self.facing * 160.0)
-                elif attack_just_pressed and self.z == 0 and (move_x or move_y) and self.name != "deep":
-                    self.state = "heavy_attack"
-                    self._start_attack_state("heavy_attack")
+                elif attack_just_pressed and self.z == 0 and (move_x or move_y):
+                    self.state = "basic_attack"
+                    self.attack_animation = self._next_basic_attack_animation()
+                    self._start_attack_state("basic_attack")
                 elif attack_just_pressed and self.z == 0:
                     self.state = "basic_attack"
                     self.attack_animation = self._next_basic_attack_animation()
@@ -802,6 +812,10 @@ class Fighter:
             speed = self.movement["run_speed"] if self.state == "run" else self.movement["walk_speed"]
             if self.state == "run":
                 speed *= 1.25
+            self.x += move_x * speed * dt
+            self.lane_y += move_y * self.movement["lane_speed"] * dt
+        elif self.name == "bat" and self.state == "sp_vert_attack_1":
+            speed = self.movement["walk_speed"]
             self.x += move_x * speed * dt
             self.lane_y += move_y * self.movement["lane_speed"] * dt
         elif self.state == "jump_throw":
