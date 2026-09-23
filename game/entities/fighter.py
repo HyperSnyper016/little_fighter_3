@@ -136,10 +136,15 @@ class Fighter:
         self.freeze_break_started = False
         self.block_dodge_animation = "block_dodge"
         self.next_block_dodge_animation = "block_dodge"
+        self.block_dodge_cycle: list[str] = ["block_dodge"]
+        self.block_dodge_index = 0
         self.special_move_followup_state: str | None = None
         self.pending_projectile: str | None = None
         self.deep_sword_swing_sfx_pending = False
         self.animations = load_character_sheet(self.definition)
+        self.block_dodge_cycle = [name for name in ("block_dodge", "block_dodge_alt", "block_dodge_alt_2") if name in self.animations]
+        if not self.block_dodge_cycle:
+            self.block_dodge_cycle = ["block_dodge"]
         self.animation_player = AnimationPlayer(self.animations, "idle")
         self.basic_attack_cycle = [name for name in self.definition.get("basic_attack_cycle", ["attack_punch", "attack_kick"]) if name in self.animations]
         if not self.basic_attack_cycle:
@@ -708,11 +713,9 @@ class Fighter:
                     self.dodge_invulnerable = True
                     self.block_hold_timer = 0.0
                     self.defense_cooldown = 0.5
-                    self.block_dodge_animation = self.next_block_dodge_animation if self.next_block_dodge_animation in self.animations else "block_dodge"
-                    if self.block_dodge_animation == "block_dodge" and "block_dodge_alt" in self.animations:
-                        self.next_block_dodge_animation = "block_dodge_alt"
-                    else:
-                        self.next_block_dodge_animation = "block_dodge"
+                    self.block_dodge_animation = self.block_dodge_cycle[self.block_dodge_index] if self.block_dodge_cycle else "block_dodge"
+                    self.block_dodge_index = (self.block_dodge_index + 1) % len(self.block_dodge_cycle)
+                    self.next_block_dodge_animation = self.block_dodge_animation
                     if move_x != 0:
                         self.push_velocity_x = move_x * 320.0
                 elif self.is_defending:
@@ -737,7 +740,7 @@ class Fighter:
                 elif self.state == "lift_heavy" and attack_just_pressed:
                     self.state = "throw_heavy"
                     self._start_attack_state("throw_heavy")
-                elif attack_just_pressed and self.z == 0 and move_x != 0 and running and not block_pressed:
+                elif attack_just_pressed and self.z == 0 and move_x != 0 and running and not block_pressed and self.state in {"run", "walk"}:
                     self.state = "sprint_punch"
                     self._start_attack_state("sprint_punch", push_velocity_x=self.facing * 160.0)
                 elif attack_just_pressed and self.z == 0 and (move_x or move_y) and self.name != "deep":
@@ -775,7 +778,7 @@ class Fighter:
             self.x += move_x * speed * dt
             self.lane_y += move_y * self.movement["lane_speed"] * dt
         elif self.state == "jump_throw":
-            air_horizontal_speed = self.movement["walk_speed"] * (1.6 if self.jump_stage == 2 else 1.2)
+            air_horizontal_speed = self.movement["run_speed"] if self.jump_stage == 2 else self.movement["walk_speed"]
             if move_x != 0:
                 self.jump_horizontal_velocity = move_x * air_horizontal_speed
             else:

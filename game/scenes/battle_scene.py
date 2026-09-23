@@ -72,9 +72,9 @@ class BanditBrain:
         if abs_dx > 180.0:
             result.run = True
 
-        if self.attack_cooldown == 0.0 and same_lane and abs_dx < 145.0 and self_snapshot.state not in {"basic_attack", "heavy_attack", "sprint_punch", "throw", "throw_heavy", "lift_heavy"}:
+        if self.attack_cooldown == 0.0 and same_lane and abs_dx < 185.0 and self_snapshot.state not in {"basic_attack", "heavy_attack", "sprint_punch", "throw", "throw_heavy", "lift_heavy"}:
             result.attack_just_pressed = True
-            self.attack_cooldown = 0.75
+            self.attack_cooldown = 0.9
 
         return result
 

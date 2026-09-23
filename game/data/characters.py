@@ -699,7 +699,17 @@ CHARACTERS = {
                 "loop": False,
             },
             "block_dodge": {
-                "files": _animation_files("deep", "actions", "defend_actions", "dodge"),
+                "files": _prefixed_animation_files("dodge_1_", "deep", "actions", "defend_actions", "dodge"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "block_dodge_alt": {
+                "files": _prefixed_animation_files("dodge_2_", "deep", "actions", "defend_actions", "dodge"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "block_dodge_alt_2": {
+                "files": _prefixed_animation_files("dodge_3_", "deep", "actions", "defend_actions", "dodge"),
                 "frame_duration": 0.08,
                 "loop": False,
             },
@@ -785,8 +795,8 @@ CHARACTERS = {
             },
         },
         "movement": {
-            "walk_speed": 180.0,
-            "run_speed": 300.0,
+            "walk_speed": 200.0,
+            "run_speed": 420.0,
             "lane_speed": 130.0,
             "jump_velocity": -520.0,
             "gravity": 1200.0,

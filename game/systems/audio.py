@@ -6,6 +6,17 @@ import pygame
 
 
 class AudioBank:
+    muted = False
+
+    @classmethod
+    def toggle_mute(cls) -> bool:
+        cls.muted = not cls.muted
+        return cls.muted
+
+    @classmethod
+    def set_muted(cls, muted: bool) -> None:
+        cls.muted = bool(muted)
+
     def __init__(self, root: Path) -> None:
         self.root = root
         self.sounds = self._load_sounds()
@@ -42,6 +53,8 @@ class AudioBank:
         }
 
     def play(self, name: str) -> None:
+        if self.muted:
+            return
         sound = self.sounds.get(name)
         if sound is not None:
             sound.play()

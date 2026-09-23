@@ -10,6 +10,7 @@ from game.entities.fighter import FighterInput
 from game.scenes.battle_scene import BattleScene
 from game.scenes.character_select_scene import CharacterSelectScene
 from game.scenes.main_menu_scene import MainMenuScene
+from game.systems.audio import AudioBank
 
 
 class Game:
@@ -39,6 +40,8 @@ class Game:
                     sys.exit()
                 if event.type == pygame.KEYDOWN:
                     pressed_actions.add(event.key)
+                    if event.key == pygame.K_F9:
+                        AudioBank.toggle_mute()
                     if event.key == pygame.K_LEFT:
                         if self.left_tap_time <= self.double_tap_window:
                             self.sprint_direction = -1
@@ -92,6 +95,11 @@ class Game:
                         self.scene.paused = True
                 if self.scene.paused and pygame.K_m in pressed_actions:
                     self.scene = MainMenuScene()
+                if pygame.K_F10 in pressed_actions:
+                    for fighter in (self.scene.enemy,):
+                        if fighter is not None and not fighter.is_dead:
+                            fighter.health = 0
+                            fighter._start_death()
 
             if isinstance(self.scene, BattleScene):
                 self.scene.update(dt, self.input_state)
@@ -107,6 +115,7 @@ class Game:
             self.screen.fill(BG_COLOR)
             self.scene.draw(self.screen)
             if isinstance(self.scene, BattleScene):
-                hint = self.font.render("Arrows move, Shift runs, J attack, K jump_throw, L defend_actions, V knockdown, B lift, G break, N die, M revive, Q drink, F fire knock, I ice knock, H hurt", True, TEXT_COLOR)
+                mute_state = "Muted" if AudioBank.muted else "Sound on"
+                hint = self.font.render(f"Arrows move, Shift runs, J attack, K jump_throw, L defend_actions, V knockdown, B lift, G break, N die, M revive, Q drink, F fire knock, I ice knock, H hurt, F9 {mute_state}, F10 kill enemy", True, TEXT_COLOR)
                 self.screen.blit(hint, (20, 18))
             pygame.display.flip()
