@@ -76,8 +76,8 @@ class MainMenuScene:
         if self.start_requested:
             self.audio.play("menu_accept")
         self._confirm_pressed = confirm_pressed
-        self.scroll_x = (self.scroll_x + (self.scroll_speed_x * dt)) % self.tile_size[0]
-        self.scroll_y = (self.scroll_y + (self.scroll_speed_y * dt)) % self.tile_size[1]
+        self.scroll_x += self.scroll_speed_x * dt
+        self.scroll_y += self.scroll_speed_y * dt
 
     def _draw_background(self, surface: pygame.Surface) -> None:
         if not self.background_tiles:

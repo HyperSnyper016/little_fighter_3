@@ -102,6 +102,7 @@ class Fighter:
         self.jump_stage = 0
         self.jump_horizontal_velocity = 0.0
         self.jump_attack_active = False
+        self.dark_bat_flight_timer = 0.0
         self.movement = self.definition["movement"]
         self.combat = self.definition["combat"]
         self.stats = self.definition.get("stats", {})
@@ -143,6 +144,9 @@ class Fighter:
         self.pending_projectile: str | None = None
         self.deep_sword_swing_sfx_pending = False
         self.deep_sword_swing_loop_timer = 0.0
+        self.armored_bandit_sword_swing_sfx_pending = False
+        self.dark_bat_sword_swing_sfx_pending = False
+        self.dark_bat_shadow_step_sfx_pending = False
         self.template_uppercut_shear_sfx_pending = False
         self.bat_shadow_step_sfx_pending = False
         self.bat_lazer_sfx_pending = False
@@ -190,13 +194,21 @@ class Fighter:
             self.deep_sword_swing_sfx_pending = True
             if state == "sp_move_attack_2":
                 self.deep_sword_swing_loop_timer = 0.18
+        if self.name == "armored_bandit" and state in COMBAT_ATTACK_STATES:
+            self.armored_bandit_sword_swing_sfx_pending = True
+        if self.name == "dark_bat" and state in {"sp_move_attack_1", "jump_attack"}:
+            self.dark_bat_sword_swing_sfx_pending = True
         if self.name == "template" and state == "sp_vert_attack_1":
             self.template_uppercut_shear_sfx_pending = True
         if self.name == "bat" and state == "sp_vert_attack_1":
             self.bat_shadow_step_sfx_pending = True
-        if self.name == "bat" and state == "sp_move_attack_2":
+        if self.name == "dark_bat" and state == "sp_vert_attack_2":
+            self.dark_bat_shadow_step_sfx_pending = True
+        if self.name in {"bat", "dark_bat"} and state == "sp_move_attack_2":
             self.bat_lazer_sfx_pending = True
         if self.name == "bat" and state == "sp_vert_attack_2":
+            self.bat_summon_bats_sfx_pending = True
+        if self.name == "dark_bat" and state == "sp_vert_attack_1":
             self.bat_summon_bats_sfx_pending = True
 
     def _can_continue_special(self, state: str, hold_active: bool) -> bool:
@@ -433,8 +445,18 @@ class Fighter:
         self.jump_horizontal_velocity = self.facing * self.movement["run_speed"] * 1.8
         self.jump_attack_active = False
         self.velocity_z = self.movement["jump_velocity"]
-        if self.z <= 0:
+        if self.name == "dark_bat":
+            self.dark_bat_flight_timer = 7.0
+            self.z = max(self.z, 96.0)
+            self.velocity_z = 0.0
+        elif self.z <= 0:
             self.z = 1
+
+    def _cancel_dark_bat_flight(self) -> None:
+        self.jump_stage = 0
+        self.current_jump_animation = "jump_normal" if "jump_normal" in self.animations else "idle"
+        self.dark_bat_flight_timer = 0.0
+        self.velocity_z = 0.0
 
     def _start_jump_attack(self) -> None:
         self.state = "jump_throw"
@@ -444,6 +466,10 @@ class Fighter:
         self.has_applied_attack_damage = False
         self.attack_started = True
         self.attack_projectile_fired = False
+        if self.name == "dark_bat":
+            self.dark_bat_sword_swing_sfx_pending = True
+        if self.name == "armored_bandit":
+            self.armored_bandit_sword_swing_sfx_pending = True
         if self.name == "hunter":
             self.hunter_draw_arrow_sfx_pending = True
 
@@ -660,7 +686,10 @@ class Fighter:
         if self.state == "idle" and self.facing_lock_until_get_up and self.knock_hold_timer == 0:
             self.facing_lock_until_get_up = False
 
-        if self.z > 0 or self.velocity_z != 0:
+        dark_bat_flying = self.name == "dark_bat" and self.state == "jump_throw" and self.jump_stage == 2 and self.dark_bat_flight_timer > 0.0
+        if dark_bat_flying:
+            self.velocity_z = 0.0
+        elif self.z > 0 or self.velocity_z != 0:
             self.velocity_z += self.movement["gravity"] * dt
             self.z -= self.velocity_z * dt
             if self.z <= 0:
@@ -672,6 +701,7 @@ class Fighter:
                     self.jump_stage = 0
                     self.jump_horizontal_velocity = 0.0
                     self.jump_attack_active = False
+                    self.dark_bat_flight_timer = 0.0
                     self.current_jump_animation = "jump_normal"
                     self.attack_timer = 0.0
                     self.attack_started = False
@@ -814,6 +844,15 @@ class Fighter:
         if jump_just_pressed and was_airborne and self.state == "jump_throw" and self.jump_stage == 1:
             self._start_second_jump()
             self.just_jumped = True
+        elif jump_just_pressed and was_airborne and self.state == "jump_throw" and self.jump_stage == 2 and self.name == "dark_bat":
+            self._cancel_dark_bat_flight()
+            self.just_jumped = True
+
+        if self.name == "dark_bat" and self.state == "jump_throw" and self.jump_stage == 2 and self.dark_bat_flight_timer > 0.0:
+            self.dark_bat_flight_timer = max(0.0, self.dark_bat_flight_timer - dt)
+            if self.dark_bat_flight_timer == 0.0:
+                self.jump_stage = 0
+                self.current_jump_animation = "jump_normal" if "jump_normal" in self.animations else "idle"
 
         if (self.z > 0 or self.velocity_z != 0) and self.state not in (COMBAT_ATTACK_STATES | {"jump_throw"}):
             self.state = "jump_throw"

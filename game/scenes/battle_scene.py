@@ -678,7 +678,12 @@ class BattleScene:
                 attacker.attack_started = False
                 self.audio.play_hit_miss()
                 continue
-            if not attacker.world_hitbox_rect().inflate(72, 0).colliderect(defender.world_hitbox_rect()):
+            attack_range = 72
+            if attacker.name == "dark_bat" and attacker.state == "sp_move_attack_1":
+                attack_range = 132
+            if attacker.name == "dark_bat" and attacker.state == "jump_throw" and attacker.jump_attack_active:
+                attack_range = 96
+            if not attacker.world_hitbox_rect().inflate(attack_range, 0).colliderect(defender.world_hitbox_rect()):
                 attacker.has_applied_attack_damage = True
                 attacker.attack_started = False
                 self.audio.play_hit_miss()
@@ -705,9 +710,11 @@ class BattleScene:
                         defender._start_launch_knockdown()
                     else:
                         defender._start_knockdown()
-            if attacker.name == "deep" and attacker.state in {"sp_vert_attack_1", "sp_vert_attack_2", "sp_move_attack_2"}:
+            if attacker.name == "dark_bat" and attacker.state in {"sp_move_attack_1", "jump_throw"}:
                 self.audio.play("sword_cut")
-            elif attacker.name == "deep":
+            elif attacker.name in {"deep", "armored_bandit"} and attacker.state in {"sp_vert_attack_1", "sp_vert_attack_2", "sp_move_attack_2"}:
+                self.audio.play("sword_cut")
+            elif attacker.name in {"deep", "armored_bandit"}:
                 self.audio.play("sword_cut")
             else:
                 self.audio.play("hit_success")
@@ -725,6 +732,15 @@ class BattleScene:
             if fighter.deep_sword_swing_sfx_pending:
                 self.audio.play("sword_swing")
                 fighter.deep_sword_swing_sfx_pending = False
+            if fighter.armored_bandit_sword_swing_sfx_pending:
+                self.audio.play("sword_swing")
+                fighter.armored_bandit_sword_swing_sfx_pending = False
+            if fighter.dark_bat_sword_swing_sfx_pending:
+                self.audio.play("sword_swing")
+                fighter.dark_bat_sword_swing_sfx_pending = False
+            if fighter.dark_bat_shadow_step_sfx_pending:
+                self.audio.play("shadow_step")
+                fighter.dark_bat_shadow_step_sfx_pending = False
             if fighter.template_uppercut_shear_sfx_pending:
                 self.audio.play("uppercut_shear")
                 fighter.template_uppercut_shear_sfx_pending = False
@@ -792,7 +808,7 @@ class BattleScene:
         fighter.special_move_projectile_timer = fighter.combat.get("special_projectile_interval", 0.2)
 
     def _spawn_bat_laser(self, fighter: Fighter) -> None:
-        if fighter.name != "bat" or fighter.state != "sp_move_attack_2" or fighter.attack_projectile_fired:
+        if fighter.name not in {"bat", "dark_bat"} or fighter.state != "sp_move_attack_2" or fighter.attack_projectile_fired:
             return
 
         fighter.attack_projectile_fired = True
@@ -801,7 +817,14 @@ class BattleScene:
         self.projectiles.append(LaserProjectile(fighter, origin_x, origin_y, fighter.facing))
 
     def _spawn_bat_summons(self, fighter: Fighter) -> None:
-        if fighter.name != "bat" or fighter.state != "sp_vert_attack_2" or fighter.attack_projectile_fired:
+        if fighter.name == "bat":
+            allowed_state = "sp_vert_attack_2"
+        elif fighter.name == "dark_bat":
+            allowed_state = "sp_vert_attack_1"
+        else:
+            return
+
+        if fighter.state != allowed_state or fighter.attack_projectile_fired:
             return
 
         fighter.attack_projectile_fired = True
@@ -811,9 +834,10 @@ class BattleScene:
             target = self.fighter if self.fighter is not None and not self.fighter.is_dead else None
         base_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.12)
         base_y = fighter.world_hitbox_rect().top + 28.0
-        for index in range(3):
-            offset_x = fighter.facing * (index - 1) * 28.0
-            offset_y = (index - 1) * 16.0
+        summon_count = 6 if fighter.name == "dark_bat" else 3
+        for index in range(summon_count):
+            offset_x = fighter.facing * (index - ((summon_count - 1) / 2.0)) * 28.0
+            offset_y = (index - ((summon_count - 1) / 2.0)) * 16.0
             self.projectiles.append(BatSummonProjectile(fighter, target, base_x + offset_x, base_y + offset_y, fighter.facing, index))
 
     def _spawn_deep_projectile(self, fighter: Fighter) -> None:

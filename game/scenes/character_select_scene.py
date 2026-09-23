@@ -6,6 +6,8 @@ import pygame
 
 from game.constants import SCREEN_HEIGHT, SCREEN_WIDTH, TEXT_COLOR
 
+PORTRAIT_SIZE = (240, 240)
+
 
 class CharacterSelectScene:
     def __init__(self, sprites_root: Path, confirm_already_pressed: bool = False) -> None:
@@ -36,8 +38,7 @@ class CharacterSelectScene:
 
             profile = pygame.image.load(str(profile_path)).convert()
             profile.set_colorkey((0, 0, 0))
-            width, height = profile.get_size()
-            scaled = pygame.transform.scale(profile, (width * 2, height * 2))
+            scaled = pygame.transform.smoothscale(profile, PORTRAIT_SIZE)
             characters.append(
                 {
                     "key": directory.name,

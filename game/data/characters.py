@@ -192,6 +192,358 @@ CHARACTERS = {
         },
         "basic_attack_cycle": ["attack_punch", "attack_kick"],
     },
+    "armored_bandit": {
+        "display_name": "Armored Bandit",
+        "scale": 2,
+        "shadow_size": (56, 18),
+        "stats": {
+            "max_health": 20,
+            "max_mana": 20,
+            "touch_damage": 1,
+            "hitbox": (92, 160),
+        },
+        "animations": {
+            "idle": {
+                "files": _animation_files("armored_bandit", "idle"),
+                "frame_duration": 0.12,
+                "loop": True,
+            },
+            "walk": {
+                "files": _animation_files("armored_bandit", "movement", "walking"),
+                "frame_duration": 0.09,
+                "loop": True,
+            },
+            "run": {
+                "files": _animation_files("armored_bandit", "movement", "sprinting"),
+                "frame_duration": 0.07,
+                "loop": True,
+            },
+            "lift_heavy": {
+                "files": _animation_files("armored_bandit", "hold_item", "heavy_carry", "walk"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "fall": {
+                "files": _animation_files("armored_bandit", "fall", "knocked_down", "basic"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "knocked_fire": {
+                "files": _animation_files("armored_bandit", "fall", "knocked_down", "fire"),
+                "frame_duration": 0.07,
+                "loop": False,
+            },
+            "knocked_freeze": {
+                "files": _animation_files("armored_bandit", "fall", "knocked_down", "ice", "freeze"),
+                "frame_duration": 0.16,
+                "loop": False,
+            },
+            "knocked_freeze_break": {
+                "files": _animation_files("armored_bandit", "fall", "knocked_down", "ice", "freeze_break"),
+                "frame_duration": 0.16,
+                "loop": False,
+            },
+            "drink": {
+                "files": _animation_files("armored_bandit", "hold_item", "drink"),
+                "frame_duration": 0.08,
+                "loop": True,
+            },
+            "sprint_punch": {
+                "files": _animation_files("armored_bandit", "movement", "sprint_basic_attack"),
+                "frame_duration": 0.07,
+                "loop": False,
+            },
+            "throw": {
+                "files": _animation_files("armored_bandit", "hold_item", "throw_item", "ground_throw"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "hurt": {
+                "files": _animation_files("armored_bandit", "hurt", "basic_hurt"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "get_up": {
+                "files": _animation_files("armored_bandit", "fall", "get_up"),
+                "frame_duration": 0.10,
+                "loop": False,
+            },
+            "jump_normal": {
+                "files": _animation_files("armored_bandit", "movement", "jump_actions", "basic_jump"),
+                "frame_duration": 0.12,
+                "loop": False,
+            },
+            "jump_second": {
+                "files": _animation_files("armored_bandit", "movement", "jump_actions", "second_jump"),
+                "frame_duration": 0.12,
+                "loop": False,
+            },
+            "jump_attack": {
+                "files": _animation_files("armored_bandit", "actions", "jump_attack"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "block": {
+                "files": _animation_files("armored_bandit", "actions", "defend_actions", "defend"),
+                "frame_duration": 0.10,
+                "loop": False,
+            },
+            "block_break": {
+                "files": _animation_files("armored_bandit", "actions", "defend_actions", "defend_break"),
+                "frame_duration": 0.10,
+                "loop": False,
+            },
+            "block_dodge": {
+                "files": _prefixed_animation_files("dodge_1_", "armored_bandit", "actions", "defend_actions", "dodge"),
+                "frame_duration": 0.06,
+                "loop": False,
+            },
+            "block_dodge_alt": {
+                "files": _prefixed_animation_files("dodge_2_", "armored_bandit", "actions", "defend_actions", "dodge"),
+                "frame_duration": 0.06,
+                "loop": False,
+            },
+            "attack_punch": {
+                "files": _prefixed_animation_files("attack_1_", "armored_bandit", "actions", "basic_attack"),
+                "frame_duration": 0.07,
+                "loop": False,
+            },
+            "attack_kick": {
+                "files": [
+                    *_prefixed_animation_files("attack_2_", "armored_bandit", "actions", "basic_attack"),
+                    *_prefixed_animation_files("attack_3_", "armored_bandit", "actions", "basic_attack"),
+                ],
+                "frame_duration": 0.07,
+                "loop": False,
+            },
+            "heavy_attack": {
+                "files": _animation_files("armored_bandit", "actions", "sp_move_attack_1"),
+                "frame_duration": 0.07,
+                "loop": False,
+            },
+            "grapple": {
+                "files": _animation_files("armored_bandit", "actions", "grapple_actions", "grappling"),
+                "frame_duration": 0.10,
+                "loop": False,
+            },
+            "grappled": {
+                "files": _animation_files("armored_bandit", "actions", "grapple_actions", "grappled"),
+                "frame_duration": 0.12,
+                "loop": False,
+            },
+            "grapple_hit": {
+                "files": _animation_files("armored_bandit", "actions", "grapple_actions", "grappled", "hit_grappled"),
+                "frame_duration": 0.10,
+                "loop": False,
+            },
+            "die": {
+                "files": _animation_files("armored_bandit", "hurt", "died"),
+                "frame_duration": 0.12,
+                "loop": False,
+            },
+        },
+        "movement": {
+            "walk_speed": 220.0,
+            "run_speed": 380.0,
+            "lane_speed": 150.0,
+            "jump_velocity": -700.0,
+            "gravity": 1800.0,
+        },
+        "combat": {
+            "attack_duration": 0.18,
+        },
+        "basic_attack_cycle": ["attack_punch", "attack_kick"],
+    },
+    "dark_bat": {
+        "display_name": "Dark Bat",
+        "scale": 2,
+        "shadow_size": (56, 18),
+        "stats": {
+            "max_health": 20,
+            "max_mana": 100,
+            "touch_damage": 1,
+            "hitbox": (92, 160),
+        },
+        "animations": {
+            "idle": {
+                "files": _animation_files("dark_bat", "idle"),
+                "frame_duration": 0.12,
+                "loop": True,
+            },
+            "walk": {
+                "files": _animation_files("dark_bat", "movement", "walking"),
+                "frame_duration": 0.09,
+                "loop": True,
+            },
+            "run": {
+                "files": _animation_files("dark_bat", "movement", "sprinting"),
+                "frame_duration": 0.07,
+                "loop": True,
+            },
+            "lift_heavy": {
+                "files": _animation_files("dark_bat", "hold_item", "heavy_carry", "walk"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "fall": {
+                "files": _animation_files("dark_bat", "fall", "knocked_down", "basic"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "knocked_fire": {
+                "files": _animation_files("dark_bat", "fall", "knocked_down", "fire"),
+                "frame_duration": 0.07,
+                "loop": False,
+            },
+            "knocked_freeze": {
+                "files": _animation_files("dark_bat", "fall", "knocked_down", "ice", "freeze"),
+                "frame_duration": 0.16,
+                "loop": False,
+            },
+            "knocked_freeze_break": {
+                "files": _animation_files("dark_bat", "fall", "knocked_down", "ice", "freeze_break"),
+                "frame_duration": 0.16,
+                "loop": False,
+            },
+            "get_up": {
+                "files": _animation_files("dark_bat", "fall", "get_up"),
+                "frame_duration": 0.12,
+                "loop": False,
+            },
+            "jump_normal": {
+                "files": _animation_files("dark_bat", "movement", "jump_actions", "basic_jump"),
+                "frame_duration": 0.12,
+                "loop": False,
+            },
+            "jump_second": {
+                "files": _animation_files("dark_bat", "movement", "jump_actions", "second_jump"),
+                "frame_duration": 0.10,
+                "loop": True,
+            },
+            "jump_attack": {
+                "files": _animation_files("dark_bat", "actions", "jump_attack"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "drink": {
+                "files": _animation_files("dark_bat", "hold_item", "drink"),
+                "frame_duration": 0.08,
+                "loop": True,
+            },
+            "hurt": {
+                "files": _animation_files("dark_bat", "hurt", "basic_hurt"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "block": {
+                "files": _animation_files("dark_bat", "actions", "defend_actions", "defend"),
+                "frame_duration": 0.10,
+                "loop": False,
+            },
+            "block_break": {
+                "files": _animation_files("dark_bat", "actions", "defend_actions", "defend_break"),
+                "frame_duration": 0.10,
+                "loop": False,
+            },
+            "block_dodge": {
+                "files": _prefixed_animation_files("dodge_1_", "dark_bat", "actions", "defend_actions", "dodge"),
+                "frame_duration": 0.06,
+                "loop": False,
+            },
+            "attack_1": {
+                "files": _prefixed_animation_files("attack_1_", "dark_bat", "actions", "basic_attack"),
+                "frame_duration": 0.07,
+                "loop": False,
+            },
+            "attack_2": {
+                "files": _prefixed_animation_files("attack_2_", "dark_bat", "actions", "basic_attack"),
+                "frame_duration": 0.07,
+                "loop": False,
+            },
+            "attack_3": {
+                "files": _prefixed_animation_files("attack_3_", "dark_bat", "actions", "basic_attack"),
+                "frame_duration": 0.07,
+                "loop": False,
+            },
+            "attack_4": {
+                "files": _prefixed_animation_files("attack_4_", "dark_bat", "actions", "basic_attack"),
+                "frame_duration": 0.07,
+                "loop": False,
+            },
+            "heavy_attack": {
+                "files": _animation_files("dark_bat", "actions", "sp_move_attack_1"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "sp_move_attack_1": {
+                "files": _animation_files("dark_bat", "actions", "sp_move_attack_1"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "sp_move_attack_2": {
+                "files": _animation_files("dark_bat", "actions", "sp_move_attack_2"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "sp_vert_attack_1": {
+                "files": _animation_files("dark_bat", "actions", "sp_vert_attack_1"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "sp_vert_attack_2": {
+                "files": _animation_files("dark_bat", "actions", "sp_vert_attack_2"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "sprint_punch": {
+                "files": _animation_files("dark_bat", "movement", "sprint_basic_attack"),
+                "frame_duration": 0.07,
+                "loop": False,
+            },
+            "throw": {
+                "files": _animation_files("dark_bat", "hold_item", "throw_item", "ground_throw"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "throw_heavy": {
+                "files": _animation_files("dark_bat", "hold_item", "heavy_carry", "throw"),
+                "frame_duration": 0.08,
+                "loop": False,
+            },
+            "grapple": {
+                "files": _animation_files("dark_bat", "actions", "grapple_actions", "grappling"),
+                "frame_duration": 0.10,
+                "loop": False,
+            },
+            "grappled": {
+                "files": _animation_files("dark_bat", "actions", "grapple_actions", "grappled"),
+                "frame_duration": 0.12,
+                "loop": False,
+            },
+            "grapple_hit": {
+                "files": _animation_files("dark_bat", "actions", "grapple_actions", "grappled", "hit_grappled"),
+                "frame_duration": 0.10,
+                "loop": False,
+            },
+            "die": {
+                "files": _animation_files("dark_bat", "hurt", "died"),
+                "frame_duration": 0.12,
+                "loop": False,
+            },
+        },
+        "movement": {
+            "walk_speed": 220.0,
+            "run_speed": 380.0,
+            "lane_speed": 150.0,
+            "jump_velocity": -520.0,
+            "gravity": 1200.0,
+        },
+        "combat": {
+            "attack_duration": 0.30,
+            "special_projectile_interval": 0.5,
+        },
+        "basic_attack_cycle": ["attack_1", "attack_2", "attack_3", "attack_4"],
+    },
     "hunter": {
         "display_name": "Hunter",
         "scale": 2,
