@@ -142,12 +142,16 @@ class Fighter:
         self.block_dodge_index = 0
         self.special_move_followup_state: str | None = None
         self.pending_projectile: str | None = None
+        self.davis_ball_projectiles_pending = 0
+        self.davis_ball_spawned_sp_1 = False
+        self.davis_ball_spawned_sp_2 = False
         self.deep_sword_swing_sfx_pending = False
         self.deep_sword_swing_loop_timer = 0.0
         self.armored_bandit_sword_swing_sfx_pending = False
         self.dark_bat_sword_swing_sfx_pending = False
         self.dark_bat_shadow_step_sfx_pending = False
         self.template_uppercut_shear_sfx_pending = False
+        self.davis_uppercut_shear_sfx_pending = False
         self.bat_shadow_step_sfx_pending = False
         self.bat_lazer_sfx_pending = False
         self.bat_summon_bats_sfx_pending = False
@@ -165,6 +169,19 @@ class Fighter:
         self.basic_attack_index = 0
         self.special_move_projectile_index = 0
         self.attack_animation = self.basic_attack_cycle[0]
+        self.davis_move_attack_1_alt = False
+        self.animation_previous_frame_index = 0
+        self.denis_ball_projectiles_pending = 0
+        self.denis_sp_move_attack_1_spawned_frames: set[int] = set()
+        self.denis_sp_vert_attack_1_sound_frames: set[int] = set()
+        self.denis_sp_move_attack_2_sound_frames: set[int] = set()
+        self.denis_follow_orb_pending = False
+        self.denis_sp_vert_attack_2_spawned = False
+        self.denis_follow_orb_create_sfx_pending = False
+        self.denis_next_sp_vert_attack_1_sound = "hit_miss1"
+        self.denis_next_sp_move_attack_2_sound = "hit_miss1"
+        self.denis_sp_vert_attack_1_sound_pending: list[str] = []
+        self.denis_sp_move_attack_2_sound_pending: list[str] = []
 
     def _has_animation(self, name: str) -> bool:
         return name in self.animations
@@ -210,9 +227,33 @@ class Fighter:
             self.bat_summon_bats_sfx_pending = True
         if self.name == "dark_bat" and state == "sp_vert_attack_1":
             self.bat_summon_bats_sfx_pending = True
+        if self.name == "davis" and state == "sp_move_attack_1":
+            self.davis_ball_projectiles_pending = 0
+            self.davis_ball_spawned_sp_1 = False
+            self.davis_ball_spawned_sp_2 = False
+            self.davis_move_attack_1_alt = False
+        if self.name == "davis" and state == "sp_vert_attack_1":
+            self.davis_uppercut_shear_sfx_pending = True
+            self.z = max(self.z, 1.0)
+            self.velocity_z = self.movement["jump_velocity"] * 0.85
+        if self.name == "denis" and state == "sp_move_attack_1":
+            self.denis_ball_projectiles_pending = 0
+            self.denis_sp_move_attack_1_spawned_frames.clear()
+        if self.name == "denis" and state == "sp_vert_attack_1":
+            self.denis_sp_vert_attack_1_sound_frames.clear()
+            self.denis_sp_vert_attack_1_sound_pending.clear()
+            self.denis_next_sp_vert_attack_1_sound = "hit_miss1"
+        if self.name == "denis" and state == "sp_move_attack_2":
+            self.denis_sp_move_attack_2_sound_frames.clear()
+            self.denis_sp_move_attack_2_sound_pending.clear()
+            self.denis_next_sp_move_attack_2_sound = "hit_miss1"
+        if self.name == "denis" and state == "sp_vert_attack_2":
+            self.denis_follow_orb_pending = False
+            self.denis_sp_vert_attack_2_spawned = False
+            self.denis_follow_orb_create_sfx_pending = False
 
     def _can_continue_special(self, state: str, hold_active: bool) -> bool:
-        return self.name in {"deep", "template"} and self.special_move_followup_state == state and hold_active
+        return self.name in {"deep", "template", "davis"} and self.special_move_followup_state == state and hold_active
 
     def _show_speech(self, text: str, duration: float = 1.4) -> None:
         self.speech_text = text
@@ -236,7 +277,7 @@ class Fighter:
         return True
 
     def _restart_move_followup(self, state: str, hold_active: bool) -> bool:
-        if self.name not in {"deep", "template"} or not hold_active:
+        if self.name not in {"deep", "template", "davis"} or not hold_active:
             return False
         if not self._consume_mana_for_state(state):
             self.state = "idle"
@@ -251,6 +292,11 @@ class Fighter:
         self.attack_projectile_fired = False
         self.special_move_followup_state = state
         followup_name = "sp_move_attack_1_follow" if state == "sp_move_attack_1" else "sp_move_attack_2_follow"
+        if self.name == "davis" and state == "sp_move_attack_1":
+            self.davis_move_attack_1_alt = not self.davis_move_attack_1_alt
+            self.davis_ball_spawned_sp_1 = False
+            self.davis_ball_spawned_sp_2 = False
+            followup_name = "sp_move_attack_1_follow" if self.davis_move_attack_1_alt else "sp_move_attack_1"
         self.animation_player.play(followup_name if followup_name in self.animations else state)
         return True
 
@@ -259,6 +305,24 @@ class Fighter:
             return
         self.attack_projectile_fired = False
         self.pending_projectile = "blade_swipe"
+
+    def _queue_davis_ball(self) -> None:
+        if self.name != "davis":
+            return
+        self.davis_ball_projectiles_pending += 1
+
+    def _queue_denis_ball(self) -> None:
+        if self.name != "denis":
+            return
+        self.denis_ball_projectiles_pending += 1
+
+    @staticmethod
+    def _crossed_frame_indices(previous_index: int, current_index: int, frame_count: int) -> list[int]:
+        if frame_count <= 0 or current_index == previous_index:
+            return []
+        if current_index > previous_index:
+            return list(range(previous_index + 1, current_index + 1))
+        return [*range(previous_index + 1, frame_count), *range(0, current_index + 1)]
 
     def _queue_hunter_air_arrow(self) -> None:
         if self.name != "hunter":
@@ -774,8 +838,9 @@ class Fighter:
                 else:
                     special_attack_started = True
             if special_attack_started and self.state == "sp_move_attack_1":
-                if self.name in {"deep", "template"}:
+                if self.name in {"deep", "template", "davis"}:
                     self.special_move_followup_state = "sp_move_attack_1"
+                    self.special_attack_lock = "sp_move_attack_1"
                 else:
                     self.special_move_followup_state = None
             if not special_attack_started:
@@ -894,10 +959,16 @@ class Fighter:
         elif self.state == "heavy_attack":
             animation_name = "heavy_attack"
         elif self.state == "sp_move_attack_1":
-            if self.animation_player.current_name == "sp_move_attack_1_follow" and "sp_move_attack_1_follow" in self.animations:
-                animation_name = "sp_move_attack_1_follow"
+            if self.name == "davis":
+                if self.davis_move_attack_1_alt:
+                    animation_name = "sp_move_attack_1_follow" if "sp_move_attack_1_follow" in self.animations else ("sp_move_attack_1" if "sp_move_attack_1" in self.animations else ("heavy_attack" if "heavy_attack" in self.animations else "idle"))
+                else:
+                    animation_name = "sp_move_attack_1" if "sp_move_attack_1" in self.animations else ("sp_move_attack_1_follow" if "sp_move_attack_1_follow" in self.animations else ("heavy_attack" if "heavy_attack" in self.animations else "idle"))
             else:
-                animation_name = "sp_move_attack_1" if "sp_move_attack_1" in self.animations else ("heavy_attack" if "heavy_attack" in self.animations else "idle")
+                if self.animation_player.current_name == "sp_move_attack_1_follow" and "sp_move_attack_1_follow" in self.animations:
+                    animation_name = "sp_move_attack_1_follow"
+                else:
+                    animation_name = "sp_move_attack_1" if "sp_move_attack_1" in self.animations else ("heavy_attack" if "heavy_attack" in self.animations else "idle")
         elif self.state == "sp_move_attack_2":
             if self.animation_player.current_name == "sp_move_attack_2_follow" and "sp_move_attack_2_follow" in self.animations:
                 animation_name = "sp_move_attack_2_follow"
@@ -953,7 +1024,47 @@ class Fighter:
             self.animation_player.play(animation_name)
         if self.state == "knocked_freeze" and self.freeze_timer > 0.0:
             self.animation_player.frame_index = min(0, len(self.animation_player.animations[self.animation_player.current_name]["surfaces"]) - 1)
+        previous_animation_name = self.animation_player.current_name
+        previous_frame_index = self.animation_player.frame_index
+        self.animation_previous_frame_index = previous_frame_index
         self.animation_player.update(dt, facing=self.facing)
+        if self.name == "davis" and self.state == "sp_move_attack_1":
+            if self.animation_player.current_name == "sp_move_attack_1" and self.animation_player.frame_index == 3 and not self.davis_ball_spawned_sp_1:
+                self._queue_davis_ball()
+                self.davis_ball_spawned_sp_1 = True
+            if self.animation_player.current_name == "sp_move_attack_1_follow" and self.animation_player.frame_index == 2 and not self.davis_ball_spawned_sp_2:
+                self._queue_davis_ball()
+                self.davis_ball_spawned_sp_2 = True
+        if self.name == "denis":
+            current_animation_name = self.animation_player.current_name
+            current_frame_index = self.animation_player.frame_index
+            frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
+            crossed_frames = self._crossed_frame_indices(previous_frame_index, current_frame_index, frame_count)
+
+            if self.state == "sp_move_attack_1" and current_animation_name == "sp_move_attack_1":
+                for frame_index in crossed_frames:
+                    if frame_index in {8, 14, 17} and frame_index not in self.denis_sp_move_attack_1_spawned_frames:
+                        self._queue_denis_ball()
+                        self.denis_sp_move_attack_1_spawned_frames.add(frame_index)
+            if self.state == "sp_vert_attack_1" and current_animation_name == "sp_vert_attack_1":
+                for frame_index in crossed_frames:
+                    if frame_index in {2, 4, 6, 9} and frame_index not in self.denis_sp_vert_attack_1_sound_frames:
+                        self.denis_sp_vert_attack_1_sound_pending.append(self.denis_next_sp_vert_attack_1_sound)
+                        self.denis_next_sp_vert_attack_1_sound = "hit_miss2" if self.denis_next_sp_vert_attack_1_sound == "hit_miss1" else "hit_miss1"
+                        self.denis_sp_vert_attack_1_sound_frames.add(frame_index)
+            if self.state == "sp_move_attack_2" and current_animation_name == "sp_move_attack_2":
+                for frame_index in crossed_frames:
+                    if frame_index in {2, 4, 6} and frame_index not in self.denis_sp_move_attack_2_sound_frames:
+                        self.denis_sp_move_attack_2_sound_pending.append(self.denis_next_sp_move_attack_2_sound)
+                        self.denis_next_sp_move_attack_2_sound = "hit_miss2" if self.denis_next_sp_move_attack_2_sound == "hit_miss1" else "hit_miss1"
+                        self.denis_sp_move_attack_2_sound_frames.add(frame_index)
+            if self.state == "sp_vert_attack_2" and current_animation_name == "sp_vert_attack_2":
+                for frame_index in crossed_frames:
+                    if frame_index == 5 and not self.denis_follow_orb_create_sfx_pending:
+                        self.denis_follow_orb_create_sfx_pending = True
+                    if frame_index == 2 and not self.denis_sp_vert_attack_2_spawned:
+                        self.denis_follow_orb_pending = True
+                        self.denis_sp_vert_attack_2_spawned = True
         if self.state == "sp_move_attack_1" and self.animation_player.finished:
             if self._can_continue_special("sp_move_attack_1", move_special_1_chord):
                 if self.name == "deep":

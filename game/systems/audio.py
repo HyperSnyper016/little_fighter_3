@@ -42,6 +42,8 @@ class AudioBank:
             "uppercut_shear": self._load_sound("uppercut_shear.wav"),
             "orb": self._load_sound("orb.wav"),
             "orb_burst": self._load_sound("orb_burst.wav"),
+            "denis_ball": self._load_sound("denis_ball.wav"),
+            "denis_orb_follow_create": self._load_sound("denis_orb_follow_create.wav"),
             "ice_break": self._load_sound("ice_break.wav"),
             "fire_knock": self._load_sound("fire_knock.wav"),
             "shadow_step": self._load_sound("shadow_step.wav"),

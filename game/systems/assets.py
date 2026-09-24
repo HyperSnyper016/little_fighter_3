@@ -28,6 +28,49 @@ def _load_sheet_frame(sheet_path: Path, frame_rect: tuple[int, int, int, int], s
     return pygame.transform.scale(frame, (width * scale, height * scale))
 
 
+def _trim_small_components(surface: pygame.Surface, max_component_size: int) -> pygame.Surface:
+    width, height = surface.get_size()
+    visited = [[False for _ in range(height)] for _ in range(width)]
+    directions = ((1, 0), (-1, 0), (0, 1), (0, -1))
+
+    for start_x in range(width):
+        for start_y in range(height):
+            if visited[start_x][start_y]:
+                continue
+
+            pixel = surface.get_at((start_x, start_y))
+            if pixel.r == 0 and pixel.g == 0 and pixel.b == 0:
+                visited[start_x][start_y] = True
+                continue
+
+            stack = [(start_x, start_y)]
+            component: list[tuple[int, int]] = []
+            visited[start_x][start_y] = True
+
+            while stack:
+                x, y = stack.pop()
+                component.append((x, y))
+                for dx, dy in directions:
+                    nx = x + dx
+                    ny = y + dy
+                    if nx < 0 or ny < 0 or nx >= width or ny >= height:
+                        continue
+                    if visited[nx][ny]:
+                        continue
+                    neighbor = surface.get_at((nx, ny))
+                    if neighbor.r == 0 and neighbor.g == 0 and neighbor.b == 0:
+                        visited[nx][ny] = True
+                        continue
+                    visited[nx][ny] = True
+                    stack.append((nx, ny))
+
+            if len(component) <= max_component_size:
+                for x, y in component:
+                    surface.set_at((x, y), (0, 0, 0))
+
+    return surface
+
+
 def _load_animation_frames(animation_name: str, animation: dict, scale: int) -> list[pygame.Surface]:
     surfaces: list[pygame.Surface] = []
 
@@ -45,6 +88,8 @@ def _load_animation_frames(animation_name: str, animation: dict, scale: int) -> 
             continue
 
         frame = pygame.image.load(str(frame_path)).convert()
+        if animation.get("trim_small_components"):
+            frame = _trim_small_components(frame, int(animation["trim_small_components"]))
         frame.set_colorkey((0, 0, 0))
         width, height = frame.get_size()
         surfaces.append(pygame.transform.scale(frame, (width * scale, height * scale)))

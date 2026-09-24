@@ -24,6 +24,7 @@ class MainMenuScene:
         self.scroll_speed_y = 18.0
         self.grid_seed = random.randrange(1, 1_000_000_000)
         self.background_tiles = self._load_background_tiles()
+        self.title_logo = self._load_title_logo()
         sounds_root = Path(__file__).resolve().parents[2] / "assets" / "sounds"
         self.audio = AudioBank(sounds_root)
         self.audio.play("menu_start")
@@ -69,6 +70,20 @@ class MainMenuScene:
             tiles.append(pygame.transform.smoothscale(image, self.tile_size))
         return tiles
 
+    def _load_title_logo(self) -> pygame.Surface | None:
+        logo_path = Path(__file__).resolve().parents[2] / "assets" / "LF3_logo.jpg"
+        if not logo_path.exists():
+            return None
+
+        logo = pygame.image.load(str(logo_path)).convert()
+        logo.set_colorkey((0, 0, 0))
+        width, height = logo.get_size()
+        target_width = 980
+        target_height = max(1, int(height * (target_width / width)))
+        scaled = pygame.transform.smoothscale(logo, (target_width, target_height))
+        scaled.set_colorkey((0, 0, 0))
+        return scaled
+
     def update(self, dt: float) -> None:
         keys = pygame.key.get_pressed()
         confirm_pressed = keys[pygame.K_j]
@@ -107,20 +122,31 @@ class MainMenuScene:
         surface.blit(overlay, (0, 0))
 
     def _draw_title(self, surface: pygame.Surface) -> None:
-        title = self.title_font.render("Little Fighter 3", True, TEXT_COLOR)
         option = self.option_font.render("Test Game", True, TEXT_COLOR)
         prompt = self.credit_font.render("Press Attack Key", True, TEXT_COLOR)
         credit = self.credit_font.render("Official game by Josh Olsson", True, TEXT_COLOR)
 
-        shadow_offset = (3, 3)
+        if self.title_logo is not None:
+            logo_rect = self.title_logo.get_rect(center=(SCREEN_WIDTH // 2, 140))
+            shadow = self.title_logo.copy()
+            shadow.fill((0, 0, 0, 120), special_flags=pygame.BLEND_RGBA_MULT)
+            surface.blit(shadow, (logo_rect.x + 3, logo_rect.y + 3))
+            surface.blit(self.title_logo, logo_rect)
+        else:
+            title = self.title_font.render("Little Fighter 3", True, TEXT_COLOR)
+            title_rect = title.get_rect(center=(SCREEN_WIDTH // 2, 140))
+            shadow = title.copy()
+            shadow.fill((0, 0, 0, 120), special_flags=pygame.BLEND_RGBA_MULT)
+            surface.blit(shadow, (title_rect.x + 3, title_rect.y + 3))
+            surface.blit(title, title_rect)
+
         for text, pos in (
-            (title, title.get_rect(center=(SCREEN_WIDTH // 2, 140))),
             (option, option.get_rect(center=(SCREEN_WIDTH // 2, 260))),
             (prompt, prompt.get_rect(center=(SCREEN_WIDTH // 2, 305))),
         ):
             shadow = text.copy()
             shadow.fill((0, 0, 0, 120), special_flags=pygame.BLEND_RGBA_MULT)
-            surface.blit(shadow, (pos.x + shadow_offset[0], pos.y + shadow_offset[1]))
+            surface.blit(shadow, (pos.x + 3, pos.y + 3))
             surface.blit(text, pos)
 
         credit_rect = credit.get_rect(bottomright=(SCREEN_WIDTH - 20, SCREEN_HEIGHT - 16))

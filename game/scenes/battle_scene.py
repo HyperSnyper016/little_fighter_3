@@ -484,7 +484,7 @@ class BatSummonProjectile:
 
 
 class BallProjectile:
-    def __init__(self, owner: Fighter, x: float, y: float, facing: int, ball_index: int) -> None:
+    def __init__(self, owner: Fighter, x: float, y: float, facing: int, ball_index: int, frame_scheme: str = "three_stage") -> None:
         self.owner = owner
         self.x = float(x)
         self.y = float(y)
@@ -501,9 +501,10 @@ class BallProjectile:
         self.frame_index = 0
         self.use_fast_frames = False
         self.fly_time = 0.0
+        self.frame_scheme = frame_scheme
         root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "blue_ball" / f"ball_{ball_index}"
-        self.slow_frames = self._load_frames(root / "slow")
-        self.fast_frames = self._load_frames(root / "fast")
+        self.slow_frames = self._load_frames(root / "davis_ball_slow")
+        self.fast_frames = self._load_frames(root / "davis_ball_fast")
         self.burst_frames = self._load_frames(root.parent / "ball_burst")
         self.frames = self.slow_frames or self.fast_frames or [pygame.Surface((16, 16), pygame.SRCALPHA)]
 
@@ -556,6 +557,355 @@ class BallProjectile:
         if self.facing < 0:
             frame = pygame.transform.flip(frame, True, False)
         surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
+
+
+class DavisBallProjectile:
+    def __init__(self, owner: Fighter, x: float, y: float, facing: int) -> None:
+        self.owner = owner
+        self.x = float(x)
+        self.y = float(y)
+        self.facing = 1 if facing >= 0 else -1
+        self.speed_x = 240.0
+        self.max_speed_x = 980.0
+        self.acceleration_x = 180.0
+        self.damage = 1
+        self.phase = "fly"
+        self.can_damage = True
+        self.finished = False
+        self.just_burst = False
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        self.fly_time = 0.0
+        self.frame_mode = "slow"
+        root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "davis_ball"
+        self.slow_frames = self._load_frames(root / "davis_ball_slow")
+        self.medium_frames = self._load_frames(root / "davis_ball_medium")
+        self.fast_frames = self._load_frames(root / "davis_ball_fast")
+        self.burst_frames = self._load_frames(root / "davis_ball_burst")
+        self.frames = self.slow_frames or self.medium_frames or self.fast_frames or [pygame.Surface((16, 16), pygame.SRCALPHA)]
+
+    def _load_frames(self, folder: Path) -> list[pygame.Surface]:
+        frames: list[pygame.Surface] = []
+        if not folder.exists():
+            return frames
+        for path in sorted(folder.iterdir()):
+            if not path.is_file() or path.suffix.lower() not in {".png", ".bmp"}:
+                continue
+            frame = pygame.image.load(str(path)).convert()
+            frame.set_colorkey((0, 0, 0))
+            frames.append(frame)
+        return frames
+
+    def _frames_for_mode(self, mode: str) -> list[pygame.Surface]:
+        if mode == "slow":
+            return self.slow_frames or self.medium_frames or self.fast_frames
+        if mode == "medium":
+            return self.medium_frames or self.fast_frames or self.slow_frames
+        return self.fast_frames or self.medium_frames or self.slow_frames
+
+    def _start_burst(self) -> None:
+        if self.phase == "burst":
+            return
+        self.phase = "burst"
+        self.can_damage = False
+        self.just_burst = True
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        self.frames = self.burst_frames or self.frames
+
+    def rect(self) -> pygame.Rect:
+        frame = self.frames[self.frame_index]
+        return pygame.Rect(int(self.x - frame.get_width() / 2), int(self.y - frame.get_height() / 2), frame.get_width(), frame.get_height())
+
+    def update(self, dt: float) -> None:
+        if self.phase == "fly":
+            self.fly_time += dt
+            speed_gain = self.acceleration_x * dt * (1.0 + (self.fly_time * 2.2))
+            self.speed_x = min(self.max_speed_x, self.speed_x + speed_gain)
+            if self.frame_scheme == "two_stage":
+                mode = "slow" if self.speed_x < 480.0 else "fast"
+            elif self.speed_x < 380.0:
+                mode = "slow"
+            elif self.speed_x < 700.0:
+                mode = "medium"
+            else:
+                mode = "fast"
+            if mode != self.frame_mode:
+                self.frame_mode = mode
+                self.frame_index = 0
+                self.frame_timer = 0.0
+            self.frames = self._frames_for_mode(mode) or self.frames
+            self.frame_timer += dt
+            while self.frame_timer >= 0.08:
+                self.frame_timer -= 0.08
+                self.frame_index = (self.frame_index + 1) % max(1, len(self.frames))
+            self.x += self.facing * self.speed_x * dt
+        else:
+            self.frame_timer += dt
+            while self.frame_timer >= 0.05:
+                self.frame_timer -= 0.05
+                self.frame_index += 1
+                if self.frame_index >= len(self.frames):
+                    self.frame_index = len(self.frames) - 1 if self.frames else 0
+                    self.finished = True
+                    break
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        frame = self.frames[self.frame_index]
+        if self.facing < 0:
+            frame = pygame.transform.flip(frame, True, False)
+        surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
+
+
+class DenisOrbProjectile:
+    def __init__(self, owner: Fighter, x: float, y: float, facing: int) -> None:
+        self.owner = owner
+        self.x = float(x)
+        self.y = float(y)
+        self.facing = 1 if facing >= 0 else -1
+        self.damage = 1
+        self.can_damage = True
+        self.finished = False
+        self.phase = "fly"
+        self.just_burst = False
+        self.stage_timer = 0.0
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        self.stage_index = 0
+        self.speed_by_stage = [420.0, 620.0, 860.0, 1120.0]
+        root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "denis_orb"
+        self.stage_frames = [
+            self._load_frames(root / "1"),
+            self._load_frames(root / "2"),
+            self._load_frames(root / "3"),
+            self._load_frames(root / "4"),
+        ]
+        self.burst_frames = self._load_frames(root / "burst")
+        self.frames = self.stage_frames[0] or [pygame.Surface((16, 16), pygame.SRCALPHA)]
+
+    def _load_frames(self, folder: Path) -> list[pygame.Surface]:
+        frames: list[pygame.Surface] = []
+        if not folder.exists():
+            return frames
+        for path in sorted(folder.iterdir()):
+            if not path.is_file() or path.suffix.lower() not in {".png", ".bmp"}:
+                continue
+            frame = pygame.image.load(str(path)).convert()
+            frame.set_colorkey((0, 0, 0))
+            frames.append(frame)
+        return frames
+
+    def _stage_frames(self, stage_index: int) -> list[pygame.Surface]:
+        if stage_index < 0:
+            stage_index = 0
+        if stage_index >= len(self.stage_frames):
+            stage_index = len(self.stage_frames) - 1
+        return self.stage_frames[stage_index] or self.frames
+
+    def _start_burst(self) -> None:
+        if self.phase == "burst":
+            return
+        self.phase = "burst"
+        self.can_damage = False
+        self.just_burst = True
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        self.frames = self.burst_frames or self.frames
+
+    def rect(self) -> pygame.Rect:
+        frame = self.frames[self.frame_index]
+        return pygame.Rect(int(self.x - frame.get_width() / 2), int(self.y - frame.get_height() / 2), frame.get_width(), frame.get_height())
+
+    def update(self, dt: float) -> None:
+        if self.phase == "fly":
+            self.stage_timer += dt
+            self.stage_index = min(3, int(self.stage_timer))
+            self.speed_x = self.speed_by_stage[self.stage_index]
+            self.frames = self._stage_frames(self.stage_index)
+            self.frame_timer += dt
+            while self.frame_timer >= 0.08:
+                self.frame_timer -= 0.08
+                self.frame_index = (self.frame_index + 1) % max(1, len(self.frames))
+            self.x += self.facing * self.speed_x * dt
+        else:
+            self.frame_timer += dt
+            while self.frame_timer >= 0.05:
+                self.frame_timer -= 0.05
+                self.frame_index += 1
+                if self.frame_index >= len(self.frames):
+                    self.frame_index = len(self.frames) - 1 if self.frames else 0
+                    self.finished = True
+                    break
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        frame = self.frames[self.frame_index]
+        if self.facing < 0:
+            frame = pygame.transform.flip(frame, True, False)
+        surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
+
+
+class DenisFollowOrbProjectile:
+    def __init__(self, owner: Fighter, target: Fighter | None, x: float, y: float, facing: int) -> None:
+        self.owner = owner
+        self.target = target
+        self.x = float(x)
+        self.y = float(y)
+        self.facing = 1 if facing >= 0 else -1
+        self.damage = 1
+        self.can_damage = False
+        self.finished = False
+        self.phase = "create"
+        self.just_burst = False
+        self.create_timer = 0.0
+        self.stage_timer = 0.0
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        self.stage_index = 0
+        self.speed_x = 0.0
+        self.speed_y = 88.0
+        self.speed_by_stage = [360.0, 520.0, 720.0, 940.0]
+        self.targeting_factor = 0.7
+        self.swing_width = 170.0
+        self.wide_swing = False
+        self.wobble_phase = random.uniform(0.0, math.tau)
+        self.roam_phase = random.uniform(0.0, math.tau)
+        self.impact_x = self.x
+        self.impact_y = self.y
+        root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "denis_follow_orb"
+        self.create_frames = self._load_frames(root / "create")
+        self.stage_frames = [
+            self._load_frames(root / "slow"),
+            self._load_frames(root / "medium"),
+            self._load_frames(root / "fast"),
+            self._load_frames(root / "fast"),
+        ]
+        self.burst_frames = self._load_frames(root / "burst")
+        self.frames = self.create_frames or self.stage_frames[0] or [pygame.Surface((16, 16), pygame.SRCALPHA)]
+
+    def _load_frames(self, folder: Path) -> list[pygame.Surface]:
+        frames: list[pygame.Surface] = []
+        if not folder.exists():
+            return frames
+        for path in sorted(folder.iterdir()):
+            if not path.is_file() or path.suffix.lower() not in {".png", ".bmp"}:
+                continue
+            frame = pygame.image.load(str(path)).convert()
+            frame.set_colorkey((0, 0, 0))
+            frames.append(frame)
+        return frames
+
+    def _frames_for_stage(self, stage_index: int) -> list[pygame.Surface]:
+        stage_index = max(0, min(stage_index, len(self.stage_frames) - 1))
+        return self.stage_frames[stage_index] or self.frames
+
+    def _launch(self) -> None:
+        if self.phase == "fly":
+            return
+        self.phase = "fly"
+        self.can_damage = True
+        self.stage_timer = 0.0
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        self.stage_index = 0
+        self.frames = self._frames_for_stage(0) or self.frames
+
+    def _start_burst(self) -> None:
+        if self.phase == "burst":
+            return
+        self.phase = "burst"
+        self.can_damage = False
+        self.just_burst = True
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        self.impact_x = self.x
+        self.impact_y = self.y
+        self.frames = self.burst_frames or self.frames
+
+    def rect(self) -> pygame.Rect:
+        frame = self.frames[self.frame_index]
+        if self.phase == "create":
+            return pygame.Rect(int(self.x - frame.get_width() / 2), int(self.y - frame.get_height() / 2), frame.get_width(), frame.get_height())
+        if self.phase == "fly":
+            return pygame.Rect(int(self.x - frame.get_width() / 2), int(self.y - frame.get_height() / 2), frame.get_width(), frame.get_height())
+        return pygame.Rect(int(self.impact_x - frame.get_width() / 2), int(self.impact_y - frame.get_height() / 2), frame.get_width(), frame.get_height())
+
+    def update(self, dt: float) -> None:
+        if self.phase == "create":
+            self.create_timer += dt
+            self.frame_timer += dt
+            while self.frame_timer >= 0.08:
+                self.frame_timer -= 0.08
+                self.frame_index = (self.frame_index + 1) % max(1, len(self.frames))
+            if self.owner.is_dead:
+                self.finished = True
+                return
+            if self.owner.state == "sp_vert_attack_2" and self.owner.animation_player.current_name == "sp_vert_attack_2" and self.owner.animation_player.frame_index >= 5:
+                self._launch()
+            elif self.create_timer >= 2.0:
+                self.finished = True
+            return
+
+        if self.phase == "fly":
+            self.stage_timer += dt
+            self.stage_index = min(3, int(self.stage_timer))
+            self.speed_x = self.speed_by_stage[self.stage_index]
+            self.frames = self._frames_for_stage(self.stage_index)
+            self.frame_timer += dt
+            while self.frame_timer >= 0.08:
+                self.frame_timer -= 0.08
+                self.frame_index = (self.frame_index + 1) % max(1, len(self.frames))
+
+            if self.target is not None and not self.target.is_dead:
+                target_rect = self.target.world_hitbox_rect()
+                target_x = target_rect.centerx
+                target_y = target_rect.centery - 24
+                dx = target_x - self.x
+                dy = target_y - self.y
+                distance = max(1.0, math.hypot(dx, dy))
+                self.wide_swing = self.wide_swing or (self.stage_timer >= 0.75 and distance >= 520.0)
+                self.facing = 1 if dx >= 0 else -1
+                homing_strength = (0.022 + min(0.04, distance / 5600.0)) * self.targeting_factor
+                swing_phase = self.stage_timer * 2.1 + self.wobble_phase
+                vertical_ratio = min(1.0, abs(dy) / 64.0)
+                swing_width = self.swing_width + (self.swing_width * (1.15 if self.wide_swing else 0.85) * vertical_ratio)
+                swing_bias = math.copysign(self.swing_width * ((0.55 if not self.wide_swing else 0.92) + 0.5 * vertical_ratio), dy if dy != 0 else self.facing)
+                swing_x = (math.sin(swing_phase) * swing_width) + swing_bias
+                swing_y = math.cos(swing_phase * (1.18 if self.wide_swing else 1.08)) * self.speed_y * (0.26 + (0.24 * vertical_ratio))
+                swing_y += math.sin(swing_phase * 0.5) * self.speed_y * (0.18 if self.wide_swing else 0.10)
+                self.x += (self.facing * self.speed_x * 0.18 + swing_x) * dt
+                self.y += (((dy / distance) * self.speed_y * homing_strength * (2.4 if self.wide_swing else 1.8)) + swing_y) * dt
+            else:
+                roam_phase = self.stage_timer * 1.9 + self.roam_phase
+                self.wide_swing = True
+                swing_x = (math.sin(roam_phase) * self.swing_width * 1.65) + (self.facing * self.swing_width * 0.82)
+                self.x += (self.facing * self.speed_x * 0.22 + swing_x) * dt
+                self.y += math.sin(roam_phase * 1.25) * self.speed_y * 0.58 * dt
+                self.y += math.cos(roam_phase * 0.63) * self.speed_y * 0.18 * dt
+
+            if self.stage_timer >= 12.0:
+                self.finished = True
+            return
+
+        self.frame_timer += dt
+        while self.frame_timer >= 0.05:
+            self.frame_timer -= 0.05
+            self.frame_index += 1
+            if self.frame_index >= len(self.frames):
+                self.frame_index = len(self.frames) - 1 if self.frames else 0
+                self.finished = True
+                break
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        frame = self.frames[self.frame_index]
+        if self.facing < 0:
+            frame = pygame.transform.flip(frame, True, False)
+        if self.phase == "fly":
+            surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
+            return
+        if self.phase == "create":
+            surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
+            return
+        surface.blit(frame, (int(self.impact_x - camera_x - frame.get_width() / 2), int(self.impact_y - frame.get_height() / 2)))
 
 
 class BladeSwipeProjectile:
@@ -663,6 +1013,12 @@ class BattleScene:
                 continue
             if attacker.name == "bat" and attacker.state in {"sp_move_attack_2", "sp_vert_attack_2"}:
                 continue
+            if attacker.name == "davis" and attacker.state == "sp_move_attack_1":
+                continue
+            if attacker.name == "denis" and attacker.state == "sp_move_attack_1":
+                continue
+            if attacker.name == "denis" and attacker.state == "sp_vert_attack_2":
+                continue
             if attacker.state == "jump_throw" and not attacker.jump_attack_active:
                 continue
             if attacker.has_applied_attack_damage:
@@ -708,6 +1064,8 @@ class BattleScene:
                 elif attacker.state == "sp_vert_attack_1":
                     if attacker.name in {"deep", "template"}:
                         defender._start_launch_knockdown()
+                    elif attacker.name == "davis":
+                        defender._start_knockdown()
                     else:
                         defender._start_knockdown()
             if attacker.name == "dark_bat" and attacker.state in {"sp_move_attack_1", "jump_throw"}:
@@ -744,6 +1102,16 @@ class BattleScene:
             if fighter.template_uppercut_shear_sfx_pending:
                 self.audio.play("uppercut_shear")
                 fighter.template_uppercut_shear_sfx_pending = False
+            if fighter.davis_uppercut_shear_sfx_pending:
+                self.audio.play("uppercut_shear")
+                fighter.davis_uppercut_shear_sfx_pending = False
+            if fighter.denis_follow_orb_create_sfx_pending:
+                self.audio.play("denis_orb_follow_create")
+                fighter.denis_follow_orb_create_sfx_pending = False
+            while fighter.denis_sp_vert_attack_1_sound_pending:
+                self.audio.play(fighter.denis_sp_vert_attack_1_sound_pending.pop(0))
+            while fighter.denis_sp_move_attack_2_sound_pending:
+                self.audio.play(fighter.denis_sp_move_attack_2_sound_pending.pop(0))
             if fighter.bat_shadow_step_sfx_pending:
                 self.audio.play("shadow_step")
                 fighter.bat_shadow_step_sfx_pending = False
@@ -806,6 +1174,53 @@ class BattleScene:
         self.projectiles.append(BallProjectile(fighter, origin_x, origin_y, fighter.facing, ball_index))
         self.audio.play("orb")
         fighter.special_move_projectile_timer = fighter.combat.get("special_projectile_interval", 0.2)
+
+    def _spawn_denis_projectile(self, fighter: Fighter) -> None:
+        if fighter.name != "denis" or fighter.state != "sp_move_attack_1":
+            return
+
+        current_name = fighter.animation_player.current_name
+        if current_name not in {"sp_move_attack_1", "sp_move_attack_1_follow"}:
+            return
+
+        trigger_frames = {2, 7, 13, 16, 17}
+        current_frame = fighter.animation_player.frame_index
+        if current_frame not in trigger_frames:
+            return
+
+        if current_frame in fighter.denis_sp_move_attack_1_spawned_frames:
+            return
+
+        fighter.denis_sp_move_attack_1_spawned_frames.add(current_frame)
+        origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.42)
+        origin_y = GROUND_Y + fighter.lane_y - fighter.z - 56.0
+        self.projectiles.append(DenisOrbProjectile(fighter, origin_x, origin_y, fighter.facing))
+        self.audio.play("denis_ball")
+
+    def _spawn_denis_follow_orb(self, fighter: Fighter) -> None:
+        if fighter.name != "denis" or fighter.state != "sp_vert_attack_2":
+            return
+        if not fighter.denis_follow_orb_pending or fighter.attack_projectile_fired:
+            return
+
+        fighter.denis_follow_orb_pending = False
+        fighter.attack_projectile_fired = True
+        target = self.enemy if fighter is self.fighter else self.fighter
+        if target is not None and target.is_dead:
+            target = None
+        origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.55)
+        origin_y = fighter.world_hitbox_rect().bottom - 54.0
+        self.projectiles.append(DenisFollowOrbProjectile(fighter, target, origin_x, origin_y, fighter.facing))
+
+    def _spawn_davis_projectile(self, fighter: Fighter) -> None:
+        if fighter.name != "davis" or fighter.davis_ball_projectiles_pending <= 0:
+            return
+
+        fighter.davis_ball_projectiles_pending -= 1
+        origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.42)
+        origin_y = GROUND_Y + fighter.lane_y - fighter.z - 56.0
+        self.projectiles.append(DavisBallProjectile(fighter, origin_x, origin_y, fighter.facing))
+        self.audio.play("orb")
 
     def _spawn_bat_laser(self, fighter: Fighter) -> None:
         if fighter.name not in {"bat", "dark_bat"} or fighter.state != "sp_move_attack_2" or fighter.attack_projectile_fired:
@@ -871,7 +1286,7 @@ class BattleScene:
             if projectile.finished:
                 self.projectiles.remove(projectile)
                 continue
-            if isinstance(projectile, BallProjectile) and projectile.phase == "fly":
+            if isinstance(projectile, (BallProjectile, DavisBallProjectile, DenisOrbProjectile, DenisFollowOrbProjectile)) and projectile.phase == "fly":
                 if projectile.x <= visible_left or projectile.x >= visible_right:
                     projectile.x = max(visible_left, min(visible_right, projectile.x))
                     projectile._start_burst()
@@ -955,6 +1370,9 @@ class BattleScene:
         for fighter in (self.fighter, self.enemy):
             self._spawn_hunter_projectile(fighter)
             self._spawn_template_projectile(fighter)
+            self._spawn_denis_projectile(fighter)
+            self._spawn_denis_follow_orb(fighter)
+            self._spawn_davis_projectile(fighter)
             self._spawn_bat_laser(fighter)
             self._spawn_bat_summons(fighter)
             self._spawn_deep_projectile(fighter)
