@@ -22,6 +22,8 @@ class AudioBank:
         self.sounds = self._load_sounds()
         self.step_toggle = 0
         self.miss_toggle = 0
+        self.fireball_toggle = 0
+        self.fire_breath_toggle = 0
 
     def _load_sound(self, file_name: str) -> pygame.mixer.Sound | None:
         path = self.root / file_name
@@ -40,12 +42,19 @@ class AudioBank:
             "blade_swipe_sound": self._load_sound("blade_swipe_sound.wav"),
             "sword_swing": self._load_sound("sword_swing.wav"),
             "uppercut_shear": self._load_sound("uppercut_shear.wav"),
+            "davis_uppercut": self._load_sound("davis_uppercut.wav"),
             "orb": self._load_sound("orb.wav"),
             "orb_burst": self._load_sound("orb_burst.wav"),
             "denis_ball": self._load_sound("denis_ball.wav"),
             "denis_orb_follow_create": self._load_sound("denis_orb_follow_create.wav"),
             "ice_break": self._load_sound("ice_break.wav"),
             "fire_knock": self._load_sound("fire_knock.wav"),
+            "fireball_1": self._load_sound("fireball_1.wav"),
+            "fireball_2": self._load_sound("fireball_2.wav"),
+            "fire_breath_1": self._load_sound("fire_breath_1.wav"),
+            "fire_breath_2": self._load_sound("fire_breath_2.wav"),
+            "arrow_enchanted_shot": self._load_sound("arrow_enchanted_shot.wav"),
+            "henry_wind": self._load_sound("henry_wind.wav"),
             "shadow_step": self._load_sound("shadow_step.wav"),
             "lazer": self._load_sound("lazer.wav"),
             "summon_bats": self._load_sound("summon_bats.wav"),
@@ -76,3 +85,11 @@ class AudioBank:
     def play_hit_miss(self) -> None:
         self.miss_toggle = 1 - self.miss_toggle
         self.play("hit_miss1" if self.miss_toggle == 0 else "hit_miss2")
+
+    def play_fireball(self) -> None:
+        self.fireball_toggle = 1 - self.fireball_toggle
+        self.play("fireball_1" if self.fireball_toggle == 0 else "fireball_2")
+
+    def play_fire_breath(self) -> None:
+        self.fire_breath_toggle = 1 - self.fire_breath_toggle
+        self.play("fire_breath_1" if self.fire_breath_toggle == 0 else "fire_breath_2")

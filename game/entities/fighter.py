@@ -147,6 +147,21 @@ class Fighter:
         self.davis_ball_spawned_sp_2 = False
         self.deep_sword_swing_sfx_pending = False
         self.deep_sword_swing_loop_timer = 0.0
+        self.firen_fireball_projectiles_pending = 0
+        self.firen_fire_breath_projectiles_pending = 0
+        self.firen_fire_trail_projectiles_pending = 0
+        self.firen_fire_explosion_pending = 0
+        self.firen_fire_trail_timer = 0.0
+        self.firen_fire_trail_last_x = self.x
+        self.firen_fire_trail_last_y = self.lane_y
+        self.firen_sp_move_attack_1_spawned_frames: set[int] = set()
+        self.firen_sp_move_attack_1_stage = 0
+        self.firen_sp_move_attack_2_spawned = False
+        self.firen_sp_move_attack_2_looping = False
+        self.firen_sp_move_attack_2_stage = 0
+        self.firen_sp_vert_attack_2_spawned = False
+        self.henry_wind_projectiles_pending = 0
+        self.henry_wind_sfx_pending = False
         self.armored_bandit_sword_swing_sfx_pending = False
         self.dark_bat_sword_swing_sfx_pending = False
         self.dark_bat_shadow_step_sfx_pending = False
@@ -205,8 +220,10 @@ class Fighter:
         self.pending_projectile = None
         self.hunter_projectile_style = "basic"
         self.push_velocity_x = push_velocity_x
-        if self.name == "hunter" and state in {"basic_attack", "jump_throw"}:
+        if self.name in {"hunter", "henry"} and state in {"basic_attack", "jump_throw", "sp_move_attack_1"}:
             self.hunter_draw_arrow_sfx_pending = True
+        if self.name == "henry" and state == "sp_move_attack_1":
+            self.hunter_projectile_style = "enchanted"
         if self.name == "deep" and state in {"sp_vert_attack_1", "sp_vert_attack_2", "sp_move_attack_2"}:
             self.deep_sword_swing_sfx_pending = True
             if state == "sp_move_attack_2":
@@ -251,9 +268,64 @@ class Fighter:
             self.denis_follow_orb_pending = False
             self.denis_sp_vert_attack_2_spawned = False
             self.denis_follow_orb_create_sfx_pending = False
+        self._reset_firen_special_state(state)
 
     def _can_continue_special(self, state: str, hold_active: bool) -> bool:
-        return self.name in {"deep", "template", "davis"} and self.special_move_followup_state == state and hold_active
+        return self.name in {"deep", "template", "davis", "firen"} and self.special_move_followup_state == state and hold_active
+
+    def _restart_firen_move_attack_1(self, stage: int, hold_active: bool) -> bool:
+        if self.name != "firen" or not hold_active:
+            return False
+        if not self._consume_mana_for_state("sp_move_attack_1"):
+            self.state = "idle"
+            self.special_move_followup_state = None
+            self.attack_started = False
+            self.has_applied_attack_damage = False
+            self.attack_projectile_fired = False
+            return False
+
+        self.state = "sp_move_attack_1"
+        self.attack_timer = self.combat["attack_duration"]
+        self.has_applied_attack_damage = False
+        self.attack_started = True
+        self.attack_projectile_fired = False
+        self.special_move_followup_state = "sp_move_attack_1"
+        self.firen_sp_move_attack_1_stage = stage
+        self.firen_sp_move_attack_1_spawned_frames.clear()
+        animation_name = "sp_move_attack_1"
+        if stage == 2 and "sp_move_attack_1_follow" in self.animations:
+            animation_name = "sp_move_attack_1_follow"
+        elif stage == 3 and "sp_move_attack_1_follow_2" in self.animations:
+            animation_name = "sp_move_attack_1_follow_2"
+        self.animation_player.play(animation_name if animation_name in self.animations else "sp_move_attack_1")
+        return True
+
+    def _reset_firen_special_state(self, state: str, clear_pending: bool = True) -> None:
+        if self.name != "firen":
+            return
+
+        if state == "sp_move_attack_1":
+            self.firen_sp_move_attack_1_spawned_frames.clear()
+            self.firen_sp_move_attack_1_stage = 0
+            if clear_pending:
+                self.firen_fireball_projectiles_pending = 0
+        elif state == "sp_move_attack_2":
+            self.firen_sp_move_attack_2_spawned = False
+            self.firen_sp_move_attack_2_looping = False
+            self.firen_sp_move_attack_2_stage = 0
+            if clear_pending:
+                self.firen_fire_breath_projectiles_pending = 0
+        elif state == "sp_vert_attack_1":
+            self.firen_fire_trail_timer = 0.0
+            self.firen_fire_trail_last_x = self.x
+            self.firen_fire_trail_last_y = self.lane_y
+            if clear_pending:
+                self.firen_fire_trail_projectiles_pending = 0
+        elif state == "sp_vert_attack_2":
+            self.firen_sp_vert_attack_2_spawned = False
+            if clear_pending:
+                self.firen_fire_explosion_pending = 0
+                self.firen_fire_trail_projectiles_pending = 0
 
     def _show_speech(self, text: str, duration: float = 1.4) -> None:
         self.speech_text = text
@@ -276,8 +348,8 @@ class Fighter:
         self.mana -= cost
         return True
 
-    def _restart_move_followup(self, state: str, hold_active: bool) -> bool:
-        if self.name not in {"deep", "template", "davis"} or not hold_active:
+    def _restart_move_followup(self, state: str, hold_active: bool, start_frame_index: int = 0) -> bool:
+        if self.name not in {"deep", "template", "davis", "firen"} or not hold_active:
             return False
         if not self._consume_mana_for_state(state):
             self.state = "idle"
@@ -291,13 +363,30 @@ class Fighter:
         self.attack_started = True
         self.attack_projectile_fired = False
         self.special_move_followup_state = state
-        followup_name = "sp_move_attack_1_follow" if state == "sp_move_attack_1" else "sp_move_attack_2_follow"
+        followup_name = state
         if self.name == "davis" and state == "sp_move_attack_1":
             self.davis_move_attack_1_alt = not self.davis_move_attack_1_alt
             self.davis_ball_spawned_sp_1 = False
             self.davis_ball_spawned_sp_2 = False
-            followup_name = "sp_move_attack_1_follow" if self.davis_move_attack_1_alt else "sp_move_attack_1"
+            followup_name = "sp_move_attack_1_follow" if self.davis_move_attack_1_alt and "sp_move_attack_1_follow" in self.animations else "sp_move_attack_1"
+        elif state == "sp_move_attack_1" and "sp_move_attack_1_follow" in self.animations and self.name in {"deep", "template"}:
+            followup_name = "sp_move_attack_1_follow"
+        elif self.name == "firen" and state == "sp_move_attack_1":
+            if self.firen_sp_move_attack_1_stage == 2 and "sp_move_attack_1_follow" in self.animations:
+                followup_name = "sp_move_attack_1_follow"
+            elif self.firen_sp_move_attack_1_stage == 3 and "sp_move_attack_1_follow_2" in self.animations:
+                followup_name = "sp_move_attack_1_follow_2"
+        elif state == "sp_move_attack_2" and "sp_move_attack_2_follow" in self.animations and self.name in {"deep"}:
+            followup_name = "sp_move_attack_2_follow"
+        elif self.name == "firen" and state == "sp_move_attack_2":
+            followup_name = "sp_move_attack_2_follow" if self.firen_sp_move_attack_2_stage == 2 and "sp_move_attack_2_follow" in self.animations else "sp_move_attack_2"
+        self._reset_firen_special_state(state, clear_pending=False)
         self.animation_player.play(followup_name if followup_name in self.animations else state)
+        if start_frame_index > 0:
+            self.animation_player.frame_index = min(start_frame_index, len(self.animation_player.animations[self.animation_player.current_name]["surfaces"]) - 1)
+            self.animation_player.timer = 0.0
+            self.animation_player.finished = False
+            self.animation_player.current_frame = self.animation_player.animations[self.animation_player.current_name]["surfaces"][self.animation_player.frame_index]
         return True
 
     def _queue_deep_blade_swipe(self) -> None:
@@ -481,8 +570,8 @@ class Fighter:
         self.state = "grapple_hit"
         self.state_timer = 0.22
 
-    def receive_damage(self, amount: int) -> None:
-        if amount <= 0 or self.is_dead or self.damage_cooldown > 0 or self.is_invulnerable:
+    def receive_damage(self, amount: int, ignore_invulnerability: bool = False) -> None:
+        if amount <= 0 or self.is_dead or (self.damage_cooldown > 0 and not ignore_invulnerability) or (self.is_invulnerable and not ignore_invulnerability):
             return
 
         self.health = max(0, self.health - amount)
@@ -677,7 +766,7 @@ class Fighter:
         if self.state.startswith("sp_move_attack") and self.special_attack_lock == self.state:
             if attack_pressed:
                 self.special_move_projectile_timer = max(0.0, self.special_move_projectile_timer - dt)
-                if self.special_move_projectile_timer == 0.0 and self.attack_projectile_fired:
+                if self.name != "henry" and self.special_move_projectile_timer == 0.0 and self.attack_projectile_fired:
                     self.attack_projectile_fired = False
                 if self.name == "deep" and self.state == "sp_move_attack_2":
                     self.deep_sword_swing_loop_timer = max(0.0, self.deep_sword_swing_loop_timer - dt)
@@ -802,6 +891,9 @@ class Fighter:
                     self._start_attack_state("sp_move_attack_1")
                     if self.name == "deep":
                         self._queue_deep_blade_swipe()
+                    if self.name == "firen":
+                        self.firen_sp_move_attack_1_stage = 1
+                        self.firen_sp_move_attack_1_spawned_frames.clear()
                     special_attack_started = True
                     self.special_attack_lock = "sp_move_attack_1"
                     self.special_move_projectile_timer = 0.0
@@ -811,7 +903,7 @@ class Fighter:
                 if self._consume_mana_for_state("sp_vert_attack_2"):
                     self.state = "sp_vert_attack_2"
                     self._start_attack_state("sp_vert_attack_2")
-                    if self.name == "deep":
+                    if self.name in {"deep", "firen"}:
                         self.z = 1.0
                         self.velocity_z = self.movement["jump_velocity"] * 0.9
                         self.just_jumped = True
@@ -823,6 +915,8 @@ class Fighter:
                 if self._consume_mana_for_state("sp_vert_attack_1"):
                     self.state = "sp_vert_attack_1"
                     self._start_attack_state("sp_vert_attack_1")
+                    if self.name == "firen":
+                        self.special_move_followup_state = "sp_vert_attack_1"
                     special_attack_started = True
                     self.special_attack_lock = "sp_vert_attack_1"
                 else:
@@ -834,11 +928,14 @@ class Fighter:
                     special_attack_started = True
                     self.special_attack_lock = "sp_move_attack_2"
                     self.special_move_projectile_timer = 0.0
-                    self.special_move_followup_state = "sp_move_attack_2" if self.name == "deep" and "sp_move_attack_2_follow" in self.animations else None
+                    self.special_move_followup_state = "sp_move_attack_2" if self.name in {"deep", "firen"} else None
+                    if self.name == "firen":
+                        self.firen_sp_move_attack_2_stage = 1
+                        self.firen_sp_move_attack_2_spawned = False
                 else:
                     special_attack_started = True
             if special_attack_started and self.state == "sp_move_attack_1":
-                if self.name in {"deep", "template", "davis"}:
+                if self.name in {"deep", "template", "davis", "firen"}:
                     self.special_move_followup_state = "sp_move_attack_1"
                     self.special_attack_lock = "sp_move_attack_1"
                 else:
@@ -932,6 +1029,11 @@ class Fighter:
             speed = self.movement["walk_speed"]
             self.x += move_x * speed * dt
             self.lane_y += move_y * self.movement["lane_speed"] * dt
+        elif self.name == "firen" and self.state == "sp_vert_attack_1":
+            speed = self.movement["run_speed"]
+            self.x += self.facing * speed * dt
+        elif self.name == "denis" and self.state == "sp_move_attack_2":
+            self.x += self.facing * self.movement["walk_speed"] * dt
         elif self.state == "jump_throw":
             air_horizontal_speed = self.movement["run_speed"] if self.jump_stage == 2 else self.movement["walk_speed"]
             if move_x != 0:
@@ -964,13 +1066,25 @@ class Fighter:
                     animation_name = "sp_move_attack_1_follow" if "sp_move_attack_1_follow" in self.animations else ("sp_move_attack_1" if "sp_move_attack_1" in self.animations else ("heavy_attack" if "heavy_attack" in self.animations else "idle"))
                 else:
                     animation_name = "sp_move_attack_1" if "sp_move_attack_1" in self.animations else ("sp_move_attack_1_follow" if "sp_move_attack_1_follow" in self.animations else ("heavy_attack" if "heavy_attack" in self.animations else "idle"))
+            elif self.name == "firen":
+                if self.firen_sp_move_attack_1_stage == 2 and "sp_move_attack_1_follow" in self.animations:
+                    animation_name = "sp_move_attack_1_follow"
+                elif self.firen_sp_move_attack_1_stage == 3 and "sp_move_attack_1_follow_2" in self.animations:
+                    animation_name = "sp_move_attack_1_follow_2"
+                else:
+                    animation_name = "sp_move_attack_1" if "sp_move_attack_1" in self.animations else ("heavy_attack" if "heavy_attack" in self.animations else "idle")
             else:
                 if self.animation_player.current_name == "sp_move_attack_1_follow" and "sp_move_attack_1_follow" in self.animations:
                     animation_name = "sp_move_attack_1_follow"
                 else:
                     animation_name = "sp_move_attack_1" if "sp_move_attack_1" in self.animations else ("heavy_attack" if "heavy_attack" in self.animations else "idle")
         elif self.state == "sp_move_attack_2":
-            if self.animation_player.current_name == "sp_move_attack_2_follow" and "sp_move_attack_2_follow" in self.animations:
+            if self.name == "firen":
+                if self.firen_sp_move_attack_2_stage == 2 and "sp_move_attack_2_follow" in self.animations:
+                    animation_name = "sp_move_attack_2_follow"
+                else:
+                    animation_name = "sp_move_attack_2" if "sp_move_attack_2" in self.animations else ("heavy_attack" if "heavy_attack" in self.animations else "idle")
+            elif self.animation_player.current_name == "sp_move_attack_2_follow" and "sp_move_attack_2_follow" in self.animations:
                 animation_name = "sp_move_attack_2_follow"
             else:
                 animation_name = "sp_move_attack_2" if "sp_move_attack_2" in self.animations else ("heavy_attack" if "heavy_attack" in self.animations else "idle")
@@ -1065,11 +1179,76 @@ class Fighter:
                     if frame_index == 2 and not self.denis_sp_vert_attack_2_spawned:
                         self.denis_follow_orb_pending = True
                         self.denis_sp_vert_attack_2_spawned = True
+        if self.name == "firen":
+            current_animation_name = self.animation_player.current_name
+            current_frame_index = self.animation_player.frame_index
+            frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
+            crossed_frames = self._crossed_frame_indices(previous_frame_index, current_frame_index, frame_count)
+
+            if self.state == "sp_move_attack_1" and current_animation_name == "sp_move_attack_1":
+                for frame_index in crossed_frames:
+                    if frame_index == 2 and frame_index not in self.firen_sp_move_attack_1_spawned_frames:
+                        self.firen_fireball_projectiles_pending += 1
+                        self.firen_sp_move_attack_1_spawned_frames.add(frame_index)
+            if self.state == "sp_move_attack_1" and current_animation_name == "sp_move_attack_1_follow":
+                for frame_index in crossed_frames:
+                    if frame_index == 2 and frame_index not in self.firen_sp_move_attack_1_spawned_frames:
+                        self.firen_fireball_projectiles_pending += 1
+                        self.firen_sp_move_attack_1_spawned_frames.add(frame_index)
+            if self.state == "sp_move_attack_1" and current_animation_name == "sp_move_attack_1_follow_2":
+                for frame_index in crossed_frames:
+                    if frame_index == 3 and frame_index not in self.firen_sp_move_attack_1_spawned_frames:
+                        self.firen_fireball_projectiles_pending += 1
+                        self.firen_sp_move_attack_1_spawned_frames.add(frame_index)
+            if self.state == "sp_move_attack_2" and current_animation_name == "sp_move_attack_2":
+                for frame_index in crossed_frames:
+                    if frame_index == 2 and not self.firen_sp_move_attack_2_spawned:
+                        self.firen_fire_breath_projectiles_pending += 1
+                        self.firen_sp_move_attack_2_spawned = True
+            if self.state == "sp_move_attack_2" and current_animation_name == "sp_move_attack_2_follow":
+                if current_frame_index == 0 and not self.firen_sp_move_attack_2_spawned:
+                    self.firen_fire_breath_projectiles_pending += 1
+                    self.firen_sp_move_attack_2_spawned = True
+                elif current_frame_index != 0:
+                    self.firen_sp_move_attack_2_spawned = False
+            if self.state == "sp_vert_attack_1" and current_animation_name == "sp_vert_attack_1":
+                trail_distance = abs(self.x - self.firen_fire_trail_last_x)
+                self.firen_fire_trail_timer += dt
+                if trail_distance >= 18.0 or self.firen_fire_trail_timer >= 0.12:
+                    self.firen_fire_trail_timer = 0.0
+                    self.firen_fire_trail_last_x = self.x
+                    self.firen_fire_trail_last_y = self.lane_y
+                    self.firen_fire_trail_projectiles_pending += 1
+            if self.state == "sp_vert_attack_2" and current_animation_name == "sp_vert_attack_2":
+                for frame_index in crossed_frames:
+                    if frame_index == 4 and not self.firen_sp_vert_attack_2_spawned:
+                        self.firen_fire_explosion_pending += 1
+                        self.firen_sp_vert_attack_2_spawned = True
+        if self.name == "henry":
+            current_animation_name = self.animation_player.current_name
+            current_frame_index = self.animation_player.frame_index
+            frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
+            crossed_frames = self._crossed_frame_indices(previous_frame_index, current_frame_index, frame_count)
+
+            if self.state == "sp_move_attack_2" and current_animation_name == "sp_move_attack_2":
+                for frame_index in crossed_frames:
+                    if frame_index == 7 and not self.attack_projectile_fired:
+                        self.henry_wind_projectiles_pending += 1
+                        self.henry_wind_sfx_pending = True
         if self.state == "sp_move_attack_1" and self.animation_player.finished:
             if self._can_continue_special("sp_move_attack_1", move_special_1_chord):
                 if self.name == "deep":
                     self._queue_deep_blade_swipe()
-                self._restart_move_followup("sp_move_attack_1", move_special_1_chord)
+                elif self.name == "firen":
+                    if self.firen_sp_move_attack_1_stage < 3:
+                        self._restart_firen_move_attack_1(self.firen_sp_move_attack_1_stage + 1, move_special_1_chord)
+                    else:
+                        self.special_move_followup_state = None
+                        self.state = "idle"
+                        self.attack_started = False
+                        self.has_applied_attack_damage = False
+                else:
+                    self._restart_move_followup("sp_move_attack_1", move_special_1_chord)
             else:
                 self.special_move_followup_state = None
                 self.state = "idle"
@@ -1077,7 +1256,21 @@ class Fighter:
                 self.has_applied_attack_damage = False
         if self.state == "sp_move_attack_2" and self.animation_player.finished:
             if self._can_continue_special("sp_move_attack_2", move_special_2_chord):
-                self._restart_move_followup("sp_move_attack_2", move_special_2_chord)
+                if self.name == "firen":
+                    self.firen_sp_move_attack_2_stage = 2
+                    self.firen_sp_move_attack_2_spawned = True
+                    self.firen_fire_breath_projectiles_pending += 1
+                    self.animation_player.play("sp_move_attack_2_follow" if "sp_move_attack_2_follow" in self.animations else "sp_move_attack_2")
+                else:
+                    self._restart_move_followup("sp_move_attack_2", move_special_2_chord)
+            else:
+                self.special_move_followup_state = None
+                self.state = "idle"
+                self.attack_started = False
+                self.has_applied_attack_damage = False
+        if self.state == "sp_vert_attack_1" and self.animation_player.finished:
+            if self._can_continue_special("sp_vert_attack_1", vert_special_1_chord):
+                self._restart_move_followup("sp_vert_attack_1", vert_special_1_chord, start_frame_index=3 if self.name == "firen" else 0)
             else:
                 self.special_move_followup_state = None
                 self.state = "idle"
@@ -1088,6 +1281,12 @@ class Fighter:
             self.has_applied_attack_damage = False
             self.attack_started = False
             self.attack_projectile_fired = False
+        if self.name == "firen" and self.state == "sp_move_attack_2" and move_special_2_chord and self.special_attack_lock == "sp_move_attack_2" and self.animation_player.current_name == "sp_move_attack_2" and self.animation_player.finished and self.firen_sp_move_attack_2_looping:
+            loop_index = min(3, len(self.animation_player.animations[self.animation_player.current_name]["surfaces"]) - 1)
+            self.animation_player.finished = False
+            self.animation_player.frame_index = loop_index
+            self.animation_player.timer = 0.0
+            self.animation_player.current_frame = self.animation_player.animations[self.animation_player.current_name]["surfaces"][loop_index]
         if animation_name == "block" and self.block_strength == 0:
             self.animation_player.frame_index = min(1, len(self.animation_player.animations["block"]["surfaces"]) - 1)
             frame = self.animation_player.animations["block"]["surfaces"][self.animation_player.frame_index]
