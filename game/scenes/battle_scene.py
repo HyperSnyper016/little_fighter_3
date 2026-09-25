@@ -16,6 +16,9 @@ from game.systems.item_anchors import HandAnchor, load_hand_anchors
 from game.systems.stage import ForestStage
 
 
+THROWN_ITEM_MAX_DISTANCE = 330.0
+
+
 def _load_folder_frames(folder: Path) -> list[pygame.Surface]:
     frames: list[pygame.Surface] = []
     if not folder.exists():
@@ -71,33 +74,106 @@ def _trim_item_frames(frames: list[pygame.Surface]) -> list[pygame.Surface]:
 
 def _load_item_sprite_animations(root: Path) -> dict[str, dict[str, list[pygame.Surface]]]:
     item_sprites: dict[str, dict[str, list[pygame.Surface]]] = {}
-    for item_folder in sorted(path for path in root.rglob("*") if path.is_dir()):
-        item_name = item_folder.name
-        animations: dict[str, list[pygame.Surface]] = {}
-        for animation_folder in sorted(item_folder.iterdir()):
-            if not animation_folder.is_dir() or not animation_folder.name.startswith(f"{item_name}_"):
+    if not root.is_dir():
+        return item_sprites
+
+    for category_folder in sorted(root.iterdir()):
+        if not category_folder.is_dir() or category_folder.name.startswith("_"):
+            continue
+        for item_folder in sorted(category_folder.iterdir()):
+            if not item_folder.is_dir() or item_folder.name.startswith("_"):
                 continue
-            action = animation_folder.name[len(item_name) + 1:]
-            frame_folder = animation_folder / "idle"
-            if not frame_folder.is_dir():
-                frame_folder = animation_folder
-            frames = _trim_item_frames(_scale_frames(_load_folder_frames(frame_folder), 1.2))
-            if frames:
-                animations[action] = frames
-        if animations:
-            item_sprites[item_folder.relative_to(root).as_posix()] = animations
+
+            animations: dict[str, list[pygame.Surface]] = {}
+            for action_folder in sorted(item_folder.iterdir()):
+                if not action_folder.is_dir() or action_folder.name.startswith("_"):
+                    continue
+
+                frame_folder = action_folder
+                if action_folder.name == "holding" and (action_folder / "idle").is_dir():
+                    frame_folder = action_folder / "idle"
+                frames = _load_folder_frames(frame_folder)
+                if not frames and frame_folder != action_folder:
+                    frames = _load_folder_frames(action_folder)
+                if frames:
+                    animations[action_folder.name] = _trim_item_frames(_scale_frames(frames, 1.2))
+                    continue
+
+                for variant_folder in sorted(path for path in action_folder.rglob("*") if path.is_dir()):
+                    relative_parts = variant_folder.relative_to(item_folder).parts
+                    if any(part.startswith("_") for part in relative_parts):
+                        continue
+                    frames = _load_folder_frames(variant_folder)
+                    if frames:
+                        action = variant_folder.relative_to(item_folder).as_posix()
+                        animations[action] = _trim_item_frames(_scale_frames(frames, 1.2))
+
+            if animations:
+                item_sprites[item_folder.relative_to(root).as_posix()] = animations
     return item_sprites
 
 
-class MilkItem:
+class ConsumableItem:
+    BREAK_AFTER_THROW_LANDINGS = 2
+
+    def _initialize_landings(
+        self,
+        land_frame_sets: list[tuple[str, list[pygame.Surface]]],
+        landing_count: int = 0,
+    ) -> None:
+        self.land_frame_sets = land_frame_sets
+        self.landing_count = landing_count
+        self.landing_elapsed = 0.0
+        self.landing_animation_finished = False
+        self.break_after_landing = False
+
+    def _begin_landing(self, counts_toward_breakage: bool) -> str:
+        facing = getattr(self, "facing", 0)
+        side = "right" if facing > 0 else "left"
+        matching_sets = [
+            frames for name, frames in self.land_frame_sets if name.casefold().endswith(side)
+        ] if facing else []
+        self.frames = random.choice(matching_sets or [frames for _, frames in self.land_frame_sets])
+        if counts_toward_breakage:
+            self.landing_count += 1
+        self.break_after_landing = (
+            counts_toward_breakage and self.landing_count >= self.BREAK_AFTER_THROW_LANDINGS
+        )
+        self.phase = "landed"
+        self.frame_index = 0
+        self.frame_timer = 0.0
+        self.landing_elapsed = 0.0
+        self.landing_animation_finished = False
+        self.y = self.floor_y - self.frames[0].get_height() / 2
+        return "landed"
+
+    def _update_landing(self, dt: float) -> str | None:
+        if self.landing_animation_finished:
+            return None
+        self.landing_elapsed += dt
+        self.frame_timer += dt
+        while self.frame_timer >= 0.08 and self.frame_index < len(self.frames) - 1:
+            self.frame_timer -= 0.08
+            self.frame_index += 1
+        if self.landing_elapsed < len(self.frames) * 0.08:
+            return None
+        if self.break_after_landing:
+            self.phase = "breaking"
+            return "break"
+        self.landing_animation_finished = True
+        return None
+
+
+class SpawnedConsumable(ConsumableItem):
     def __init__(
         self,
+        item_id: str,
         x: float,
         lane_y: float,
         spawn_frames: list[pygame.Surface],
-        land_frame_sets: list[list[pygame.Surface]],
+        land_frame_sets: list[tuple[str, list[pygame.Surface]]],
     ) -> None:
-        self.item_id = "consumables/milk"
+        self.item_id = item_id
         self.x = x
         self.lane_y = lane_y
         self.floor_y = GROUND_Y + lane_y
@@ -108,13 +184,18 @@ class MilkItem:
         self.frame_index = 0
         self.frame_timer = 0.0
         self.fall_speed = 0.0
+        self.facing = 0
         self.y = -spawn_frames[0].get_height() / 2
+        self._initialize_landings(land_frame_sets)
 
     @property
     def pickupable(self) -> bool:
         return self.phase == "landed"
 
-    def update(self, dt: float) -> bool:
+    def update(self, dt: float) -> str | None:
+        if self.phase == "landed":
+            return self._update_landing(dt)
+
         self.frame_timer += dt
         if self.phase == "falling":
             while self.frame_timer >= 0.08:
@@ -123,21 +204,137 @@ class MilkItem:
             self.fall_speed += 900.0 * dt
             self.y += self.fall_speed * dt
             if self.y + self.frames[self.frame_index].get_height() / 2 >= self.floor_y:
-                self.phase = "landed"
-                self.frames = random.choice(self.land_frame_sets)
-                self.frame_index = 0
-                self.frame_timer = 0.0
-                return True
-        elif self.frame_index < len(self.frames) - 1:
-            while self.frame_timer >= 0.08 and self.frame_index < len(self.frames) - 1:
-                self.frame_timer -= 0.08
-                self.frame_index += 1
-        return False
+                return self._begin_landing(counts_toward_breakage=False)
+        return None
 
     def draw(self, surface: pygame.Surface, camera_x: float) -> None:
         frame = self.frames[self.frame_index]
         center_y = self.y if self.phase == "falling" else self.floor_y - frame.get_height() / 2
         surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(center_y - frame.get_height() / 2)))
+
+
+class ThrownItem(ConsumableItem):
+    def __init__(
+        self,
+        owner: Fighter,
+        item_id: str,
+        start_x: float,
+        end_x: float,
+        lane_y: float,
+        start_height: float,
+        horizontal_speed: float,
+        facing: int,
+        throw_frames: list[pygame.Surface],
+        land_frame_sets: list[tuple[str, list[pygame.Surface]]],
+        landing_count: int = 0,
+    ) -> None:
+        self.owner = owner
+        self.item_id = item_id
+        self.x = start_x
+        self.start_x = start_x
+        self.end_x = end_x
+        self.lane_y = lane_y
+        self.floor_y = GROUND_Y + lane_y
+        self.start_height = max(0.0, start_height)
+        self.facing = 1 if facing >= 0 else -1
+        self.frames = throw_frames
+        self.phase = "thrown"
+        self.frame_index = 0
+        self.frame_timer = 0.0
+        self.fall_speed = 0.0
+        self.elapsed = 0.0
+        self.flight_duration = max(0.08, abs(end_x - start_x) / horizontal_speed)
+        self.y = self.floor_y - throw_frames[0].get_height() / 2 - self.start_height
+        self._initialize_landings(land_frame_sets, landing_count)
+
+    @property
+    def pickupable(self) -> bool:
+        return self.phase == "landed" and not self.break_after_landing
+
+    def update(self, dt: float) -> str | None:
+        if self.phase == "landed":
+            return self._update_landing(dt)
+        self.frame_timer += dt
+        if self.phase == "falling":
+            while self.frame_timer >= 0.08:
+                self.frame_timer -= 0.08
+                self.frame_index = (self.frame_index + 1) % len(self.frames)
+            frame = self.frames[self.frame_index]
+            self.fall_speed += 900.0 * dt
+            self.y += self.fall_speed * dt
+            if self.y + frame.get_height() / 2 >= self.floor_y:
+                self.y = self.floor_y - frame.get_height() / 2
+                return self._begin_landing(counts_toward_breakage=True)
+            return None
+        if self.phase == "thrown":
+            self.elapsed = min(self.flight_duration, self.elapsed + dt)
+            progress = self.elapsed / self.flight_duration
+            self.frame_index = min(int(progress * len(self.frames)), len(self.frames) - 1)
+            frame = self.frames[self.frame_index]
+            arc_height = 48.0
+            height = self.start_height * (1.0 - progress) + arc_height * 4.0 * progress * (1.0 - progress)
+            self.x = self.start_x + (self.end_x - self.start_x) * progress
+            self.y = self.floor_y - frame.get_height() / 2 - height
+            if progress >= 1.0:
+                return self._begin_landing(counts_toward_breakage=True)
+        return None
+
+    def drop_at_hit(self) -> None:
+        self.phase = "falling"
+        self.frame_timer = 0.0
+        self.fall_speed = 0.0
+
+    def world_rect(self) -> pygame.Rect:
+        return self.frames[self.frame_index].get_rect(center=(round(self.x), round(self.y)))
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        frame = self.frames[self.frame_index]
+        center_y = self.y if self.phase in {"thrown", "falling"} else self.floor_y - frame.get_height() / 2
+        surface.blit(
+            frame,
+            (int(self.x - camera_x - frame.get_width() / 2), int(center_y - frame.get_height() / 2)),
+        )
+
+
+class ConsumableBreakEffect:
+    FRAME_DURATION = 0.08
+
+    def __init__(
+        self,
+        x: float,
+        lane_y: float,
+        dust_frames: list[pygame.Surface],
+        large_frames: list[pygame.Surface],
+        small_frames: list[pygame.Surface],
+    ) -> None:
+        self.x = x
+        self.floor_y = GROUND_Y + lane_y
+        self.dust_frames = dust_frames
+        self.large_frames = large_frames
+        self.small_frames = small_frames
+        self.elapsed = 0.0
+        self.duration = max(len(dust_frames), len(large_frames), len(small_frames)) * self.FRAME_DURATION
+
+    def update(self, dt: float) -> bool:
+        self.elapsed += dt
+        return self.elapsed >= self.duration
+
+    def _current_frame(self, frames: list[pygame.Surface]) -> pygame.Surface:
+        index = min(int(self.elapsed / self.FRAME_DURATION), len(frames) - 1)
+        return frames[index]
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        x = int(self.x - camera_x)
+        dust = self._current_frame(self.dust_frames)
+        large = self._current_frame(self.large_frames)
+        small = self._current_frame(self.small_frames)
+        surface.blit(dust, dust.get_rect(midbottom=(x, int(self.floor_y))))
+        surface.blit(large, large.get_rect(midbottom=(x, int(self.floor_y))))
+
+        side_offset = (large.get_width() + small.get_width()) // 2 + 2
+        left_small = pygame.transform.flip(small, True, False)
+        surface.blit(left_small, left_small.get_rect(midbottom=(x - side_offset, int(self.floor_y))))
+        surface.blit(small, small.get_rect(midbottom=(x + side_offset, int(self.floor_y))))
 
 
 class ItemSpriteAnimation:
@@ -327,7 +524,7 @@ class BanditBrain:
             self.jump_cooldown = 1.6
             return result
 
-        if self.attack_cooldown == 0.0 and same_lane and abs_dx < 185.0 and self_snapshot.state not in {"basic_attack", "heavy_attack", "sprint_punch", "milk_spawn", "throw_heavy", "lift_heavy"}:
+        if self.attack_cooldown == 0.0 and same_lane and abs_dx < 185.0 and self_snapshot.state not in {"basic_attack", "heavy_attack", "sprint_punch", "spawn", "throw_heavy", "lift_heavy"}:
             result.attack_just_pressed = True
             self.attack_cooldown = 0.85
 
@@ -1611,7 +1808,7 @@ class BattleScene:
         self.small_font = pygame.font.Font(None, 24)
         self.pause_font = pygame.font.Font(None, 54)
         self.projectiles: list[object] = []
-        self.milk_items: list[MilkItem] = []
+        self.consumable_items: list[SpawnedConsumable | ThrownItem] = []
         self.paused = False
         stage_root = Path(__file__).resolve().parents[2] / "assets" / "maps" / "Forrest"
         sounds_root = Path(__file__).resolve().parents[2] / "assets" / "sounds"
@@ -1621,23 +1818,33 @@ class BattleScene:
         self.item_hand_anchors = load_hand_anchors(item_sprites_root / "hand_anchors.json")
         milk_root = item_sprites_root / "consumables" / "milk"
         milk_animations = self.item_sprite_animations.get("consumables/milk", {})
-        self.milk_spawn_frames = _scale_frames(_load_folder_frames(milk_root / "milk_spawn"), 1.2)
-        self.milk_land_frame_sets = [
-            _scale_frames(frames, 1.2)
-            for folder in sorted((milk_root / "milk_land").iterdir())
-            if folder.is_dir()
-            for frames in [_load_folder_frames(folder)]
-            if frames
-        ]
+        self.milk_throw_frames = milk_animations.get("throw", [])
+        self.milk_break_frames = {
+            effect: milk_animations.get(f"broken/{effect}", [])
+            for effect in ("dust", "large", "small")
+        }
         if (
-            not self.milk_spawn_frames
-            or not self.milk_land_frame_sets
+            not milk_animations.get("spawn")
+            or not self._land_frame_sets_for_item("consumables/milk")
             or not milk_animations.get("holding")
             or not milk_animations.get("drink")
+            or not self.milk_throw_frames
+            or any(not frames for frames in self.milk_break_frames.values())
         ):
             raise FileNotFoundError(f"Milk sprites are missing from {milk_root}")
+        self.spawnable_consumables = sorted(
+            item_id
+            for item_id, animations in self.item_sprite_animations.items()
+            if animations.get("spawn")
+            and animations.get("holding")
+            and animations.get("drink")
+            and animations.get("throw")
+            and self._land_frame_sets_for_item(item_id)
+        )
         self.active_item_overlays: dict[Fighter, tuple[str, ItemSpriteAnimation, str | None]] = {}
         self.held_item_animations: dict[Fighter, tuple[str, ItemSpriteAnimation]] = {}
+        self.consumable_break_effects: list[ConsumableBreakEffect] = []
+        self.consumable_spawn_timer = 12.0
         self.audio = AudioBank(sounds_root)
         x_bounds = (self.stage.play_min_x, self.stage.play_max_x)
         start_x = SCREEN_WIDTH / 2
@@ -1657,20 +1864,22 @@ class BattleScene:
         enemy_focus = (self.fighter.x + self.enemy.x) / 2
         return max(min_focus, min(max_focus, enemy_focus))
 
-    def _spawn_milk(self) -> None:
+    def _spawn_consumable(self, item_id: str) -> None:
         camera_x = self.stage.camera_x(self._camera_focus_x())
         min_x = max(self.stage.play_min_x, camera_x + 40.0)
         max_x = min(self.stage.play_max_x, camera_x + SCREEN_WIDTH - 40.0)
-        self.milk_items.append(
-            MilkItem(
+        animations = self.item_sprite_animations[item_id]
+        self.consumable_items.append(
+            SpawnedConsumable(
+                item_id,
                 random.uniform(min_x, max_x),
                 random.uniform(LANE_MIN_Y, LANE_MAX_Y),
-                self.milk_spawn_frames,
-                self.milk_land_frame_sets,
+                animations["spawn"],
+                self._land_frame_sets_for_item(item_id),
             )
         )
 
-    def _try_pick_up_milk(self, fighter: Fighter, inputs: FighterInput) -> bool:
+    def _try_pick_up_consumable(self, fighter: Fighter, inputs: FighterInput) -> bool:
         if (
             not inputs.attack_just_pressed
             or fighter.held_item is not None
@@ -1680,12 +1889,13 @@ class BattleScene:
             or any((inputs.left, inputs.right, inputs.up, inputs.down))
         ):
             return False
-        for item in self.milk_items:
+        for item in self.consumable_items:
             if item.pickupable and abs(fighter.x - item.x) <= 56.0 and abs(fighter.lane_y - item.lane_y) <= 24.0:
-                self.milk_items.remove(item)
+                self.consumable_items.remove(item)
                 fighter.state = "get_up"
                 fighter.state_timer = 0.36
                 fighter.held_item = item.item_id
+                fighter.held_item_landings = item.landing_count
                 return True
         return False
 
@@ -1714,6 +1924,149 @@ class BattleScene:
         should_loop = action == "drink" and active_state is not None
         self.active_item_overlays[fighter] = (action, ItemSpriteAnimation(frames, loop=should_loop), active_state)
         return True
+
+    def _land_frame_sets_for_item(self, item_id: str) -> list[tuple[str, list[pygame.Surface]]]:
+        animations = self.item_sprite_animations.get(item_id, {})
+        return [
+            (action, animations[action])
+            for action in sorted(animations)
+            if action == "land" or action.startswith("land/")
+        ]
+
+    def _handle_held_item_throw_input(self, fighter: Fighter, inputs: FighterInput) -> bool:
+        chord_pressed = (
+            inputs.attack_just_pressed and inputs.block_pressed
+        ) or (
+            inputs.attack_pressed and inputs.block_just_pressed
+        )
+        if (
+            not chord_pressed
+            or fighter.held_item is None
+            or fighter.item_throw_animation is not None
+            or not fighter.controls_enabled
+            or fighter.state
+            in (
+                COMBAT_ATTACK_STATES
+                | {
+                    "fall",
+                    "get_up",
+                    "henry_float",
+                    "knocked_fire",
+                    "knocked_freeze",
+                    "die",
+                    "dead",
+                    "block_break",
+                    "block_dodge",
+                    "grapple",
+                    "grappled",
+                    "grapple_hit",
+                    "hurt",
+                    "lift_heavy",
+                }
+            )
+        ):
+            return False
+
+        item_id = fighter.held_item
+        item_animations = self.item_sprite_animations.get(item_id, {})
+        if not item_animations.get("throw") or not self._land_frame_sets_for_item(item_id):
+            fighter._show_speech("Cannot throw item!")
+            return True
+
+        airborne = fighter.z > 0 or fighter.velocity_z != 0
+        animation_name = "jump_throw" if airborne else "spawn"
+        if inputs.left != inputs.right:
+            fighter.facing = -1 if inputs.left else 1
+        if not fighter.start_item_throw(animation_name, airborne):
+            fighter._show_speech("Cannot throw item!")
+        return True
+
+    @staticmethod
+    def _suppress_item_throw_inputs(inputs: FighterInput) -> FighterInput:
+        return replace(
+            inputs,
+            left=False,
+            right=False,
+            up=False,
+            down=False,
+            run=False,
+            horizontal_move_active=False,
+            attack_pressed=False,
+            attack_just_pressed=False,
+            block_pressed=False,
+            block_just_pressed=False,
+            jump_just_pressed=False,
+            drink_just_pressed=False,
+        )
+
+    def _finish_held_item_throw(self, fighter: Fighter) -> None:
+        animation_name = fighter.item_throw_animation
+        if animation_name is None:
+            return
+        if fighter.state not in {"item_throw", "jump_throw", "get_up"}:
+            fighter.item_throw_animation = None
+            return
+        if not fighter.animation_player.finished:
+            return
+
+        item_id = fighter.held_item
+        if item_id is not None:
+            item_animations = self.item_sprite_animations[item_id]
+            throw_frames = item_animations["throw"]
+            land_frame_sets = self._land_frame_sets_for_item(item_id)
+            if not land_frame_sets:
+                raise ValueError(f"No land animation frames found for thrown item {item_id}")
+
+            facing = fighter.facing
+            start_x = fighter.x + facing * 32.0
+            end_x = fighter.x + facing * THROWN_ITEM_MAX_DISTANCE
+            start_x = max(self.stage.play_min_x, min(self.stage.play_max_x, start_x))
+            end_x = max(self.stage.play_min_x, min(self.stage.play_max_x, end_x))
+            self.consumable_items.append(
+                ThrownItem(
+                    fighter,
+                    item_id,
+                    start_x,
+                    end_x,
+                    fighter.lane_y,
+                    fighter.z + 48.0,
+                    fighter.movement["run_speed"] * 1.25,
+                    facing,
+                    throw_frames,
+                    land_frame_sets,
+                    fighter.held_item_landings,
+                )
+            )
+            fighter.held_item = None
+            fighter.held_item_landings = 0
+
+        fighter.item_throw_animation = None
+        if fighter.state == "item_throw":
+            fighter.state = "idle"
+
+    def _resolve_thrown_item_hits(self) -> None:
+        for item in tuple(self.consumable_items):
+            if not isinstance(item, ThrownItem) or item.phase != "thrown":
+                continue
+            target = self.enemy if item.owner is self.fighter else self.fighter
+            if abs(target.lane_y - item.lane_y) > 28.0:
+                continue
+            if not item.world_rect().colliderect(target.world_hitbox_rect()):
+                continue
+
+            item.drop_at_hit()
+            if target.state == "block" and target.block_strength > 0:
+                target.block_strength = 0
+                target.block_hold_timer = 0.0
+                self.audio.play("hit_guard")
+            elif target.state == "block":
+                target._start_block_break()
+                self.audio.play("hit_guard")
+            else:
+                previous_health = target.health
+                target.receive_damage(1)
+                if target.health < previous_health:
+                    self.audio.play("hit_success")
 
     def _draw_speech_bubble(self, surface: pygame.Surface, fighter: Fighter, camera_x: float) -> None:
         if not fighter.speech_text:
@@ -1804,10 +2157,10 @@ class BattleScene:
         is_drink_overlay = action == "drink"
         fallback_anchor = (0.68, 0.22) if is_drink_overlay else (0.68, 0.54)
         item_frame = animation.current_frame
-        character_drink = fighter.animation_player.animations.get("milk_drink")
+        character_drink = fighter.animation_player.animations.get("drink")
         if (
             is_drink_overlay
-            and fighter.animation_player.current_name == "milk_drink"
+            and fighter.animation_player.current_name == "drink"
             and character_drink is not None
             and len(animation.frames) == len(character_drink["surfaces"])
         ):
@@ -2525,40 +2878,60 @@ class BattleScene:
     def update(self, dt: float, inputs: FighterInput) -> None:
         if self.paused:
             return
+        self.consumable_spawn_timer -= dt
+        while self.consumable_spawn_timer <= 0.0:
+            self._spawn_consumable(random.choice(self.spawnable_consumables))
+            self.consumable_spawn_timer += 12.0
         if inputs.spawn_milk_just_pressed:
-            self._spawn_milk()
-        fighter_item = self._item_to_drink(self.fighter, inputs)
-        if fighter_item is not None:
-            fighter_inputs = replace(inputs, attack_pressed=False, attack_just_pressed=False, drink_just_pressed=True)
-        elif self._try_pick_up_milk(self.fighter, inputs):
-            fighter_inputs = replace(inputs, attack_pressed=False, attack_just_pressed=False)
+            self._spawn_consumable("consumables/milk")
+        fighter_throw_was_active = self.fighter.item_throw_animation is not None
+        fighter_throw_handled = self._handle_held_item_throw_input(self.fighter, inputs)
+        if fighter_throw_was_active or fighter_throw_handled:
+            fighter_inputs = self._suppress_item_throw_inputs(inputs)
+            fighter_item = None
         else:
-            fighter_inputs = inputs
+            fighter_item = self._item_to_drink(self.fighter, inputs)
+            if fighter_item is not None:
+                fighter_inputs = replace(inputs, attack_pressed=False, attack_just_pressed=False, drink_just_pressed=True)
+            elif self._try_pick_up_consumable(self.fighter, inputs):
+                fighter_inputs = replace(inputs, attack_pressed=False, attack_just_pressed=False)
+            else:
+                fighter_inputs = inputs
         previous_x_by_fighter = {
             id(self.fighter): self.fighter.x,
             id(self.enemy): self.enemy.x,
         }
-        was_drinking = (self.fighter.state == "milk_drink", self.enemy.state == "milk_drink")
+        was_drinking = (self.fighter.state == "drink", self.enemy.state == "drink")
         self.fighter.update(dt, fighter_inputs, target=self.enemy, controlled=True)
         self.enemy_brain.update(dt)
         enemy_input = self.enemy_brain.build_input(self.enemy.snapshot, self.fighter.snapshot)
-        enemy_item = self._item_to_drink(self.enemy, enemy_input)
-        if enemy_item is not None:
-            enemy_input.attack_pressed = False
-            enemy_input.attack_just_pressed = False
-            enemy_input.drink_just_pressed = True
-        elif self._try_pick_up_milk(self.enemy, enemy_input):
-            enemy_input.attack_just_pressed = False
+        enemy_throw_was_active = self.enemy.item_throw_animation is not None
+        enemy_throw_handled = self._handle_held_item_throw_input(self.enemy, enemy_input)
+        if enemy_throw_was_active or enemy_throw_handled:
+            enemy_input = self._suppress_item_throw_inputs(enemy_input)
+            enemy_item = None
+        else:
+            enemy_item = self._item_to_drink(self.enemy, enemy_input)
+            if enemy_item is not None:
+                enemy_input.attack_pressed = False
+                enemy_input.attack_just_pressed = False
+                enemy_input.drink_just_pressed = True
+            elif self._try_pick_up_consumable(self.enemy, enemy_input):
+                enemy_input.attack_just_pressed = False
         self.enemy.update(dt, enemy_input, target=self.fighter, controlled=True)
+        self._finish_held_item_throw(self.fighter)
+        self._finish_held_item_throw(self.enemy)
         for fighter, previously_drinking, item_id in zip(
             (self.fighter, self.enemy),
             was_drinking,
             (fighter_item, enemy_item),
         ):
-            if fighter.state == "milk_drink" and not previously_drinking:
+            if fighter.state == "drink" and not previously_drinking:
                 self.audio.play("drink_drink")
                 if item_id is not None:
-                    self.start_item_overlay(fighter, item_id, "drink", active_state="milk_drink")
+                    if item_id == "consumables/milk":
+                        fighter.health = min(fighter.max_health, fighter.health + 10)
+                    self.start_item_overlay(fighter, item_id, "drink", active_state="drink")
 
         for fighter in (self.fighter, self.enemy):
             self._apply_henry_flute_attack(fighter)
@@ -2581,9 +2954,27 @@ class BattleScene:
             self._spawn_firen_explosion(fighter)
 
         self._resolve_freeze_column_obstruction(previous_x_by_fighter)
-        for item in self.milk_items:
-            if item.update(dt):
+        for effect in tuple(self.consumable_break_effects):
+            if effect.update(dt):
+                self.consumable_break_effects.remove(effect)
+        for item in tuple(self.consumable_items):
+            item_event = item.update(dt)
+            if item_event == "landed":
                 self.audio.play("drink_land")
+            elif item_event == "break":
+                self.consumable_items.remove(item)
+                self.audio.play("drink_break")
+                if item.item_id == "consumables/milk":
+                    self.consumable_break_effects.append(
+                        ConsumableBreakEffect(
+                            item.x,
+                            item.lane_y,
+                            self.milk_break_frames["dust"],
+                            self.milk_break_frames["large"],
+                            self.milk_break_frames["small"],
+                        )
+                    )
+        self._resolve_thrown_item_hits()
         for fighter, (_, animation, active_state) in tuple(self.active_item_overlays.items()):
             if (active_state is not None and fighter.state != active_state) or animation.update(dt):
                 del self.active_item_overlays[fighter]
@@ -2603,8 +2994,10 @@ class BattleScene:
 
         for projectile in self.projectiles:
             projectile.draw(surface, camera_x)
-        for item in sorted(self.milk_items, key=lambda milk: milk.lane_y):
+        for item in sorted(self.consumable_items, key=lambda consumable: consumable.lane_y):
             item.draw(surface, camera_x)
+        for effect in self.consumable_break_effects:
+            effect.draw(surface, camera_x)
 
         fighters = [self.fighter, self.enemy]
         fighters.sort(key=lambda fighter: fighter.lane_y)

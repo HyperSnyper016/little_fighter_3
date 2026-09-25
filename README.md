@@ -19,7 +19,8 @@ PyCharm-friendly Python prototype for a Little Fighter 2-inspired side-scrolling
 
 - Put source sprite sheets under `assets/sprites/characters/`.
 - Character definitions live in `game/data/characters.py`.
-- Item overlays are discovered under `assets/sprites/item_sprites/<category>/<item>/`. Name animation folders `<item>_<action>`; put held idle frames in `<item>_holding/idle` and action frames directly in their animation folder.
+- Item sprites are discovered under `assets/sprites/item_sprites/<category>/<item>/<action>/`. Put held idle frames in `holding/idle`; action frames go directly in their action folder, with variants allowed in nested subfolders. Directories beginning with `_` are ignored, so `_blank_consumable` can hold a reusable folder template without being treated as an item.
+- Milk break effects use `broken/dust`, `broken/large`, and `broken/small` frame folders.
 - Held item IDs are category-relative paths such as `consumables/milk`. Use `BattleScene.start_item_overlay` to play other item actions over a fighter.
 - The included prototype uses the provided `sprite example/bandit_0.bmp` as the initial source asset path reference.
 
@@ -29,6 +30,8 @@ PyCharm-friendly Python prototype for a Little Fighter 2-inspired side-scrolling
 - Character selection with a roster of playable fighters, including Freeze
 - 2.5D arena movement
 - Idle, walk, run, jump, attack, defend states
+- Spawned consumables stay on the ground until picked up; after pickup, they can be thrown and land twice before breaking
+- A random consumable spawns every 12 seconds; milk restores 10 HP when consumed, and thrown items damage enemies before dropping where they hit
 - Freeze's ice-ball, ice-column, and moving tornado special attacks
 - Data-driven animation timing and frame layout
 
@@ -38,7 +41,8 @@ PyCharm-friendly Python prototype for a Little Fighter 2-inspired side-scrolling
 - Up / Down: lane movement
 - K: jump
 - J: attack, pick up a consumable while idle and standing over it, or drink while holding one
-- P: spawn milk
+- J + L: throw a held consumable; ground and airborne throws use different character animations
+- P: spawn milk manually
 - L: defend
 - Left Shift: run
 - Escape: quit

@@ -2,7 +2,7 @@
 
 `preview_item_anchor.py` opens a window with a character sprite and the milk holding sprite overlaid. Drag the milk to the desired attachment point, then press **Enter** to save that frame's normalized anchor and move to the next frame.
 
-By default, the tool visits every authored character's idle, walking, running, drinking, and get-up frames. It saves progress to `assets/sprites/item_sprites/hand_anchors.json`; the game reads that file when it starts. Saved frames are skipped on later runs, so an interrupted calibration resumes at the first missing anchor.
+By default, the tool visits every authored character's idle, walking, running, drinking, ground-throw, jump-throw, and get-up frames. Ground-throw anchors use the game's `spawn` animation key. Characters without authored throw frames are skipped. It saves progress to `assets/sprites/item_sprites/hand_anchors.json`; the game reads that file when it starts. Saved frames are skipped on later runs, so an interrupted calibration resumes at the first missing anchor.
 
 ## Requirements
 
@@ -33,11 +33,12 @@ Calibrate one or more animation folders for all characters, or combine this with
 ```powershell
 py -3.12 tools\preview_item_anchor.py --animation drink
 py -3.12 tools\preview_item_anchor.py --character deep --animation drink
+py -3.12 tools\preview_item_anchor.py --animation ground_throw --animation jump_throw
 py -3.12 tools\preview_item_anchor.py --animation idle --animation walk
 py -3.12 tools\preview_item_anchor.py --animation get_up
 ```
 
-Supported `--animation` values are `idle`, `walk`, `run`, `drink`, `milk_drink`, and `get_up`. `drink` is a short alias for the character's `milk_drink` animation, which uses the `hold_item\drink` sprite folder. `get_up` uses each character's `fall\get_up` sprite folder.
+Supported `--animation` values are `idle`, `walk`, `run`, `drink`, `spawn` (or `ground_throw`), `jump_throw`, and `get_up`. They use the corresponding character folders; the throw folders are `hold_item\throw_item\ground_throw` and `hold_item\throw_item\jump_throw`.
 
 Target one or more exact sprite folders instead of selecting by character or animation:
 
@@ -59,7 +60,7 @@ py -3.12 tools\preview_item_anchor.py --folder "deep\actions\basic_attack" --ani
 | Parameter | Description |
 | --- | --- |
 | `--character NAME` | Calibrate only one character. Omit to include all authored characters. |
-| `--animation NAME` | Select an animation folder: `idle`, `walk`, `run`, `drink`, `milk_drink`, or `get_up`. Repeat to select several. |
+| `--animation NAME` | Select an animation folder: `idle`, `walk`, `run`, `drink`, `spawn`/`ground_throw`, `jump_throw`, or `get_up`. Repeat to select several. |
 | `--folder PATH` | Select a specific character sprite folder relative to `assets\sprites\characters`. Repeat to select several. |
 | `--animation-key NAME` | Save anchors under this game animation key for one custom `--folder`. |
 | `--facing right\|left` | Preview the character facing direction. Stored anchors are normalized to the unflipped frame; the game mirrors them when needed. Default: `right`. |
@@ -80,4 +81,4 @@ py -3.12 tools\preview_item_anchor.py --folder "deep\actions\basic_attack" --ani
 | Backspace | Go to the previous frame |
 | Escape or close window | Exit; previously saved anchors remain saved |
 
-Drink-frame calibration pairs each character's `hold_item\drink` frame with the milk sprite at the same natural-sort index in `assets\sprites\item_sprites\consumables\milk\milk_drink` (`1_1` with the first character frame, `1_2` with the second, and `1_3` with the third). The frame counts must match. During gameplay, the milk drink overlay follows the same frame index as the character's drink animation and loops while the character is drinking. Until a drink frame is calibrated, the game retains its existing mouth-level fallback placement. Other uncalibrated frames use the available idle anchor or the existing fallback position.
+Drink-frame calibration pairs each character's `hold_item\drink` frame with the milk sprite at the same natural-sort index in `assets\sprites\item_sprites\consumables\milk\drink` (`1_1` with the first character frame, `1_2` with the second, and `1_3` with the third). The frame counts must match. During gameplay, the milk drink overlay follows the same frame index as the character's drink animation and loops while the character is drinking. Until a drink frame is calibrated, the game retains its existing mouth-level fallback placement. Other uncalibrated frames use the available idle anchor or the existing fallback position.

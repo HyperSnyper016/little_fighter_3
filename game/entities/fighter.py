@@ -14,7 +14,7 @@ COMBAT_ATTACK_STATES = {
     "basic_attack",
     "heavy_attack",
     "sprint_punch",
-    "milk_spawn",
+    "spawn",
     "throw_heavy",
     "sp_move_attack_1",
     "sp_move_attack_2",
@@ -100,6 +100,8 @@ class Fighter:
         self.revive_flash_count = 0
         self.controls_enabled = True
         self.held_item: str | None = None
+        self.held_item_landings = 0
+        self.item_throw_animation: str | None = None
         self.block_strength = 1
         self.block_hold_timer = 0.0
         self.defense_cooldown = 0.0
@@ -302,6 +304,35 @@ class Fighter:
                 self.freeze_tornado_pending = False
                 self.freeze_tornado_spawned = False
 
+    def start_item_throw(self, animation_name: str, airborne: bool) -> bool:
+        animation_definition = self.definition["animations"].get(animation_name)
+        if animation_definition is None or not animation_definition.get("files"):
+            if airborne:
+                fallback = "jump_attack"
+                fallback_definition = self.definition["animations"].get(fallback)
+                animation_name = (
+                    fallback
+                    if fallback_definition is not None and fallback_definition.get("files")
+                    else self.current_jump_animation
+                )
+            else:
+                animation_name = self.attack_animation
+        if animation_name not in self.animations:
+            return False
+
+        self.item_throw_animation = animation_name
+        self.state = "jump_throw" if airborne else "item_throw"
+        self.attack_timer = 0.0
+        self.attack_started = False
+        self.attack_projectile_fired = False
+        self.has_applied_attack_damage = False
+        self.jump_attack_active = False
+        self.is_defending = False
+        if airborne and self.current_jump_animation == "jump_attack":
+            self.current_jump_animation = "jump_second" if self.jump_stage == 2 else "jump_normal"
+        self.animation_player.play(animation_name)
+        return True
+
     def _can_continue_special(self, state: str, hold_active: bool) -> bool:
         return self.name in {"deep", "template", "davis", "firen", "henry"} and self.special_move_followup_state == state and hold_active
 
@@ -497,6 +528,7 @@ class Fighter:
         return pygame.Rect(x, y, width, height)
 
     def _start_knockdown(self) -> None:
+        self.item_throw_animation = None
         self.state = "fall"
         self.henry_float_timer = 0.0
         self.state_timer = 0.48
@@ -534,6 +566,7 @@ class Fighter:
         self.just_jumped = True
 
     def _start_fire_knockdown(self) -> None:
+        self.item_throw_animation = None
         self.state = "knocked_fire"
         self.state_timer = 0.52
         self.knock_hold_timer = 1.0
@@ -551,6 +584,7 @@ class Fighter:
         self.facing_lock_until_get_up = True
 
     def _start_ice_knockdown(self) -> None:
+        self.item_throw_animation = None
         self.state = "knocked_freeze"
         self.state_timer = 1.0
         self.knock_hold_timer = 1.0
@@ -578,6 +612,7 @@ class Fighter:
         self.ice_launch_break_on_landing = True
 
     def _start_death(self) -> None:
+        self.item_throw_animation = None
         self.state = "die"
         self.state_timer = 0.55
         self.controls_enabled = False
@@ -615,6 +650,7 @@ class Fighter:
         self.block_hold_timer = 0.0
 
     def _start_hurt(self) -> None:
+        self.item_throw_animation = None
         self.state = "hurt"
         self.state_timer = 0.28
         self.freeze_timer = 0.0
@@ -894,7 +930,7 @@ class Fighter:
                 pass
         if self.state == "hurt" and self.state_timer == 0:
             self.state = "idle"
-        if self.state == "milk_drink" and self.state_timer == 0:
+        if self.state == "drink" and self.state_timer == 0:
             self.state = "idle"
         if self.state_timer == 0 and self.state == "die":
             self.state = "dead"
@@ -944,12 +980,13 @@ class Fighter:
         elif hurt_just_pressed and self.z == 0 and self.state not in {"die", "dead"}:
             self._start_hurt()
         elif drink_just_pressed and self.z == 0 and self.state not in (COMBAT_ATTACK_STATES | {"grapple", "grappled", "jump_throw"} | {"die", "dead"}):
-            self.state = "milk_drink"
+            self.state = "drink"
             self.state_timer = 0.55
             self.held_item = None
+            self.held_item_landings = 0
         elif break_block_just_pressed and self.state == "block":
             self._start_block_break()
-        elif self.state not in (COMBAT_ATTACK_STATES | {"fall", "henry_float", "knocked_fire", "knocked_freeze", "lift_heavy", "get_up", "die", "dead", "block_break", "block_dodge", "grapple", "grappled", "grapple_hit", "jump_throw", "milk_drink", "hurt"}) and self.z == 0 and self.velocity_z == 0:
+        elif self.state not in (COMBAT_ATTACK_STATES | {"fall", "henry_float", "knocked_fire", "knocked_freeze", "lift_heavy", "get_up", "die", "dead", "block_break", "block_dodge", "grapple", "grappled", "grapple_hit", "jump_throw", "item_throw", "drink", "hurt"}) and self.z == 0 and self.velocity_z == 0:
             special_attack_started = False
             can_move_special_1 = "sp_move_attack_1" in self.animations
             can_move_special_2 = "sp_move_attack_2" in self.animations
@@ -1069,7 +1106,7 @@ class Fighter:
                     self.state = "run" if running else "walk"
                 elif self.z == 0:
                     self.state = "idle"
-        elif self.state == "jump_throw" and attack_just_pressed and self.attack_timer == 0:
+        elif self.state == "jump_throw" and self.item_throw_animation is None and attack_just_pressed and self.attack_timer == 0:
             self._start_jump_attack()
             self._queue_hunter_air_arrow()
 
@@ -1126,7 +1163,9 @@ class Fighter:
             self.step_cycle_timer = 0.0
             self.last_step_state = False
 
-        if self.state == "basic_attack":
+        if self.item_throw_animation is not None:
+            animation_name = self.item_throw_animation
+        elif self.state == "basic_attack":
             animation_name = self.attack_animation
         elif self.state == "heavy_attack":
             animation_name = "heavy_attack"
@@ -1176,8 +1215,8 @@ class Fighter:
             animation_name = "knocked_fire"
         elif self.state == "knocked_freeze":
             animation_name = "knocked_freeze_break" if self.freeze_break_started else "knocked_freeze"
-        elif self.state == "milk_drink":
-            animation_name = "milk_drink"
+        elif self.state == "drink":
+            animation_name = "drink"
         elif self.state == "get_up":
             animation_name = "get_up"
         elif self.state == "lift_heavy":
@@ -1190,8 +1229,8 @@ class Fighter:
             animation_name = self.block_dodge_animation if self.block_dodge_animation in self.animations else "block_dodge"
         elif self.state in {"die", "dead"}:
             animation_name = "die"
-        elif self.state == "milk_spawn":
-            animation_name = "milk_spawn"
+        elif self.state == "spawn":
+            animation_name = "spawn"
         elif self.state == "throw_heavy":
             animation_name = "throw_heavy"
         elif self.state == "run":

@@ -21,10 +21,12 @@ ANIMATION_FOLDERS = {
     "idle": ("idle",),
     "walk": ("movement", "walking"),
     "run": ("movement", "sprinting"),
-    "milk_drink": ("hold_item", "drink"),
+    "drink": ("hold_item", "drink"),
+    "spawn": ("hold_item", "throw_item", "ground_throw"),
+    "jump_throw": ("hold_item", "throw_item", "jump_throw"),
     "get_up": ("fall", "get_up"),
 }
-ANIMATION_ALIASES = {"drink": "milk_drink"}
+ANIMATION_ALIASES = {"ground_throw": "spawn"}
 FOLDER_ANIMATION_KEYS = {folder: animation for animation, folder in ANIMATION_FOLDERS.items()}
 FALLBACK_ANCHOR = (0.30, 0.62)
 
@@ -90,7 +92,7 @@ def _load_trimmed_item_frames(folder: Path) -> list[pygame.Surface]:
 
 
 def _load_trimmed_milk_frame() -> pygame.Surface:
-    return _load_trimmed_item_frames(MILK_ROOT / "milk_holding" / "idle")[0]
+    return _load_trimmed_item_frames(MILK_ROOT / "holding" / "idle")[0]
 
 
 def _tasks_for_folder(character: str, animation: str, folder: Path) -> list[SpriteTask]:
@@ -140,7 +142,8 @@ def _build_tasks(
         return tasks
 
     selected_animations = [
-        ANIMATION_ALIASES.get(animation, animation) for animation in (animations or list(ANIMATION_FOLDERS))
+        ANIMATION_ALIASES.get(animation, animation)
+        for animation in (animations or list(ANIMATION_FOLDERS))
     ]
     for character in character_names:
         for animation in selected_animations:
@@ -148,6 +151,8 @@ def _build_tasks(
             folder = CHARACTER_ROOT / character
             for part in folder_parts:
                 folder /= part
+            if animation in {"spawn", "jump_throw"} and not _image_paths(folder):
+                continue
             tasks.extend(_tasks_for_folder(character, animation, folder))
     return tasks
 
@@ -262,7 +267,7 @@ def _current_milk_center(
     facing: str,
 ) -> list[int]:
     width, height = character_size
-    default_anchor = (0.68, 0.22) if task.animation == "milk_drink" else FALLBACK_ANCHOR
+    default_anchor = (0.68, 0.22) if task.animation == "drink" else FALLBACK_ANCHOR
     anchor = _existing_anchor(data, task) or default_anchor
     facing_x = anchor[0] if facing == "right" else 1 - anchor[0]
     return [
@@ -293,7 +298,7 @@ def main() -> int:
     names = _character_names()
     parser = argparse.ArgumentParser(
         description=(
-            "Calibrate per-frame item anchors for idle, walking, running, drink, and get-up animations. "
+            "Calibrate per-frame item anchors for idle, movement, drink, ground-throw, jump-throw, and get-up animations. "
             "Only characters with authored sprite frames are included."
         )
     )
@@ -332,6 +337,8 @@ def main() -> int:
     character_names = [args.character] if args.character else names
     try:
         tasks = _build_tasks(character_names, args.animation, args.folder, args.animation_key)
+        if not tasks:
+            raise FileNotFoundError("No character sprite frames found for the selected animation folders")
         anchor_data = _load_anchor_data(args.anchors_path)
     except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError) as error:
         print(error, file=sys.stderr)
@@ -348,9 +355,9 @@ def main() -> int:
         pygame.display.set_mode((1, 1))
         milk = _load_trimmed_milk_frame()
         milk_drink_frames: list[pygame.Surface] = []
-        drink_tasks = [task for task in tasks if task.animation == "milk_drink"]
+        drink_tasks = [task for task in tasks if task.animation == "drink"]
         if drink_tasks:
-            milk_drink_frames = _load_trimmed_item_frames(MILK_ROOT / "milk_drink")
+            milk_drink_frames = _load_trimmed_item_frames(MILK_ROOT / "drink")
             character_frame_counts = {task.character: task.frame_count for task in drink_tasks}
             mismatched_characters = [
                 character
@@ -375,7 +382,7 @@ def main() -> int:
             nonlocal screen, character, character_pos, milk_center, item_frame
             task = tasks[task_index]
             character = _load_frame(task.path, scale=args.scale)
-            item_frame = milk_drink_frames[task.frame_index] if task.animation == "milk_drink" else milk
+            item_frame = milk_drink_frames[task.frame_index] if task.animation == "drink" else milk
             width, height = character.get_size()
             canvas_size = (max(900, width + item_frame.get_width() * 2 + 180), max(700, height + 180))
             character_pos = ((canvas_size[0] - width) // 2, canvas_size[1] - height - 90)
