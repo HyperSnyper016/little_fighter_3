@@ -3,14 +3,16 @@ from __future__ import annotations
 import math
 import random
 import re
+from dataclasses import replace
 from pathlib import Path
 
 import pygame
 
-from game.constants import GROUND_Y, SCREEN_HEIGHT, SCREEN_WIDTH, TEXT_COLOR
+from game.constants import GROUND_Y, LANE_MAX_Y, LANE_MIN_Y, SCREEN_HEIGHT, SCREEN_WIDTH, TEXT_COLOR
 from game.data.characters import CHARACTERS
 from game.entities.fighter import COMBAT_ATTACK_STATES, Fighter, FighterConfig, FighterInput, FighterSnapshot
 from game.systems.audio import AudioBank
+from game.systems.item_anchors import HandAnchor, load_hand_anchors
 from game.systems.stage import ForestStage
 
 
@@ -35,6 +37,131 @@ def _load_folder_frames(folder: Path) -> list[pygame.Surface]:
         frame.set_colorkey((0, 0, 0))
         frames.append(frame)
     return frames
+
+
+def _scale_frames(frames: list[pygame.Surface], scale: float) -> list[pygame.Surface]:
+    return [
+        pygame.transform.scale(
+            frame,
+            (round(frame.get_width() * scale), round(frame.get_height() * scale)),
+        )
+        for frame in frames
+    ]
+
+
+def _trim_item_frames(frames: list[pygame.Surface]) -> list[pygame.Surface]:
+    trimmed: list[pygame.Surface] = []
+    for frame in frames:
+        bounds = pygame.mask.from_surface(frame).get_bounding_rects()
+        if not bounds:
+            trimmed.append(frame)
+            continue
+        left = min(rect.left for rect in bounds)
+        top = min(rect.top for rect in bounds)
+        right = max(rect.right for rect in bounds)
+        bottom = max(rect.bottom for rect in bounds)
+        content = pygame.Rect(left, top, right - left, bottom - top)
+        cropped = pygame.Surface(content.size).convert()
+        cropped.fill((0, 0, 0))
+        cropped.blit(frame, (0, 0), content)
+        cropped.set_colorkey((0, 0, 0))
+        trimmed.append(cropped)
+    return trimmed
+
+
+def _load_item_sprite_animations(root: Path) -> dict[str, dict[str, list[pygame.Surface]]]:
+    item_sprites: dict[str, dict[str, list[pygame.Surface]]] = {}
+    for item_folder in sorted(path for path in root.rglob("*") if path.is_dir()):
+        item_name = item_folder.name
+        animations: dict[str, list[pygame.Surface]] = {}
+        for animation_folder in sorted(item_folder.iterdir()):
+            if not animation_folder.is_dir() or not animation_folder.name.startswith(f"{item_name}_"):
+                continue
+            action = animation_folder.name[len(item_name) + 1:]
+            frame_folder = animation_folder / "idle"
+            if not frame_folder.is_dir():
+                frame_folder = animation_folder
+            frames = _trim_item_frames(_scale_frames(_load_folder_frames(frame_folder), 1.2))
+            if frames:
+                animations[action] = frames
+        if animations:
+            item_sprites[item_folder.relative_to(root).as_posix()] = animations
+    return item_sprites
+
+
+class MilkItem:
+    def __init__(
+        self,
+        x: float,
+        lane_y: float,
+        spawn_frames: list[pygame.Surface],
+        land_frame_sets: list[list[pygame.Surface]],
+    ) -> None:
+        self.item_id = "consumables/milk"
+        self.x = x
+        self.lane_y = lane_y
+        self.floor_y = GROUND_Y + lane_y
+        self.spawn_frames = spawn_frames
+        self.land_frame_sets = land_frame_sets
+        self.frames = spawn_frames
+        self.phase = "falling"
+        self.frame_index = 0
+        self.frame_timer = 0.0
+        self.fall_speed = 0.0
+        self.y = -spawn_frames[0].get_height() / 2
+
+    @property
+    def pickupable(self) -> bool:
+        return self.phase == "landed"
+
+    def update(self, dt: float) -> bool:
+        self.frame_timer += dt
+        if self.phase == "falling":
+            while self.frame_timer >= 0.08:
+                self.frame_timer -= 0.08
+                self.frame_index = (self.frame_index + 1) % len(self.frames)
+            self.fall_speed += 900.0 * dt
+            self.y += self.fall_speed * dt
+            if self.y + self.frames[self.frame_index].get_height() / 2 >= self.floor_y:
+                self.phase = "landed"
+                self.frames = random.choice(self.land_frame_sets)
+                self.frame_index = 0
+                self.frame_timer = 0.0
+                return True
+        elif self.frame_index < len(self.frames) - 1:
+            while self.frame_timer >= 0.08 and self.frame_index < len(self.frames) - 1:
+                self.frame_timer -= 0.08
+                self.frame_index += 1
+        return False
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        frame = self.frames[self.frame_index]
+        center_y = self.y if self.phase == "falling" else self.floor_y - frame.get_height() / 2
+        surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(center_y - frame.get_height() / 2)))
+
+
+class ItemSpriteAnimation:
+    def __init__(self, frames: list[pygame.Surface], loop: bool = False) -> None:
+        self.frames = frames
+        self.loop = loop
+        self.frame_index = 0
+        self.frame_timer = 0.0
+
+    def update(self, dt: float) -> bool:
+        self.frame_timer += dt
+        while self.frame_timer >= 0.08:
+            self.frame_timer -= 0.08
+            self.frame_index += 1
+            if self.frame_index >= len(self.frames):
+                if self.loop:
+                    self.frame_index = 0
+                else:
+                    return True
+        return False
+
+    @property
+    def current_frame(self) -> pygame.Surface:
+        return self.frames[self.frame_index]
 
 
 class BanditBrain:
@@ -200,7 +327,7 @@ class BanditBrain:
             self.jump_cooldown = 1.6
             return result
 
-        if self.attack_cooldown == 0.0 and same_lane and abs_dx < 185.0 and self_snapshot.state not in {"basic_attack", "heavy_attack", "sprint_punch", "throw", "throw_heavy", "lift_heavy"}:
+        if self.attack_cooldown == 0.0 and same_lane and abs_dx < 185.0 and self_snapshot.state not in {"basic_attack", "heavy_attack", "sprint_punch", "milk_spawn", "throw_heavy", "lift_heavy"}:
             result.attack_just_pressed = True
             self.attack_cooldown = 0.85
 
@@ -1484,10 +1611,33 @@ class BattleScene:
         self.small_font = pygame.font.Font(None, 24)
         self.pause_font = pygame.font.Font(None, 54)
         self.projectiles: list[object] = []
+        self.milk_items: list[MilkItem] = []
         self.paused = False
         stage_root = Path(__file__).resolve().parents[2] / "assets" / "maps" / "Forrest"
         sounds_root = Path(__file__).resolve().parents[2] / "assets" / "sounds"
         self.stage = ForestStage(stage_root)
+        item_sprites_root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "item_sprites"
+        self.item_sprite_animations = _load_item_sprite_animations(item_sprites_root)
+        self.item_hand_anchors = load_hand_anchors(item_sprites_root / "hand_anchors.json")
+        milk_root = item_sprites_root / "consumables" / "milk"
+        milk_animations = self.item_sprite_animations.get("consumables/milk", {})
+        self.milk_spawn_frames = _scale_frames(_load_folder_frames(milk_root / "milk_spawn"), 1.2)
+        self.milk_land_frame_sets = [
+            _scale_frames(frames, 1.2)
+            for folder in sorted((milk_root / "milk_land").iterdir())
+            if folder.is_dir()
+            for frames in [_load_folder_frames(folder)]
+            if frames
+        ]
+        if (
+            not self.milk_spawn_frames
+            or not self.milk_land_frame_sets
+            or not milk_animations.get("holding")
+            or not milk_animations.get("drink")
+        ):
+            raise FileNotFoundError(f"Milk sprites are missing from {milk_root}")
+        self.active_item_overlays: dict[Fighter, tuple[str, ItemSpriteAnimation, str | None]] = {}
+        self.held_item_animations: dict[Fighter, tuple[str, ItemSpriteAnimation]] = {}
         self.audio = AudioBank(sounds_root)
         x_bounds = (self.stage.play_min_x, self.stage.play_max_x)
         start_x = SCREEN_WIDTH / 2
@@ -1499,6 +1649,71 @@ class BattleScene:
         self.enemy_brain = BanditBrain()
         self.victory_played = False
         self.victory_played = False
+
+    def _camera_focus_x(self) -> float:
+        player_margin = SCREEN_WIDTH * 0.3
+        min_focus = self.fighter.x - player_margin
+        max_focus = self.fighter.x + player_margin
+        enemy_focus = (self.fighter.x + self.enemy.x) / 2
+        return max(min_focus, min(max_focus, enemy_focus))
+
+    def _spawn_milk(self) -> None:
+        camera_x = self.stage.camera_x(self._camera_focus_x())
+        min_x = max(self.stage.play_min_x, camera_x + 40.0)
+        max_x = min(self.stage.play_max_x, camera_x + SCREEN_WIDTH - 40.0)
+        self.milk_items.append(
+            MilkItem(
+                random.uniform(min_x, max_x),
+                random.uniform(LANE_MIN_Y, LANE_MAX_Y),
+                self.milk_spawn_frames,
+                self.milk_land_frame_sets,
+            )
+        )
+
+    def _try_pick_up_milk(self, fighter: Fighter, inputs: FighterInput) -> bool:
+        if (
+            not inputs.attack_just_pressed
+            or fighter.held_item is not None
+            or not fighter.controls_enabled
+            or fighter.state != "idle"
+            or fighter.z != 0
+            or any((inputs.left, inputs.right, inputs.up, inputs.down))
+        ):
+            return False
+        for item in self.milk_items:
+            if item.pickupable and abs(fighter.x - item.x) <= 56.0 and abs(fighter.lane_y - item.lane_y) <= 24.0:
+                self.milk_items.remove(item)
+                fighter.state = "get_up"
+                fighter.state_timer = 0.36
+                fighter.held_item = item.item_id
+                return True
+        return False
+
+    def _item_to_drink(self, fighter: Fighter, inputs: FighterInput) -> str | None:
+        if (
+            fighter.held_item is None
+            or not (inputs.attack_just_pressed or inputs.drink_just_pressed)
+            or fighter.z != 0
+            or fighter.state in (COMBAT_ATTACK_STATES | {"grapple", "grappled", "jump_throw", "die", "dead"})
+        ):
+            return None
+        if "drink" not in self.item_sprite_animations.get(fighter.held_item, {}):
+            return None
+        return fighter.held_item
+
+    def start_item_overlay(
+        self,
+        fighter: Fighter,
+        item_id: str,
+        action: str,
+        active_state: str | None = None,
+    ) -> bool:
+        frames = self.item_sprite_animations.get(item_id, {}).get(action)
+        if not frames:
+            return False
+        should_loop = action == "drink" and active_state is not None
+        self.active_item_overlays[fighter] = (action, ItemSpriteAnimation(frames, loop=should_loop), active_state)
+        return True
 
     def _draw_speech_bubble(self, surface: pygame.Surface, fighter: Fighter, camera_x: float) -> None:
         if not fighter.speech_text:
@@ -1522,6 +1737,89 @@ class BattleScene:
         bubble.blit(text, text.get_rect(center=(bubble_rect.centerx, bubble_rect.centery - 2)))
         bubble_pos = bubble.get_rect(midbottom=(fighter.world_hitbox_rect().centerx - int(camera_x), fighter.world_hitbox_rect().top - 10))
         surface.blit(bubble, bubble_pos)
+
+    def _character_hand_anchor(self, fighter: Fighter, fallback_to_idle: bool = True) -> HandAnchor | None:
+        character_anchors = self.item_hand_anchors.get(fighter.name)
+        if character_anchors is None:
+            return None
+
+        animation_name = fighter.animation_player.current_name
+        frame_index = fighter.animation_player.frame_index
+        animation_anchors = character_anchors.get(animation_name, [])
+        if frame_index < len(animation_anchors) and animation_anchors[frame_index] is not None:
+            return animation_anchors[frame_index]
+
+        if not fallback_to_idle:
+            return None
+        idle_anchors = character_anchors.get("idle", [])
+        return next((anchor for anchor in idle_anchors if anchor is not None), None)
+
+    def _draw_item_sprite(
+        self,
+        surface: pygame.Surface,
+        fighter: Fighter,
+        frame: pygame.Surface,
+        camera_x: float,
+        fallback_anchor: HandAnchor,
+        fallback_to_idle: bool = True,
+    ) -> None:
+        anchor = self._character_hand_anchor(fighter, fallback_to_idle)
+        if anchor is None:
+            anchor = fallback_anchor
+        horizontal_anchor, vertical_anchor = anchor
+        if fighter.facing < 0:
+            frame = pygame.transform.flip(frame, True, False)
+            horizontal_anchor = 1 - horizontal_anchor
+        fighter_frame = fighter.animation_player.current_frame
+        draw_x, draw_y = fighter.draw_pos(camera_x)
+        hand_x = draw_x + fighter_frame.get_width() * horizontal_anchor
+        hand_y = draw_y + fighter_frame.get_height() * vertical_anchor
+        surface.blit(frame, frame.get_rect(center=(int(hand_x), int(hand_y))))
+
+    def _draw_held_item(self, surface: pygame.Surface, fighter: Fighter, camera_x: float) -> None:
+        if fighter.held_item is None:
+            return
+        frames = self.item_sprite_animations.get(fighter.held_item, {}).get("holding")
+        if not frames:
+            return
+        held_animation = self.held_item_animations.get(fighter)
+        if held_animation is None or held_animation[0] != fighter.held_item:
+            animation = ItemSpriteAnimation(frames, loop=True)
+            self.held_item_animations[fighter] = (fighter.held_item, animation)
+        else:
+            _, animation = held_animation
+        self._draw_item_sprite(
+            surface,
+            fighter,
+            animation.current_frame,
+            camera_x,
+            fallback_anchor=(0.30, 0.62),
+        )
+
+    def _draw_item_overlay(self, surface: pygame.Surface, fighter: Fighter, camera_x: float) -> None:
+        active_overlay = self.active_item_overlays.get(fighter)
+        if active_overlay is None:
+            return
+        action, animation, _ = active_overlay
+        is_drink_overlay = action == "drink"
+        fallback_anchor = (0.68, 0.22) if is_drink_overlay else (0.68, 0.54)
+        item_frame = animation.current_frame
+        character_drink = fighter.animation_player.animations.get("milk_drink")
+        if (
+            is_drink_overlay
+            and fighter.animation_player.current_name == "milk_drink"
+            and character_drink is not None
+            and len(animation.frames) == len(character_drink["surfaces"])
+        ):
+            item_frame = animation.frames[fighter.animation_player.frame_index]
+        self._draw_item_sprite(
+            surface,
+            fighter,
+            item_frame,
+            camera_x,
+            fallback_anchor,
+            fallback_to_idle=not is_drink_overlay,
+        )
 
     def _resolve_freeze_column_obstruction(self, previous_x_by_fighter: dict[int, float]) -> None:
         columns = [projectile for projectile in self.projectiles if isinstance(projectile, FreezeColumnEffect) and not projectile.finished]
@@ -2227,14 +2525,40 @@ class BattleScene:
     def update(self, dt: float, inputs: FighterInput) -> None:
         if self.paused:
             return
+        if inputs.spawn_milk_just_pressed:
+            self._spawn_milk()
+        fighter_item = self._item_to_drink(self.fighter, inputs)
+        if fighter_item is not None:
+            fighter_inputs = replace(inputs, attack_pressed=False, attack_just_pressed=False, drink_just_pressed=True)
+        elif self._try_pick_up_milk(self.fighter, inputs):
+            fighter_inputs = replace(inputs, attack_pressed=False, attack_just_pressed=False)
+        else:
+            fighter_inputs = inputs
         previous_x_by_fighter = {
             id(self.fighter): self.fighter.x,
             id(self.enemy): self.enemy.x,
         }
-        self.fighter.update(dt, inputs, target=self.enemy, controlled=True)
+        was_drinking = (self.fighter.state == "milk_drink", self.enemy.state == "milk_drink")
+        self.fighter.update(dt, fighter_inputs, target=self.enemy, controlled=True)
         self.enemy_brain.update(dt)
         enemy_input = self.enemy_brain.build_input(self.enemy.snapshot, self.fighter.snapshot)
+        enemy_item = self._item_to_drink(self.enemy, enemy_input)
+        if enemy_item is not None:
+            enemy_input.attack_pressed = False
+            enemy_input.attack_just_pressed = False
+            enemy_input.drink_just_pressed = True
+        elif self._try_pick_up_milk(self.enemy, enemy_input):
+            enemy_input.attack_just_pressed = False
         self.enemy.update(dt, enemy_input, target=self.fighter, controlled=True)
+        for fighter, previously_drinking, item_id in zip(
+            (self.fighter, self.enemy),
+            was_drinking,
+            (fighter_item, enemy_item),
+        ):
+            if fighter.state == "milk_drink" and not previously_drinking:
+                self.audio.play("drink_drink")
+                if item_id is not None:
+                    self.start_item_overlay(fighter, item_id, "drink", active_state="milk_drink")
 
         for fighter in (self.fighter, self.enemy):
             self._apply_henry_flute_attack(fighter)
@@ -2257,28 +2581,37 @@ class BattleScene:
             self._spawn_firen_explosion(fighter)
 
         self._resolve_freeze_column_obstruction(previous_x_by_fighter)
+        for item in self.milk_items:
+            if item.update(dt):
+                self.audio.play("drink_land")
+        for fighter, (_, animation, active_state) in tuple(self.active_item_overlays.items()):
+            if (active_state is not None and fighter.state != active_state) or animation.update(dt):
+                del self.active_item_overlays[fighter]
+        for fighter, (item_id, animation) in tuple(self.held_item_animations.items()):
+            if fighter.held_item != item_id:
+                del self.held_item_animations[fighter]
+            else:
+                animation.update(dt)
         self._update_projectiles(dt)
         self._handle_combat()
         self._handle_audio(dt)
 
     def draw(self, surface: pygame.Surface) -> None:
-        focus_x = self.fighter.x
-        player_margin = SCREEN_WIDTH * 0.3
-        min_focus = self.fighter.x - player_margin
-        max_focus = self.fighter.x + player_margin
-        enemy_focus = (self.fighter.x + self.enemy.x) / 2
-        focus_x = max(min_focus, min(max_focus, enemy_focus))
-
+        focus_x = self._camera_focus_x()
         camera_x = self.stage.camera_x(focus_x)
         self.stage.draw(surface, focus_x)
 
         for projectile in self.projectiles:
             projectile.draw(surface, camera_x)
+        for item in sorted(self.milk_items, key=lambda milk: milk.lane_y):
+            item.draw(surface, camera_x)
 
         fighters = [self.fighter, self.enemy]
         fighters.sort(key=lambda fighter: fighter.lane_y)
         for fighter in fighters:
             fighter.draw(surface, camera_x)
+            self._draw_held_item(surface, fighter, camera_x)
+            self._draw_item_overlay(surface, fighter, camera_x)
             self._draw_speech_bubble(surface, fighter, camera_x)
 
         self._draw_marker(surface, self.fighter, camera_x, "P1")

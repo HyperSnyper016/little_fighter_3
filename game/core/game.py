@@ -85,6 +85,7 @@ class Game:
                 fire_knock_just_pressed=pygame.K_f in pressed_actions,
                 ice_knock_just_pressed=pygame.K_i in pressed_actions,
                 hurt_just_pressed=pygame.K_h in pressed_actions,
+                spawn_milk_just_pressed=pygame.K_p in pressed_actions,
             )
 
             if isinstance(self.scene, BattleScene):
@@ -116,6 +117,6 @@ class Game:
             self.scene.draw(self.screen)
             if isinstance(self.scene, BattleScene):
                 mute_state = "Muted" if AudioBank.muted else "Sound on"
-                hint = self.font.render(f"Arrows move, Shift runs, J attack, K jump_throw, L defend_actions, V knockdown, B lift, G break, N die, M revive, Q drink, F fire knock, I ice knock, H hurt, F9 {mute_state}, F10 kill enemy", True, TEXT_COLOR)
+                hint = self.font.render(f"Arrows move, Shift runs, J attack/pick up/drink, K jump_throw, L defend_actions, P spawn milk, V knockdown, B lift, G break, N die, M revive, Q drink, F fire knock, I ice knock, H hurt, F9 {mute_state}, F10 kill enemy", True, TEXT_COLOR)
                 self.screen.blit(hint, (20, 18))
             pygame.display.flip()

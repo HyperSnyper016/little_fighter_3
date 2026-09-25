@@ -94,7 +94,7 @@ CHARACTERS = {
                 "frame_duration": 0.16,
                 "loop": False,
             },
-            "drink": {
+            "milk_drink": {
                 "files": _animation_files("bandit", "hold_item", "drink"),
                 "frame_duration": 0.08,
                 "loop": True,
@@ -104,7 +104,7 @@ CHARACTERS = {
                 "frame_duration": 0.07,
                 "loop": False,
             },
-            "throw": {
+            "milk_spawn": {
                 "files": _animation_files("bandit", "hold_item", "throw_item", "ground_throw"),
                 "frame_duration": 0.08,
                 "loop": False,
@@ -256,7 +256,7 @@ CHARACTERS = {
                 "frame_duration": 0.16,
                 "loop": False,
             },
-            "drink": {
+            "milk_drink": {
                 "files": _animation_files("armored_bandit", "hold_item", "drink"),
                 "frame_duration": 0.08,
                 "loop": True,
@@ -266,7 +266,7 @@ CHARACTERS = {
                 "frame_duration": 0.07,
                 "loop": False,
             },
-            "throw": {
+            "milk_spawn": {
                 "files": _animation_files("armored_bandit", "hold_item", "throw_item", "ground_throw"),
                 "frame_duration": 0.08,
                 "loop": False,
@@ -438,7 +438,7 @@ CHARACTERS = {
                 "frame_duration": 0.08,
                 "loop": False,
             },
-            "drink": {
+            "milk_drink": {
                 "files": _animation_files("dark_bat", "hold_item", "drink"),
                 "frame_duration": 0.08,
                 "loop": True,
@@ -513,7 +513,7 @@ CHARACTERS = {
                 "frame_duration": 0.07,
                 "loop": False,
             },
-            "throw": {
+            "milk_spawn": {
                 "files": _animation_files("dark_bat", "hold_item", "throw_item", "ground_throw"),
                 "frame_duration": 0.08,
                 "loop": False,
@@ -603,7 +603,7 @@ CHARACTERS = {
                 "frame_duration": 0.16,
                 "loop": False,
             },
-            "drink": {
+            "milk_drink": {
                 "files": _animation_files("hunter", "hold_item", "drink"),
                 "frame_duration": 0.08,
                 "loop": True,
@@ -613,7 +613,7 @@ CHARACTERS = {
                 "frame_duration": 0.07,
                 "loop": False,
             },
-            "throw": {
+            "milk_spawn": {
                 "files": _animation_files("hunter", "hold_item", "throw_item", "ground_throw"),
                 "frame_duration": 0.08,
                 "loop": False,
@@ -767,7 +767,7 @@ CHARACTERS = {
                 "frame_duration": 0.08,
                 "loop": False,
             },
-            "drink": {
+            "milk_drink": {
                 "files": _animation_files("template", "hold_item", "drink"),
                 "frame_duration": 0.08,
                 "loop": True,
@@ -837,7 +837,7 @@ CHARACTERS = {
                 "frame_duration": 0.07,
                 "loop": False,
             },
-            "throw": {
+            "milk_spawn": {
                 "files": _animation_files("template", "hold_item", "throw_item", "ground_throw"),
                 "frame_duration": 0.08,
                 "loop": False,
@@ -952,7 +952,7 @@ CHARACTERS = {
                 "frame_duration": 0.08,
                 "loop": False,
             },
-            "drink": {
+            "milk_drink": {
                 "files": _animation_files("deep", "hold_item", "drink"),
                 "frame_duration": 0.08,
                 "loop": True,
@@ -1037,7 +1037,7 @@ CHARACTERS = {
                 "frame_duration": 0.07,
                 "loop": False,
             },
-            "throw": {
+            "milk_spawn": {
                 "files": _animation_files("deep", "hold_item", "throw_item", "ground_throw"),
                 "frame_duration": 0.08,
                 "loop": False,
@@ -1152,7 +1152,7 @@ CHARACTERS = {
                 "frame_duration": 0.08,
                 "loop": False,
             },
-            "drink": {
+            "milk_drink": {
                 "files": _animation_files("firen", "hold_item", "drink"),
                 "frame_duration": 0.08,
                 "loop": True,
@@ -1242,7 +1242,7 @@ CHARACTERS = {
                 "frame_duration": 0.07,
                 "loop": False,
             },
-            "throw": {
+            "milk_spawn": {
                 "files": _animation_files("firen", "hold_item", "throw_item", "ground_throw"),
                 "frame_duration": 0.08,
                 "loop": False,
@@ -1356,7 +1356,7 @@ CHARACTERS = {
                 "frame_duration": 0.08,
                 "loop": False,
             },
-            "drink": {
+            "milk_drink": {
                 "files": _animation_files("henry", "hold_item", "drink"),
                 "frame_duration": 0.08,
                 "loop": True,
@@ -1421,7 +1421,7 @@ CHARACTERS = {
                 "frame_duration": 0.07,
                 "loop": False,
             },
-            "throw": {
+            "milk_spawn": {
                 "files": _animation_files("henry", "hold_item", "throw_item", "ground_throw"),
                 "frame_duration": 0.08,
                 "loop": False,
@@ -1535,7 +1535,7 @@ CHARACTERS = {
                 "frame_duration": 0.08,
                 "loop": False,
             },
-            "drink": {
+            "milk_drink": {
                 "files": _animation_files("bat", "hold_item", "drink"),
                 "frame_duration": 0.08,
                 "loop": True,
@@ -1600,7 +1600,7 @@ CHARACTERS = {
                 "frame_duration": 0.07,
                 "loop": False,
             },
-            "throw": {
+            "milk_spawn": {
                 "files": _animation_files("bat", "hold_item", "throw_item", "ground_throw"),
                 "frame_duration": 0.08,
                 "loop": False,
@@ -1716,7 +1716,7 @@ CHARACTERS = {
                 "loop": False,
                 "trim_small_components": 20,
             },
-            "drink": {
+            "milk_drink": {
                 "files": _animation_files("davis", "hold_item", "drink"),
                 "frame_duration": 0.08,
                 "loop": True,
@@ -1791,7 +1791,7 @@ CHARACTERS = {
                 "frame_duration": 0.07,
                 "loop": False,
             },
-            "throw": {
+            "milk_spawn": {
                 "files": _animation_files("davis", "hold_item", "throw_item", "ground_throw"),
                 "frame_duration": 0.08,
                 "loop": False,
@@ -1905,7 +1905,7 @@ CHARACTERS = {
                 "frame_duration": 0.08,
                 "loop": False,
             },
-            "drink": {
+            "milk_drink": {
                 "files": _animation_files("denis", "hold_item", "drink"),
                 "frame_duration": 0.08,
                 "loop": True,
@@ -1975,7 +1975,7 @@ CHARACTERS = {
                 "frame_duration": 0.07,
                 "loop": False,
             },
-            "throw": {
+            "milk_spawn": {
                 "files": _animation_files("denis", "hold_item", "throw_item", "ground_throw"),
                 "frame_duration": 0.08,
                 "loop": False,
@@ -2041,7 +2041,7 @@ CHARACTERS = {
             "jump_normal": {"files": _animation_files("freeze", "movement", "jump_actions", "basic_jump"), "frame_duration": 0.12, "loop": False},
             "jump_second": {"files": _animation_files("freeze", "movement", "jump_actions", "second_jump"), "frame_duration": 0.12, "loop": False},
             "jump_attack": {"files": _animation_files("freeze", "actions", "jump_attack"), "frame_duration": 0.08, "loop": False},
-            "drink": {"files": _animation_files("freeze", "hold_item", "drink"), "frame_duration": 0.08, "loop": True},
+            "milk_drink": {"files": _animation_files("freeze", "hold_item", "drink"), "frame_duration": 0.08, "loop": True},
             "hurt": {"files": _animation_files("freeze", "hurt", "basic_hurt"), "frame_duration": 0.08, "loop": False},
             "block": {"files": _animation_files("freeze", "actions", "defend_actions", "defend"), "frame_duration": 0.10, "loop": False},
             "block_break": {"files": _animation_files("freeze", "actions", "defend_actions", "defend_break"), "frame_duration": 0.10, "loop": False},
@@ -2062,7 +2062,7 @@ CHARACTERS = {
             "sp_vert_attack_1": {"files": _animation_files("freeze", "actions", "sp_vert_attack_1"), "frame_duration": 0.08, "loop": False},
             "sp_vert_attack_2": {"files": _animation_files("freeze", "actions", "sp_vert_attack_2"), "frame_duration": 0.08, "loop": False},
             "sprint_punch": {"files": _animation_files("freeze", "movement", "sprint_basic_attack"), "frame_duration": 0.07, "loop": False},
-            "throw": {"files": _animation_files("freeze", "hold_item", "throw_item", "ground_throw"), "frame_duration": 0.08, "loop": False},
+            "milk_spawn": {"files": _animation_files("freeze", "hold_item", "throw_item", "ground_throw"), "frame_duration": 0.08, "loop": False},
             "throw_heavy": {"files": _animation_files("freeze", "hold_item", "heavy_carry", "throw"), "frame_duration": 0.08, "loop": False},
             "grapple": {"files": _animation_files("freeze", "actions", "grapple_actions", "grappling"), "frame_duration": 0.10, "loop": False},
             "grappled": {"files": _animation_files("freeze", "actions", "grapple_actions", "grappled"), "frame_duration": 0.12, "loop": False},
@@ -2114,6 +2114,11 @@ CHARACTERS = {
                 "files": _animation_files("_blank_char", "fall", "get_up"),
                 "frame_duration": 0.12,
                 "loop": False,
+            },
+            "milk_drink": {
+                "files": _animation_files("_blank_char", "hold_item", "drink"),
+                "frame_duration": 0.08,
+                "loop": True,
             },
             "hurt": {
                 "files": _animation_files("_blank_char", "hurt", "basic_hurt"),

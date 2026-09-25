@@ -14,7 +14,7 @@ COMBAT_ATTACK_STATES = {
     "basic_attack",
     "heavy_attack",
     "sprint_punch",
-    "throw",
+    "milk_spawn",
     "throw_heavy",
     "sp_move_attack_1",
     "sp_move_attack_2",
@@ -59,6 +59,7 @@ class FighterInput:
     fire_knock_just_pressed: bool = False
     ice_knock_just_pressed: bool = False
     hurt_just_pressed: bool = False
+    spawn_milk_just_pressed: bool = False
 
 
 @dataclass
@@ -98,6 +99,7 @@ class Fighter:
         self.revive_flash_interval = 0.10
         self.revive_flash_count = 0
         self.controls_enabled = True
+        self.held_item: str | None = None
         self.block_strength = 1
         self.block_hold_timer = 0.0
         self.defense_cooldown = 0.0
@@ -892,6 +894,8 @@ class Fighter:
                 pass
         if self.state == "hurt" and self.state_timer == 0:
             self.state = "idle"
+        if self.state == "milk_drink" and self.state_timer == 0:
+            self.state = "idle"
         if self.state_timer == 0 and self.state == "die":
             self.state = "dead"
         if self.state_timer == 0 and self.state == "grappled":
@@ -940,11 +944,12 @@ class Fighter:
         elif hurt_just_pressed and self.z == 0 and self.state not in {"die", "dead"}:
             self._start_hurt()
         elif drink_just_pressed and self.z == 0 and self.state not in (COMBAT_ATTACK_STATES | {"grapple", "grappled", "jump_throw"} | {"die", "dead"}):
-            self.state = "drink"
+            self.state = "milk_drink"
             self.state_timer = 0.55
+            self.held_item = None
         elif break_block_just_pressed and self.state == "block":
             self._start_block_break()
-        elif self.state not in (COMBAT_ATTACK_STATES | {"fall", "henry_float", "knocked_fire", "knocked_freeze", "lift_heavy", "get_up", "die", "dead", "block_break", "block_dodge", "grapple", "grappled", "grapple_hit", "jump_throw", "drink", "hurt"}) and self.z == 0 and self.velocity_z == 0:
+        elif self.state not in (COMBAT_ATTACK_STATES | {"fall", "henry_float", "knocked_fire", "knocked_freeze", "lift_heavy", "get_up", "die", "dead", "block_break", "block_dodge", "grapple", "grappled", "grapple_hit", "jump_throw", "milk_drink", "hurt"}) and self.z == 0 and self.velocity_z == 0:
             special_attack_started = False
             can_move_special_1 = "sp_move_attack_1" in self.animations
             can_move_special_2 = "sp_move_attack_2" in self.animations
@@ -1171,8 +1176,8 @@ class Fighter:
             animation_name = "knocked_fire"
         elif self.state == "knocked_freeze":
             animation_name = "knocked_freeze_break" if self.freeze_break_started else "knocked_freeze"
-        elif self.state == "drink":
-            animation_name = "drink"
+        elif self.state == "milk_drink":
+            animation_name = "milk_drink"
         elif self.state == "get_up":
             animation_name = "get_up"
         elif self.state == "lift_heavy":
@@ -1185,8 +1190,8 @@ class Fighter:
             animation_name = self.block_dodge_animation if self.block_dodge_animation in self.animations else "block_dodge"
         elif self.state in {"die", "dead"}:
             animation_name = "die"
-        elif self.state == "throw":
-            animation_name = "throw"
+        elif self.state == "milk_spawn":
+            animation_name = "milk_spawn"
         elif self.state == "throw_heavy":
             animation_name = "throw_heavy"
         elif self.state == "run":

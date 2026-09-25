@@ -19,6 +19,8 @@ PyCharm-friendly Python prototype for a Little Fighter 2-inspired side-scrolling
 
 - Put source sprite sheets under `assets/sprites/characters/`.
 - Character definitions live in `game/data/characters.py`.
+- Item overlays are discovered under `assets/sprites/item_sprites/<category>/<item>/`. Name animation folders `<item>_<action>`; put held idle frames in `<item>_holding/idle` and action frames directly in their animation folder.
+- Held item IDs are category-relative paths such as `consumables/milk`. Use `BattleScene.start_item_overlay` to play other item actions over a fighter.
 - The included prototype uses the provided `sprite example/bandit_0.bmp` as the initial source asset path reference.
 
 ## Current prototype
@@ -35,7 +37,8 @@ PyCharm-friendly Python prototype for a Little Fighter 2-inspired side-scrolling
 - Left / Right: move
 - Up / Down: lane movement
 - K: jump
-- J: attack
+- J: attack, pick up a consumable while idle and standing over it, or drink while holding one
+- P: spawn milk
 - L: defend
 - Left Shift: run
 - Escape: quit

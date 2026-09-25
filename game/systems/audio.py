@@ -81,6 +81,8 @@ class AudioBank:
             "jump_throw": self._load_sound("jump1.wav"),
             "jump_land": self._load_sound("jump_land.wav"),
             "knockdown": self._load_sound("knockdown.wav"),
+            "drink_land": self._load_sound("drink/drink_land.wav"),
+            "drink_drink": self._load_sound("drink/drink_drink.wav"),
         }
 
     def play(self, name: str) -> None:
