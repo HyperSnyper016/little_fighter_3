@@ -24,9 +24,10 @@ PyCharm-friendly Python prototype for a Little Fighter 2-inspired side-scrolling
 ## Current prototype
 
 - Title screen prompt
-- One playable fighter
+- Character selection with a roster of playable fighters, including Freeze
 - 2.5D arena movement
 - Idle, walk, run, jump, attack, defend states
+- Freeze's ice-ball, ice-column, and moving tornado special attacks
 - Data-driven animation timing and frame layout
 
 ## Controls
@@ -38,3 +39,5 @@ PyCharm-friendly Python prototype for a Little Fighter 2-inspired side-scrolling
 - L: defend
 - Left Shift: run
 - Escape: quit
+
+Freeze's special attacks use Attack + Defend + Left/Right for the ice ball, Attack + Jump + Left/Right for the ice columns, and Attack + Defend + Up for the ice tornado.

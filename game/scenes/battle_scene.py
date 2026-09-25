@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import random
+import re
 from pathlib import Path
 
 import pygame
@@ -17,9 +18,19 @@ def _load_folder_frames(folder: Path) -> list[pygame.Surface]:
     frames: list[pygame.Surface] = []
     if not folder.exists():
         return frames
-    for path in sorted(folder.iterdir()):
-        if not path.is_file() or path.suffix.lower() not in {".png", ".bmp"}:
-            continue
+
+    def frame_sort_key(path: Path) -> tuple[str, int, str]:
+        match = re.search(r"(\d+)$", path.stem)
+        if match is None:
+            return path.stem.casefold(), -1, path.suffix.casefold()
+        return path.stem[:match.start()].casefold(), int(match.group(1)), path.suffix.casefold()
+
+    frame_paths = (
+        path
+        for path in folder.iterdir()
+        if path.is_file() and path.suffix.lower() in {".png", ".bmp"}
+    )
+    for path in sorted(frame_paths, key=frame_sort_key):
         frame = pygame.image.load(str(path)).convert()
         frame.set_colorkey((0, 0, 0))
         frames.append(frame)
@@ -197,7 +208,10 @@ class BanditBrain:
 
 
 class ArrowProjectile:
-    def __init__(self, owner: Fighter, x: float, y: float, facing: int, style: str = "basic") -> None:
+    HENRY_SPEED_X = 585.0
+    HENRY_RANGE_FACTOR = 0.5625
+
+    def __init__(self, owner: Fighter, x: float, y: float, facing: int, style: str = "basic", vertical_speed: float = 0.0) -> None:
         self.owner = owner
         self.x = float(x)
         self.y = float(y)
@@ -205,6 +219,7 @@ class ArrowProjectile:
         self.origin_x = float(x)
         self.facing = 1 if facing >= 0 else -1
         self.style = style
+        self.vertical_speed = vertical_speed
         self.speed_x = 1040.0
         self.ascend_speed = 620.0
         self.straight_speed = 70.0
@@ -214,6 +229,9 @@ class ArrowProjectile:
         self.damage = 1
         self.frame_timer = 0.0
         self.frame_index = 0
+        self.flight_elapsed = 0.0
+        self.motion_frame_timer = 0.0
+        self.motion_frame_index = 0
         self.phase = "fly"
         self.can_damage = True
         self.finished = False
@@ -221,15 +239,67 @@ class ArrowProjectile:
         self.break_velocity_y = 0.0
         self.break_bounced = False
         arrows_root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "arrow"
-        fly_frames = _load_folder_frames(arrows_root / "arrow_fly")
+        fly_frames = [
+            pygame.transform.flip(frame, False, True)
+            for frame in _load_folder_frames(arrows_root / "arrow_fly")
+        ]
         enchanted_frames = _load_folder_frames(arrows_root / "arrow_enchanted") if style == "enchanted" else []
         self.enchanted_launch_frames = enchanted_frames[:1]
         self.enchanted_loop_frames = enchanted_frames[1:] if len(enchanted_frames) > 1 else enchanted_frames
         self.enchanted_launch_done = False
         self.fly_frames = fly_frames or [pygame.Surface((12, 12), pygame.SRCALPHA)]
+        self.henry_jump_frames = fly_frames[5:6]
         self.break_frames = _load_folder_frames(arrows_root / "arrow_break")
-        self.frames = self.fly_frames if self.fly_frames else [pygame.Surface((12, 12), pygame.SRCALPHA)]
+        self.frames = self.henry_jump_frames if style == "henry_jump" else self.fly_frames
+        if not self.frames:
+            self.frames = [pygame.Surface((12, 12), pygame.SRCALPHA)]
         self.ground_y = GROUND_Y + owner.lane_y - 18.0
+        if style in {"henry_basic", "henry_vertical"}:
+            self.speed_x = self.HENRY_SPEED_X
+            self.max_distance *= self.HENRY_RANGE_FACTOR
+        if style == "henry_basic":
+            self.vertical_speed = -300.0
+            self.gravity = 700.0
+        if style == "henry_jump":
+            self.max_distance /= 2
+            self.fall_speed = self.speed_x
+            self.gravity = 0.0
+        if style == "henry_vertical":
+            self.gravity = 720.0
+        self.flight_duration = self._estimate_flight_duration()
+
+    def _estimate_flight_duration(self) -> float:
+        max_distance_duration = self.max_distance / self.speed_x
+        if self.style == "henry_jump":
+            ground_duration = max(0.0, (self.ground_y - self.y) / self.fall_speed)
+        elif self.style in {"henry_basic", "henry_vertical"}:
+            distance_to_ground = self.ground_y - self.y
+            discriminant = self.vertical_speed**2 + 2.0 * self.gravity * distance_to_ground
+            ground_duration = (
+                max(0.0, (-self.vertical_speed + math.sqrt(max(0.0, discriminant))) / self.gravity)
+                if self.gravity > 0.0
+                else max(0.0, distance_to_ground / self.vertical_speed)
+            )
+        else:
+            ascent_duration = 0.16
+            fall_distance = max(
+                0.0,
+                self.ground_y - self.y + self.ascend_speed * 0.08 + self.straight_speed * 0.08,
+            )
+            fall_duration = (
+                max(
+                    0.0,
+                    (
+                        -self.fall_speed
+                        + math.sqrt(self.fall_speed**2 + 2.0 * self.gravity * fall_distance)
+                    )
+                    / self.gravity,
+                )
+                if self.gravity > 0.0
+                else 0.0
+            )
+            ground_duration = ascent_duration + fall_duration
+        return min(ground_duration, max_distance_duration)
 
     def _start_break(self) -> None:
         if self.phase == "break":
@@ -249,7 +319,27 @@ class ArrowProjectile:
 
     def update(self, dt: float) -> None:
         if self.phase == "fly":
-            self.x += self.facing * self.speed_x * dt
+            if self.style != "enchanted":
+                self.flight_elapsed += dt
+                if self.flight_duration > 0.0:
+                    progress = min(self.flight_elapsed / self.flight_duration, 1.0)
+                    self.frame_index = min(int(progress * len(self.frames)), len(self.frames) - 1)
+            if self.style in {"henry_basic", "henry_vertical"}:
+                self.x += self.facing * self.speed_x * dt
+                self.y += self.vertical_speed * dt
+                self.vertical_speed += self.gravity * dt
+                if self.y >= self.ground_y:
+                    self.y = self.ground_y
+                    self._start_break()
+            elif self.style == "henry_jump":
+                self.frames = self.henry_jump_frames or self.fly_frames
+                self.x += self.facing * self.speed_x * dt
+                self.y += self.fall_speed * dt
+                if self.y >= self.ground_y:
+                    self.y = self.ground_y
+                    self._start_break()
+            else:
+                self.x += self.facing * self.speed_x * dt
             if self.style == "enchanted":
                 if not self.enchanted_launch_done:
                     self.frames = self.enchanted_launch_frames or self.enchanted_loop_frames or self.frames
@@ -266,24 +356,27 @@ class ArrowProjectile:
                     while self.frame_timer >= 0.08:
                         self.frame_timer -= 0.08
                         self.frame_index = (self.frame_index + 1) % max(1, len(self.frames))
-            else:
+            elif self.style not in {"henry_jump", "henry_vertical", "henry_basic"}:
                 self.frames = self.fly_frames
-                if self.frame_index <= 0:
+                if self.motion_frame_index <= 0:
                     self.y -= self.ascend_speed * dt
-                elif self.frame_index == 1:
+                elif self.motion_frame_index == 1:
                     self.y -= self.straight_speed * dt
                 else:
                     self.y += self.fall_speed * dt
                     self.fall_speed += self.gravity * dt
-                self.frame_timer += dt
-                while self.frame_timer >= 0.08:
-                    self.frame_timer -= 0.08
-                    if self.frame_index < len(self.frames) - 1:
-                        self.frame_index += 1
+                self.motion_frame_timer += dt
+                while self.motion_frame_timer >= 0.08:
+                    self.motion_frame_timer -= 0.08
+                    if self.motion_frame_index < 2:
+                        self.motion_frame_index += 1
                 if self.y >= self.ground_y:
                     self.y = self.ground_y
                     self._start_break()
             if self.style != "enchanted" and abs(self.x - self.origin_x) >= self.max_distance:
+                if self.style == "henry_jump":
+                    self.x = self.origin_x + (self.facing * self.max_distance)
+                    self.y = self.ground_y
                 self._start_break()
         else:
             self.y += self.break_velocity_y * dt
@@ -307,7 +400,14 @@ class ArrowProjectile:
 
     def draw(self, surface: pygame.Surface, camera_x: float) -> None:
         frame = self.frames[self.frame_index]
-        if self.facing < 0:
+        if self.style in {"henry_basic", "henry_vertical"} and self.phase == "fly":
+            angle = -math.degrees(math.atan2(self.vertical_speed, self.facing * self.speed_x))
+            frame = pygame.transform.rotate(frame, angle)
+        elif self.style == "henry_jump" and self.phase == "fly":
+            if self.facing < 0:
+                frame = pygame.transform.flip(frame, True, False)
+            frame = pygame.transform.rotate(frame, -45.0 * self.facing)
+        elif self.facing < 0:
             frame = pygame.transform.flip(frame, True, False)
         surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
 
@@ -538,8 +638,8 @@ class BallProjectile:
         self.fly_time = 0.0
         self.frame_scheme = frame_scheme
         root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "blue_ball" / f"ball_{ball_index}"
-        self.slow_frames = self._load_frames(root / "davis_ball_slow")
-        self.fast_frames = self._load_frames(root / "davis_ball_fast")
+        self.slow_frames = self._load_frames(root / "slow")
+        self.fast_frames = self._load_frames(root / "fast")
         self.burst_frames = self._load_frames(root.parent / "ball_burst")
         self.frames = self.slow_frames or self.fast_frames or [pygame.Surface((16, 16), pygame.SRCALPHA)]
 
@@ -592,6 +692,175 @@ class BallProjectile:
         if self.facing < 0:
             frame = pygame.transform.flip(frame, True, False)
         surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
+
+
+class FreezeBallProjectile:
+    def __init__(self, owner: Fighter, x: float, y: float, facing: int) -> None:
+        self.owner = owner
+        self.x = float(x)
+        self.y = float(y)
+        self.facing = 1 if facing >= 0 else -1
+        self.speed_x = 560.0
+        self.damage = 1
+        self.phase = "fly"
+        self.can_damage = True
+        self.finished = False
+        self.just_burst = False
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "freeze_ball"
+        self.fly_frames = _load_folder_frames(root / "freeze_ball_projectile")
+        self.burst_frames = _load_folder_frames(root / "freeze_ball_burst")
+        self.frames = self.fly_frames or [pygame.Surface((16, 16), pygame.SRCALPHA)]
+
+    def rect(self) -> pygame.Rect:
+        frame = self.frames[self.frame_index]
+        return pygame.Rect(
+            int(self.x - frame.get_width() / 2),
+            int(self.y - frame.get_height() / 2),
+            frame.get_width(),
+            frame.get_height(),
+        )
+
+    def _start_burst(self) -> None:
+        if self.phase == "burst":
+            return
+        self.phase = "burst"
+        self.can_damage = False
+        self.just_burst = True
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        self.frames = self.burst_frames or self.fly_frames
+
+    def update(self, dt: float) -> None:
+        self.frame_timer += dt
+        if self.phase == "fly":
+            self.x += self.facing * self.speed_x * dt
+            while self.frame_timer >= 0.08:
+                self.frame_timer -= 0.08
+                self.frame_index = (self.frame_index + 1) % len(self.frames)
+        else:
+            while self.frame_timer >= 0.06:
+                self.frame_timer -= 0.06
+                self.frame_index += 1
+                if self.frame_index >= len(self.frames):
+                    self.finished = True
+                    break
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        frame = self.frames[self.frame_index]
+        if self.facing < 0:
+            frame = pygame.transform.flip(frame, True, False)
+        surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
+
+
+class FreezeColumnEffect:
+    def __init__(
+        self,
+        x: float,
+        y: float,
+        column_number: int,
+        facing: int = 1,
+        lane_y: float = 0.0,
+    ) -> None:
+        self.x = float(x)
+        self.y = float(y)
+        self.facing = 1 if facing >= 0 else -1
+        self.lane_y = float(lane_y)
+        self.scale = 1.8
+        root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "freeze_colum"
+        self.frames = _load_folder_frames(root / f"freeze_colum_{column_number}")
+        self.frame_index = 0
+        self.frame_timer = 0.0
+        self.lifetime = 10.0
+        self.finished = False
+        self.just_expired = False
+
+    def rect(self) -> pygame.Rect:
+        if not self.frames:
+            return pygame.Rect(int(self.x), int(self.y), 0, 0)
+        frame = self.frames[self.frame_index]
+        width = int(frame.get_width() * self.scale)
+        height = int(frame.get_height() * self.scale)
+        return pygame.Rect(int(self.x - width / 2), int(self.y - height), width, height)
+
+    def break_apart(self) -> None:
+        if self.finished:
+            return
+        self.finished = True
+        self.just_expired = True
+
+    def update(self, dt: float) -> None:
+        self.lifetime = max(0.0, self.lifetime - dt)
+        if self.lifetime == 0.0:
+            self.finished = True
+            self.just_expired = True
+            return
+        if self.frames:
+            self.frame_timer += dt
+            while self.frame_timer >= 0.10 and self.frame_index < len(self.frames) - 1:
+                self.frame_timer -= 0.10
+                self.frame_index += 1
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        if not self.frames or self.finished:
+            return
+        frame = self.frames[self.frame_index]
+        if self.facing < 0:
+            frame = pygame.transform.flip(frame, True, False)
+        width = int(frame.get_width() * self.scale)
+        height = int(frame.get_height() * self.scale)
+        frame = pygame.transform.scale(frame, (width, height))
+        surface.blit(frame, (int(self.x - camera_x - width / 2), int(self.y - height)))
+
+
+class FreezeTornadoProjectile:
+    def __init__(self, owner: Fighter, x: float, y: float, facing: int) -> None:
+        self.owner = owner
+        self.x = float(x)
+        self.y = float(y)
+        self.facing = 1 if facing >= 0 else -1
+        self.speed_x = float(owner.movement["run_speed"]) * 1.25
+        self.scale = 1.25
+        self.hitbox_scale = 1.5
+        self.frames = _load_folder_frames(
+            Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "freeze_tornado"
+        ) or [pygame.Surface((16, 16), pygame.SRCALPHA)]
+        self.frame_index = 0
+        self.frame_timer = 0.0
+        self.hit_targets: set[int] = set()
+        self.can_damage = True
+        self.finished = False
+
+    def rect(self) -> pygame.Rect:
+        frame = self.frames[self.frame_index]
+        width = int(frame.get_width() * self.scale * self.hitbox_scale)
+        height = int(frame.get_height() * self.scale * self.hitbox_scale)
+        return pygame.Rect(
+            int(self.x - width / 2),
+            int(self.y - height / 2),
+            width,
+            height,
+        )
+
+    def update(self, dt: float) -> None:
+        self.x += self.facing * self.speed_x * dt
+        self.frame_timer += dt
+        while self.frame_timer >= 0.08 and not self.finished:
+            self.frame_timer -= 0.08
+            if self.frame_index < len(self.frames) - 1:
+                self.frame_index += 1
+            else:
+                self.finished = True
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        frame = self.frames[self.frame_index]
+        if self.facing < 0:
+            frame = pygame.transform.flip(frame, True, False)
+        width = int(frame.get_width() * self.scale)
+        height = int(frame.get_height() * self.scale)
+        scaled = pygame.transform.scale(frame, (width, height))
+        surface.blit(scaled, (int(self.x - camera_x - width / 2), int(self.y - height / 2)))
 
 
 class DavisBallProjectile:
@@ -657,9 +926,7 @@ class DavisBallProjectile:
             self.fly_time += dt
             speed_gain = self.acceleration_x * dt * (1.0 + (self.fly_time * 2.2))
             self.speed_x = min(self.max_speed_x, self.speed_x + speed_gain)
-            if self.frame_scheme == "two_stage":
-                mode = "slow" if self.speed_x < 480.0 else "fast"
-            elif self.speed_x < 380.0:
+            if self.speed_x < 380.0:
                 mode = "slow"
             elif self.speed_x < 700.0:
                 mode = "medium"
@@ -1125,7 +1392,7 @@ class WindProjectile:
 
     def draw(self, surface: pygame.Surface, camera_x: float) -> None:
         frame = self.frames[self.frame_index]
-        if self.facing < 0:
+        if self.facing > 0:
             frame = pygame.transform.flip(frame, True, False)
         width = int(frame.get_width() * self.scale)
         height = int(frame.get_height() * self.scale)
@@ -1256,15 +1523,69 @@ class BattleScene:
         bubble_pos = bubble.get_rect(midbottom=(fighter.world_hitbox_rect().centerx - int(camera_x), fighter.world_hitbox_rect().top - 10))
         surface.blit(bubble, bubble_pos)
 
+    def _resolve_freeze_column_obstruction(self, previous_x_by_fighter: dict[int, float]) -> None:
+        columns = [projectile for projectile in self.projectiles if isinstance(projectile, FreezeColumnEffect) and not projectile.finished]
+        for fighter in (self.fighter, self.enemy):
+            if fighter.is_dead or fighter.z > 0:
+                continue
+            previous_x = previous_x_by_fighter.get(id(fighter), fighter.x)
+            half_width = fighter.hitbox_size[0] / 2
+            for column in columns:
+                if abs(fighter.lane_y - column.lane_y) > 36:
+                    continue
+                column_rect = column.rect()
+                fighter_rect = fighter.world_hitbox_rect()
+                if fighter_rect.top >= column_rect.bottom or fighter_rect.bottom <= column_rect.top:
+                    continue
+
+                crossed_from_left = previous_x + half_width <= column_rect.left and fighter_rect.right > column_rect.left
+                crossed_from_right = previous_x - half_width >= column_rect.right and fighter_rect.left < column_rect.right
+                if not column_rect.colliderect(fighter_rect) and not crossed_from_left and not crossed_from_right:
+                    continue
+                move_left = crossed_from_left or (
+                    not crossed_from_right
+                    and (previous_x < column.x or (previous_x == column.x and fighter.facing > 0))
+                )
+                if move_left:
+                    fighter.x = max(fighter.min_x, column_rect.left - half_width)
+                    if fighter.push_velocity_x > 0:
+                        fighter.push_velocity_x = 0.0
+                else:
+                    fighter.x = min(fighter.max_x, column_rect.right + half_width)
+                    if fighter.push_velocity_x < 0:
+                        fighter.push_velocity_x = 0.0
+
+    def _break_freeze_columns_with_melee(self) -> None:
+        columns = [projectile for projectile in self.projectiles if isinstance(projectile, FreezeColumnEffect)]
+        for attacker in (self.fighter, self.enemy):
+            if (
+                attacker.is_dead
+                or attacker.state not in (COMBAT_ATTACK_STATES | {"jump_throw"})
+                or not attacker.attack_started
+                or attacker.has_applied_attack_damage
+                or attacker.attack_timer <= 0
+                or (attacker.state == "jump_throw" and not attacker.jump_attack_active)
+                or (attacker.name == "freeze" and attacker.state == "sp_move_attack_2")
+            ):
+                continue
+            attack_range = 132 if attacker.name == "dark_bat" and attacker.state == "sp_move_attack_1" else 72
+            attack_rect = attacker.world_hitbox_rect().inflate(attack_range, 0)
+            for column in columns:
+                if column.finished:
+                    continue
+                if abs(attacker.lane_y - column.lane_y) <= 36 and attack_rect.colliderect(column.rect()):
+                    column.break_apart()
+
     def _handle_combat(self) -> None:
+        self._break_freeze_columns_with_melee()
         for attacker, defender in ((self.fighter, self.enemy), (self.enemy, self.fighter)):
-            if attacker.is_dead or defender.is_dead:
+            if attacker.is_dead or defender.is_dead or defender.state == "henry_float":
                 continue
             if attacker.state not in (COMBAT_ATTACK_STATES | {"jump_throw"}):
                 continue
             if attacker.name == "hunter" and attacker.state == "basic_attack":
                 continue
-            if attacker.name == "henry" and attacker.state in {"basic_attack", "sp_move_attack_1"}:
+            if attacker.name == "henry" and attacker.state in {"basic_attack", "sp_move_attack_1", "sp_vert_attack_1", "sp_vert_attack_2"}:
                 continue
             if attacker.name == "bat" and attacker.state in {"sp_move_attack_2", "sp_vert_attack_2"}:
                 continue
@@ -1275,6 +1596,8 @@ class BattleScene:
             if attacker.name == "denis" and attacker.state == "sp_vert_attack_2":
                 continue
             if attacker.name == "firen" and attacker.state in {"sp_move_attack_1", "sp_move_attack_2", "sp_vert_attack_1", "sp_vert_attack_2"}:
+                continue
+            if attacker.name == "freeze" and attacker.state in {"sp_move_attack_1", "sp_move_attack_2", "sp_vert_attack_1"}:
                 continue
             if attacker.state == "jump_throw" and not attacker.jump_attack_active:
                 continue
@@ -1289,7 +1612,10 @@ class BattleScene:
             if abs(attacker.lane_y - defender.lane_y) > 36:
                 attacker.has_applied_attack_damage = True
                 attacker.attack_started = False
-                self.audio.play_hit_miss()
+                if attacker.name == "freeze" and attacker.state == "basic_attack":
+                    self.audio.play_freeze_basic_miss()
+                else:
+                    self.audio.play_hit_miss()
                 continue
             attack_range = 72
             if attacker.name == "dark_bat" and attacker.state == "sp_move_attack_1":
@@ -1299,7 +1625,10 @@ class BattleScene:
             if not attacker.world_hitbox_rect().inflate(attack_range, 0).colliderect(defender.world_hitbox_rect()):
                 attacker.has_applied_attack_damage = True
                 attacker.attack_started = False
-                self.audio.play_hit_miss()
+                if attacker.name == "freeze" and attacker.state == "basic_attack":
+                    self.audio.play_freeze_basic_miss()
+                else:
+                    self.audio.play_hit_miss()
                 continue
 
             attacker.has_applied_attack_damage = True
@@ -1331,10 +1660,13 @@ class BattleScene:
                 self.audio.play("sword_cut")
             elif attacker.name in {"deep", "armored_bandit"}:
                 self.audio.play("sword_cut")
+            elif attacker.name == "freeze" and attacker.state == "basic_attack":
+                self.audio.play("hit_success")
             else:
                 self.audio.play("hit_success")
 
     def _handle_audio(self, dt: float) -> None:
+        self.audio.update_sequences()
         fighters = [self.fighter, self.enemy]
 
         for fighter in fighters:
@@ -1389,6 +1721,9 @@ class BattleScene:
                 self.audio.play("fire_knock")
                 self.audio.play("knockdown")
                 fighter.fire_knock_sfx_pending = False
+            if fighter.freeze_break_sfx_pending:
+                self.audio.play("freeze_break")
+                fighter.freeze_break_sfx_pending = False
             if fighter.just_knocked_down:
                 if fighter.state != "knocked_fire":
                     self.audio.play("knockdown")
@@ -1420,11 +1755,81 @@ class BattleScene:
         origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.42)
         origin_y = GROUND_Y + fighter.lane_y - fighter.z - 58.0
         style = fighter.hunter_projectile_style
+        if fighter.name in {"henry", "hunter"} and fighter.state == "basic_attack":
+            style = "henry_basic"
         self.projectiles.append(ArrowProjectile(fighter, origin_x, origin_y, fighter.facing, style))
         if style == "enchanted":
             self.audio.play("arrow_enchanted_shot")
         else:
             fighter.hunter_shoot_arrow_sfx_pending = True
+
+    def _spawn_freeze_ball(self, fighter: Fighter) -> None:
+        if fighter.name != "freeze" or fighter.state != "sp_move_attack_1":
+            return
+        if not fighter.freeze_ball_pending or fighter.freeze_ball_spawned:
+            return
+        fighter.freeze_ball_pending = False
+        fighter.attack_projectile_fired = True
+        fighter.freeze_ball_spawned = True
+        origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.42)
+        origin_y = GROUND_Y + fighter.lane_y - fighter.z - 56.0
+        self.projectiles.append(FreezeBallProjectile(fighter, origin_x, origin_y, fighter.facing))
+        self.audio.play("freeze_ball")
+
+    def _spawn_freeze_columns(self, fighter: Fighter) -> None:
+        if fighter.name != "freeze" or not fighter.freeze_columns_pending:
+            return
+        fighter.freeze_columns_pending = False
+        root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "freeze_colum"
+        first_frames = _load_folder_frames(root / "freeze_colum_1")
+        column_width = first_frames[0].get_width() if first_frames else fighter.hitbox_size[0]
+        column_direction = fighter.facing
+        spacing = column_width * 0.65
+        first_x = fighter.x + column_direction * (fighter.hitbox_size[0] / 2 + column_width * 1.8 / 2)
+        ground_y = GROUND_Y + fighter.lane_y
+        for column_number in (1, 2, 3):
+            x = first_x + column_direction * spacing * (column_number - 1)
+            self.projectiles.append(FreezeColumnEffect(x, ground_y, column_number, fighter.facing, fighter.lane_y))
+            self.audio.play("freeze_colum")
+
+    def _spawn_freeze_tornado(self, fighter: Fighter) -> None:
+        if fighter.name != "freeze" or not fighter.freeze_tornado_pending:
+            return
+        fighter.freeze_tornado_pending = False
+        hitbox = fighter.world_hitbox_rect()
+        origin_x = hitbox.centerx + fighter.facing * (fighter.hitbox_size[0] * 0.48)
+        origin_y = hitbox.bottom - 48.0
+        self.projectiles.append(FreezeTornadoProjectile(fighter, origin_x, origin_y, fighter.facing))
+        self.audio.play("freeze_tornado")
+
+    def _spawn_henry_vertical_volley(self, fighter: Fighter) -> None:
+        if fighter.name != "henry" or fighter.state != "sp_vert_attack_1":
+            return
+        if not fighter.attack_started or fighter.attack_projectile_fired:
+            return
+
+        fighter.attack_projectile_fired = True
+        origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.42)
+        origin_y = GROUND_Y + fighter.lane_y - fighter.z - 58.0
+        for angle in (-40.0, -34.0, -28.0, -22.0, -16.0):
+            vertical_speed = math.tan(math.radians(angle)) * ArrowProjectile.HENRY_SPEED_X
+            self.projectiles.append(
+                ArrowProjectile(fighter, origin_x, origin_y, fighter.facing, "henry_vertical", vertical_speed)
+            )
+        fighter.hunter_shoot_arrow_sfx_pending = True
+
+    def _apply_henry_flute_attack(self, fighter: Fighter) -> None:
+        if fighter.name != "henry" or not fighter.henry_sp_vert_attack_2_pending:
+            return
+
+        fighter.henry_sp_vert_attack_2_pending = False
+        self.audio.play_sequence(("flute_1", "flute_2", "flute_3"))
+        for target in (self.fighter, self.enemy):
+            if target is fighter or target.is_dead:
+                continue
+            if abs(target.x - fighter.x) > 240.0 or abs(target.lane_y - fighter.lane_y) > 52.0:
+                continue
+            target._start_henry_float()
 
     def _spawn_template_projectile(self, fighter: Fighter) -> None:
         if fighter.name != "template":
@@ -1561,8 +1966,21 @@ class BattleScene:
             hitbox = fighter.world_hitbox_rect()
             offset_x = fighter.facing * (fighter.hitbox_size[0] * 0.48)
             origin_x = hitbox.centerx + offset_x
-            origin_y = hitbox.bottom - 22.0
-            self.projectiles.append(WindProjectile(fighter, origin_x, origin_y, fighter.facing))
+            origin_y = hitbox.bottom - 42.0
+            wind = WindProjectile(fighter, origin_x, origin_y, fighter.facing)
+            self.projectiles.append(wind)
+            targets = (self.enemy,) if fighter is self.fighter else (self.fighter,)
+            for target in targets:
+                if target is None or target.is_dead or abs(target.lane_y - fighter.lane_y) > 10:
+                    continue
+                target._start_knockdown()
+                wind.hit_targets.add(id(target))
+                target_hitbox = target.world_hitbox_rect()
+                target_x = target_hitbox.centerx + fighter.facing * (target.hitbox_size[0] * 0.48)
+                target_y = target_hitbox.bottom - 42.0
+                target_wind = WindProjectile(fighter, target_x, target_y, fighter.facing)
+                target_wind.hit_targets.add(id(target))
+                self.projectiles.append(target_wind)
 
     def _spawn_firen_fire_trail(self, fighter: Fighter) -> None:
         if fighter.name != "firen":
@@ -1596,13 +2014,16 @@ class BattleScene:
         visible_right = camera_x + SCREEN_WIDTH
         for projectile in list(self.projectiles):
             projectile.update(dt)
+            if getattr(projectile, "just_expired", False):
+                self.audio.play("freeze_break")
+                projectile.just_expired = False
             if getattr(projectile, "just_broke", False):
                 self.audio.play("broken_arrow")
                 projectile.just_broke = False
             if getattr(projectile, "just_burst", False):
                 if isinstance(projectile, FireballProjectile):
                     self.audio.play_fireball()
-                else:
+                elif not isinstance(projectile, FreezeBallProjectile):
                     self.audio.play("orb_burst")
                 projectile.just_burst = False
             if getattr(projectile, "just_impact", False):
@@ -1610,7 +2031,7 @@ class BattleScene:
             if projectile.finished:
                 self.projectiles.remove(projectile)
                 continue
-            if isinstance(projectile, (BallProjectile, DavisBallProjectile, DenisOrbProjectile, DenisFollowOrbProjectile)) and projectile.phase == "fly":
+            if isinstance(projectile, (BallProjectile, DavisBallProjectile, DenisOrbProjectile, DenisFollowOrbProjectile, FreezeBallProjectile)) and projectile.phase == "fly":
                 if projectile.x <= visible_left or projectile.x >= visible_right:
                     projectile.x = max(visible_left, min(visible_right, projectile.x))
                     projectile._start_burst()
@@ -1634,8 +2055,24 @@ class BattleScene:
                     projectile.just_impact = True
             if isinstance(projectile, WindProjectile):
                 pass
+            if isinstance(projectile, FreezeTornadoProjectile):
+                if projectile.x <= visible_left or projectile.x >= visible_right:
+                    projectile.finished = True
             if projectile.x < self.stage.play_min_x - 400 or projectile.x > self.stage.play_max_x + 400:
                 self.projectiles.remove(projectile)
+                continue
+            if getattr(projectile, "can_damage", False):
+                owner = getattr(projectile, "owner", None)
+                if owner is not None:
+                    projectile_rect = projectile.rect()
+                    for column in self.projectiles:
+                        if not isinstance(column, FreezeColumnEffect) or column.finished:
+                            continue
+                        if abs(owner.lane_y - column.lane_y) > 36:
+                            continue
+                        if projectile_rect.colliderect(column.rect()):
+                            column.break_apart()
+            if isinstance(projectile, FreezeColumnEffect):
                 continue
 
             for target in (self.fighter, self.enemy):
@@ -1644,6 +2081,36 @@ class BattleScene:
                 if not projectile.can_damage:
                     continue
                 knocked_and_vulnerable = target.state in {"fall", "knocked_fire"} and not target.animation_player.finished
+                if isinstance(projectile, FreezeBallProjectile):
+                    if abs(target.lane_y - projectile.owner.lane_y) > 36:
+                        continue
+                    if abs(projectile.y - target.world_hitbox_rect().centery) > 42:
+                        continue
+                    if not projectile.rect().colliderect(target.world_hitbox_rect()):
+                        continue
+                    if target.state == "block" and target.block_strength > 0:
+                        target.block_strength = 0
+                        target.block_hold_timer = 0.0
+                        self.audio.play("hit_guard")
+                    elif target.state == "block" and target.block_strength == 0:
+                        target._start_block_break()
+                        self.audio.play("hit_guard")
+                    else:
+                        target.receive_damage(projectile.damage)
+                        if not target.is_dead:
+                            target._start_ice_knockdown()
+                            self.audio.play("freeze")
+                    projectile._start_burst()
+                    continue
+                if isinstance(projectile, FreezeTornadoProjectile):
+                    if abs(target.lane_y - projectile.owner.lane_y) > 10 or id(target) in projectile.hit_targets:
+                        continue
+                    if not projectile.rect().colliderect(target.world_hitbox_rect()):
+                        continue
+                    projectile.hit_targets.add(id(target))
+                    target._start_ice_launch_knockdown()
+                    self.audio.play("freeze")
+                    continue
                 if isinstance(projectile, (FireTrailEffect, FireExplosionEffect)):
                     if id(target) in projectile.hit_targets:
                         continue
@@ -1760,13 +2227,22 @@ class BattleScene:
     def update(self, dt: float, inputs: FighterInput) -> None:
         if self.paused:
             return
+        previous_x_by_fighter = {
+            id(self.fighter): self.fighter.x,
+            id(self.enemy): self.enemy.x,
+        }
         self.fighter.update(dt, inputs, target=self.enemy, controlled=True)
         self.enemy_brain.update(dt)
         enemy_input = self.enemy_brain.build_input(self.enemy.snapshot, self.fighter.snapshot)
         self.enemy.update(dt, enemy_input, target=self.fighter, controlled=True)
 
         for fighter in (self.fighter, self.enemy):
+            self._apply_henry_flute_attack(fighter)
+            self._spawn_freeze_ball(fighter)
+            self._spawn_freeze_columns(fighter)
+            self._spawn_freeze_tornado(fighter)
             self._spawn_hunter_projectile(fighter)
+            self._spawn_henry_vertical_volley(fighter)
             self._spawn_template_projectile(fighter)
             self._spawn_denis_projectile(fighter)
             self._spawn_denis_follow_orb(fighter)
@@ -1780,6 +2256,7 @@ class BattleScene:
             self._spawn_firen_fire_trail(fighter)
             self._spawn_firen_explosion(fighter)
 
+        self._resolve_freeze_column_obstruction(previous_x_by_fighter)
         self._update_projectiles(dt)
         self._handle_combat()
         self._handle_audio(dt)

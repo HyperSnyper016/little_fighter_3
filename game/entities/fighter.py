@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import pygame
 
-from game.constants import GROUND_Y, LANE_MAX_Y, LANE_MIN_Y, SHADOW_COLOR
+from game.constants import GROUND_Y, HENRY_FLUTE_SEQUENCE_DURATION, LANE_MAX_Y, LANE_MIN_Y, SHADOW_COLOR
 from game.systems.animation import AnimationPlayer
 from game.systems.assets import load_character_sheet
 
@@ -20,6 +21,11 @@ COMBAT_ATTACK_STATES = {
     "sp_vert_attack_1",
     "sp_vert_attack_2",
 }
+
+HENRY_FLOAT_DURATION = HENRY_FLUTE_SEQUENCE_DURATION
+HENRY_FLOAT_HEIGHT = 72.0
+HENRY_FLOAT_BOB_AMPLITUDE = 12.0
+HENRY_FLOAT_BOB_PERIOD = 0.4
 
 
 @dataclass
@@ -85,6 +91,8 @@ class Fighter:
         self.knock_hold_timer = 0.0
         self.freeze_timer = 0.0
         self.freeze_cooldown = 0.0
+        self.henry_float_timer = 0.0
+        self.henry_float_elapsed = 0.0
         self.is_defending = False
         self.revive_flash_timer = 0.0
         self.revive_flash_interval = 0.10
@@ -162,6 +170,7 @@ class Fighter:
         self.firen_sp_vert_attack_2_spawned = False
         self.henry_wind_projectiles_pending = 0
         self.henry_wind_sfx_pending = False
+        self.henry_sp_vert_attack_2_pending = False
         self.armored_bandit_sword_swing_sfx_pending = False
         self.dark_bat_sword_swing_sfx_pending = False
         self.dark_bat_shadow_step_sfx_pending = False
@@ -171,6 +180,15 @@ class Fighter:
         self.bat_lazer_sfx_pending = False
         self.bat_summon_bats_sfx_pending = False
         self.ice_break_sfx_pending = False
+        self.freeze_break_sfx_pending = False
+        self.freeze_ball_spawned = False
+        self.freeze_ball_pending = False
+        self.freeze_columns_pending = False
+        self.freeze_columns_spawned = False
+        self.freeze_tornado_pending = False
+        self.freeze_tornado_spawned = False
+        self.ice_launch_break_on_landing = False
+        self.ice_launch_freeze_break_pending = False
         self.fire_knock_sfx_pending = False
         self.hunter_projectile_style = "basic"
         self.animations = load_character_sheet(self.definition)
@@ -220,10 +238,12 @@ class Fighter:
         self.pending_projectile = None
         self.hunter_projectile_style = "basic"
         self.push_velocity_x = push_velocity_x
-        if self.name in {"hunter", "henry"} and state in {"basic_attack", "jump_throw", "sp_move_attack_1"}:
+        if self.name in {"hunter", "henry"} and state in {"basic_attack", "jump_throw", "sp_move_attack_1", "sp_vert_attack_1"}:
             self.hunter_draw_arrow_sfx_pending = True
         if self.name == "henry" and state == "sp_move_attack_1":
             self.hunter_projectile_style = "enchanted"
+        if self.name == "henry" and state == "sp_vert_attack_2":
+            self.henry_sp_vert_attack_2_pending = True
         if self.name == "deep" and state in {"sp_vert_attack_1", "sp_vert_attack_2", "sp_move_attack_2"}:
             self.deep_sword_swing_sfx_pending = True
             if state == "sp_move_attack_2":
@@ -269,9 +289,19 @@ class Fighter:
             self.denis_sp_vert_attack_2_spawned = False
             self.denis_follow_orb_create_sfx_pending = False
         self._reset_firen_special_state(state)
+        if self.name == "freeze":
+            if state == "sp_move_attack_1":
+                self.freeze_ball_spawned = False
+                self.freeze_ball_pending = False
+            elif state == "sp_move_attack_2":
+                self.freeze_columns_pending = False
+                self.freeze_columns_spawned = False
+            elif state == "sp_vert_attack_1":
+                self.freeze_tornado_pending = False
+                self.freeze_tornado_spawned = False
 
     def _can_continue_special(self, state: str, hold_active: bool) -> bool:
-        return self.name in {"deep", "template", "davis", "firen"} and self.special_move_followup_state == state and hold_active
+        return self.name in {"deep", "template", "davis", "firen", "henry"} and self.special_move_followup_state == state and hold_active
 
     def _restart_firen_move_attack_1(self, stage: int, hold_active: bool) -> bool:
         if self.name != "firen" or not hold_active:
@@ -349,7 +379,7 @@ class Fighter:
         return True
 
     def _restart_move_followup(self, state: str, hold_active: bool, start_frame_index: int = 0) -> bool:
-        if self.name not in {"deep", "template", "davis", "firen"} or not hold_active:
+        if self.name not in {"deep", "template", "davis", "firen", "henry"} or not hold_active:
             return False
         if not self._consume_mana_for_state(state):
             self.state = "idle"
@@ -363,6 +393,8 @@ class Fighter:
         self.attack_started = True
         self.attack_projectile_fired = False
         self.special_move_followup_state = state
+        if self.name == "henry" and state == "sp_vert_attack_1":
+            self.hunter_draw_arrow_sfx_pending = True
         followup_name = state
         if self.name == "davis" and state == "sp_move_attack_1":
             self.davis_move_attack_1_alt = not self.davis_move_attack_1_alt
@@ -418,7 +450,7 @@ class Fighter:
             return
         self.attack_started = True
         self.attack_projectile_fired = False
-        self.hunter_projectile_style = "jump"
+        self.hunter_projectile_style = "henry_jump"
 
     def draw_pos(self, camera_x: float = 0.0) -> tuple[int, int]:
         frame = self.animation_player.current_frame
@@ -446,7 +478,7 @@ class Fighter:
 
     @property
     def is_invulnerable(self) -> bool:
-        return self.state in {"fall", "knocked_fire", "knocked_freeze", "get_up", "grappled"} or self.dodge_invulnerable
+        return self.state in {"fall", "henry_float", "knocked_fire", "knocked_freeze", "get_up", "grappled"} or self.dodge_invulnerable
 
     def hitbox_rect(self, camera_x: float = 0.0) -> pygame.Rect:
         width, height = self.hitbox_size
@@ -464,8 +496,9 @@ class Fighter:
 
     def _start_knockdown(self) -> None:
         self.state = "fall"
+        self.henry_float_timer = 0.0
         self.state_timer = 0.48
-        self.knock_hold_timer = 2.0
+        self.knock_hold_timer = 1.0
         self.freeze_timer = 0.0
         self.freeze_cooldown = 0.0
         self.attack_timer = 0.0
@@ -478,6 +511,20 @@ class Fighter:
         self.just_knocked_down = True
         self.facing_lock_until_get_up = True
 
+    def _start_henry_float(self) -> None:
+        self.state = "henry_float"
+        self.henry_float_timer = HENRY_FLOAT_DURATION
+        self.henry_float_elapsed = 0.0
+        self.z = HENRY_FLOAT_HEIGHT
+        self.velocity_z = 0.0
+        self.attack_timer = 0.0
+        self.has_applied_attack_damage = False
+        self.attack_started = False
+        self.attack_projectile_fired = False
+        self.push_velocity_x = 0.0
+        self.is_defending = False
+        self.block_hold_timer = 0.0
+
     def _start_launch_knockdown(self) -> None:
         self._start_knockdown()
         self.z = 1.0
@@ -487,7 +534,7 @@ class Fighter:
     def _start_fire_knockdown(self) -> None:
         self.state = "knocked_fire"
         self.state_timer = 0.52
-        self.knock_hold_timer = 2.0
+        self.knock_hold_timer = 1.0
         self.freeze_timer = 0.0
         self.freeze_cooldown = 0.0
         self.attack_timer = 0.0
@@ -503,12 +550,14 @@ class Fighter:
 
     def _start_ice_knockdown(self) -> None:
         self.state = "knocked_freeze"
-        self.state_timer = 5.0
-        self.knock_hold_timer = 0.9
-        self.freeze_timer = 5.0
+        self.state_timer = 1.0
+        self.knock_hold_timer = 1.0
+        self.freeze_timer = 1.0
         self.freeze_break_timer = 0.0
         self.freeze_recovery_timer = 0.0
         self.freeze_break_started = False
+        self.ice_launch_break_on_landing = False
+        self.ice_launch_freeze_break_pending = False
         self.freeze_cooldown = 0.0
         self.attack_timer = 0.0
         self.block_hold_timer = 0.0
@@ -519,6 +568,12 @@ class Fighter:
         self.grapple_target = None
         self.just_knocked_down = True
         self.facing_lock_until_get_up = True
+
+    def _start_ice_launch_knockdown(self) -> None:
+        self._start_ice_knockdown()
+        self.z = 1.0
+        self.velocity_z = self.movement["jump_velocity"] * 0.85
+        self.ice_launch_break_on_landing = True
 
     def _start_death(self) -> None:
         self.state = "die"
@@ -619,6 +674,8 @@ class Fighter:
         self.has_applied_attack_damage = False
         self.attack_started = True
         self.attack_projectile_fired = False
+        if self.name == "henry":
+            self.hunter_projectile_style = "henry_jump"
         if self.name == "dark_bat":
             self.dark_bat_sword_swing_sfx_pending = True
         if self.name == "armored_bandit":
@@ -727,9 +784,13 @@ class Fighter:
                 if self.revive_flash_count > 0:
                     self.revive_flash_timer = self.revive_flash_interval
 
-        if self.state == "knocked_freeze" and self.freeze_timer <= 0 and not self.freeze_break_started:
+        if self.state == "knocked_freeze" and self.freeze_timer <= 0 and not self.freeze_break_started and not self.ice_launch_break_on_landing:
             self.freeze_break_started = True
-            self.ice_break_sfx_pending = True
+            if self.ice_launch_freeze_break_pending:
+                self.freeze_break_sfx_pending = True
+                self.ice_launch_freeze_break_pending = False
+            else:
+                self.ice_break_sfx_pending = True
             self.freeze_break_timer = max(
                 0.16,
                 self.animations.get("knocked_freeze_break", self.animations["knocked_freeze"])["frame_duration"],
@@ -842,7 +903,7 @@ class Fighter:
         dark_bat_flying = self.name == "dark_bat" and self.state == "jump_throw" and self.jump_stage == 2 and self.dark_bat_flight_timer > 0.0
         if dark_bat_flying:
             self.velocity_z = 0.0
-        elif self.z > 0 or self.velocity_z != 0:
+        elif self.henry_float_timer <= 0.0 and (self.z > 0 or self.velocity_z != 0):
             self.velocity_z += self.movement["gravity"] * dt
             self.z -= self.velocity_z * dt
             if self.z <= 0:
@@ -861,6 +922,10 @@ class Fighter:
                     self.attack_projectile_fired = False
                     self.has_applied_attack_damage = False
                     self.just_landed = True
+                elif self.state == "knocked_freeze" and self.ice_launch_break_on_landing:
+                    self.ice_launch_break_on_landing = False
+                    self.freeze_timer = 1.0
+                    self.ice_launch_freeze_break_pending = True
 
         if revive_just_pressed and self.state in {"die", "dead"}:
             self._start_revive()
@@ -879,7 +944,7 @@ class Fighter:
             self.state_timer = 0.55
         elif break_block_just_pressed and self.state == "block":
             self._start_block_break()
-        elif self.state not in (COMBAT_ATTACK_STATES | {"fall", "knocked_fire", "knocked_freeze", "lift_heavy", "get_up", "die", "dead", "block_break", "block_dodge", "grapple", "grappled", "grapple_hit", "jump_throw", "drink", "hurt"}) and self.z == 0 and self.velocity_z == 0:
+        elif self.state not in (COMBAT_ATTACK_STATES | {"fall", "henry_float", "knocked_fire", "knocked_freeze", "lift_heavy", "get_up", "die", "dead", "block_break", "block_dodge", "grapple", "grappled", "grapple_hit", "jump_throw", "drink", "hurt"}) and self.z == 0 and self.velocity_z == 0:
             special_attack_started = False
             can_move_special_1 = "sp_move_attack_1" in self.animations
             can_move_special_2 = "sp_move_attack_2" in self.animations
@@ -915,7 +980,7 @@ class Fighter:
                 if self._consume_mana_for_state("sp_vert_attack_1"):
                     self.state = "sp_vert_attack_1"
                     self._start_attack_state("sp_vert_attack_1")
-                    if self.name == "firen":
+                    if self.name in {"firen", "henry"}:
                         self.special_move_followup_state = "sp_vert_attack_1"
                     special_attack_started = True
                     self.special_attack_lock = "sp_vert_attack_1"
@@ -1016,7 +1081,7 @@ class Fighter:
                 self.jump_stage = 0
                 self.current_jump_animation = "jump_normal" if "jump_normal" in self.animations else "idle"
 
-        if (self.z > 0 or self.velocity_z != 0) and self.state not in (COMBAT_ATTACK_STATES | {"jump_throw"}):
+        if (self.z > 0 or self.velocity_z != 0) and self.state not in (COMBAT_ATTACK_STATES | {"henry_float", "jump_throw", "knocked_freeze"}):
             self.state = "jump_throw"
 
         if self.state in {"walk", "run"}:
@@ -1033,7 +1098,7 @@ class Fighter:
             speed = self.movement["run_speed"]
             self.x += self.facing * speed * dt
         elif self.name == "denis" and self.state == "sp_move_attack_2":
-            self.x += self.facing * self.movement["walk_speed"] * dt
+            self.x += self.facing * self.movement["run_speed"] * 1.25 * dt
         elif self.state == "jump_throw":
             air_horizontal_speed = self.movement["run_speed"] if self.jump_stage == 2 else self.movement["walk_speed"]
             if move_x != 0:
@@ -1092,6 +1157,8 @@ class Fighter:
             animation_name = "sp_vert_attack_1" if "sp_vert_attack_1" in self.animations else ("jump_attack" if "jump_attack" in self.animations else ("jump_normal" if "jump_normal" in self.animations else "idle"))
         elif self.state == "sp_vert_attack_2":
             animation_name = "sp_vert_attack_2" if "sp_vert_attack_2" in self.animations else ("jump_attack" if "jump_attack" in self.animations else ("jump_normal" if "jump_normal" in self.animations else "idle"))
+        elif self.state == "henry_float":
+            animation_name = "jump_normal" if "jump_normal" in self.animations else "idle"
         elif self.state == "grapple":
             animation_name = "grapple"
         elif self.state == "grappled":
@@ -1103,7 +1170,7 @@ class Fighter:
         elif self.state == "knocked_fire":
             animation_name = "knocked_fire"
         elif self.state == "knocked_freeze":
-            animation_name = "knocked_freeze"
+            animation_name = "knocked_freeze_break" if self.freeze_break_started else "knocked_freeze"
         elif self.state == "drink":
             animation_name = "drink"
         elif self.state == "get_up":
@@ -1235,6 +1302,22 @@ class Fighter:
                     if frame_index == 7 and not self.attack_projectile_fired:
                         self.henry_wind_projectiles_pending += 1
                         self.henry_wind_sfx_pending = True
+        if self.name == "freeze":
+            current_animation_name = self.animation_player.current_name
+            current_frame_index = self.animation_player.frame_index
+            frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
+            crossed_frames = self._crossed_frame_indices(previous_frame_index, current_frame_index, frame_count)
+            if self.state == "sp_move_attack_1" and current_animation_name == "sp_move_attack_1":
+                if 2 in crossed_frames and not self.freeze_ball_spawned:
+                    self.freeze_ball_pending = True
+            if self.state == "sp_move_attack_2" and current_animation_name == "sp_move_attack_2":
+                if 3 in crossed_frames and not self.freeze_columns_spawned:
+                    self.freeze_columns_pending = True
+                    self.freeze_columns_spawned = True
+            if self.state == "sp_vert_attack_1" and current_animation_name == "sp_vert_attack_1":
+                if 3 in crossed_frames and not self.freeze_tornado_spawned:
+                    self.freeze_tornado_pending = True
+                    self.freeze_tornado_spawned = True
         if self.state == "sp_move_attack_1" and self.animation_player.finished:
             if self._can_continue_special("sp_move_attack_1", move_special_1_chord):
                 if self.name == "deep":
@@ -1291,6 +1374,16 @@ class Fighter:
             self.animation_player.frame_index = min(1, len(self.animation_player.animations["block"]["surfaces"]) - 1)
             frame = self.animation_player.animations["block"]["surfaces"][self.animation_player.frame_index]
             self.animation_player.current_frame = frame if self.facing == 1 else pygame.transform.flip(frame, True, False)
+        if self.henry_float_timer > 0.0:
+            self.henry_float_elapsed += dt
+            self.henry_float_timer = max(0.0, self.henry_float_timer - dt)
+            if self.henry_float_timer == 0.0:
+                self.z = 0.0
+                self.velocity_z = 0.0
+                self._start_knockdown()
+            else:
+                bob_phase = math.tau * self.henry_float_elapsed / HENRY_FLOAT_BOB_PERIOD
+                self.z = HENRY_FLOAT_HEIGHT + math.sin(bob_phase) * HENRY_FLOAT_BOB_AMPLITUDE
 
     def draw(self, surface: pygame.Surface, camera_x: float = 0.0) -> None:
         shadow = pygame.Surface(self.shadow_size, pygame.SRCALPHA)
