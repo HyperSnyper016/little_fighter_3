@@ -131,6 +131,10 @@ class Fighter:
         self.has_applied_attack_damage = False
         self.attack_started = False
         self.attack_projectile_fired = False
+        self.jack_blast_pending = False
+        self.jack_yell_sfx_pending = False
+        self.jan_healing_birds_pending = False
+        self.jan_follow_orb_pending = False
         self.hunter_draw_arrow_sfx_pending = False
         self.hunter_shoot_arrow_sfx_pending = False
         self.last_step_state = False
@@ -242,6 +246,14 @@ class Fighter:
         self.pending_projectile = None
         self.hunter_projectile_style = "basic"
         self.push_velocity_x = push_velocity_x
+        if self.name == "jack" and state == "sp_move_attack_1":
+            self.jack_blast_pending = False
+        if self.name == "jack" and state == "sp_vert_attack_1":
+            self.jack_yell_sfx_pending = True
+        if self.name == "jan" and state == "sp_vert_attack_1":
+            self.jan_healing_birds_pending = False
+        if self.name == "jan" and state == "sp_vert_attack_2":
+            self.jan_follow_orb_pending = False
         if self.name in {"hunter", "henry"} and state in {"basic_attack", "jump_throw", "sp_move_attack_1", "sp_vert_attack_1"}:
             self.hunter_draw_arrow_sfx_pending = True
         if self.name == "henry" and state == "sp_move_attack_1":
@@ -1290,6 +1302,20 @@ class Fighter:
                     if frame_index == 2 and not self.denis_sp_vert_attack_2_spawned:
                         self.denis_follow_orb_pending = True
                         self.denis_sp_vert_attack_2_spawned = True
+        if self.name == "jack" and self.state == "sp_move_attack_1" and self.animation_player.current_name == "sp_move_attack_1":
+            current_animation_name = self.animation_player.current_name
+            frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
+            crossed_frames = self._crossed_frame_indices(previous_frame_index, self.animation_player.frame_index, frame_count)
+            if 3 in crossed_frames:
+                self.jack_blast_pending = True
+        if self.name == "jan":
+            current_animation_name = self.animation_player.current_name
+            frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
+            crossed_frames = self._crossed_frame_indices(previous_frame_index, self.animation_player.frame_index, frame_count)
+            if self.state == "sp_vert_attack_1" and current_animation_name == "sp_vert_attack_1" and 3 in crossed_frames:
+                self.jan_healing_birds_pending = True
+            if self.state == "sp_vert_attack_2" and current_animation_name == "sp_vert_attack_2" and 3 in crossed_frames:
+                self.jan_follow_orb_pending = True
         if self.name == "firen":
             current_animation_name = self.animation_player.current_name
             current_frame_index = self.animation_player.frame_index

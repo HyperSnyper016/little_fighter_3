@@ -4,7 +4,7 @@ GROUND_Y = 780
 LANE_MIN_Y = 36
 LANE_MAX_Y = SCREEN_HEIGHT - GROUND_Y
 FPS = 60
-VERSION = "v0.9.1"
+VERSION = "v0.10.0"
 
 HENRY_FLUTE_SEQUENCE_DURATION = 1.805  # Combined duration of flute_1.wav, flute_2.wav, and flute_3.wav.
 

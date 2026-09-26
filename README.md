@@ -27,12 +27,12 @@ PyCharm-friendly Python prototype for a Little Fighter 2-inspired side-scrolling
 ## Current prototype
 
 - Title screen prompt
-- Character selection with a roster of playable fighters, including Freeze
+- Character selection with a roster of playable fighters, including Jan, Jack, and Freeze
 - 2.5D arena movement
 - Idle, walk, run, jump, attack, defend states
 - Spawned consumables stay on the ground until picked up; after pickup, they can be thrown and land twice before breaking
 - A random consumable spawns every 12 seconds; milk restores 10 HP when consumed, and thrown items damage enemies before dropping where they hit
-- Freeze's ice-ball, ice-column, and moving tornado special attacks
+- Jan's healing-bird summon and homing orb, and Freeze's ice-ball, ice-column, and moving tornado special attacks
 - Data-driven animation timing and frame layout
 
 ## Controls
@@ -47,4 +47,4 @@ PyCharm-friendly Python prototype for a Little Fighter 2-inspired side-scrolling
 - Left Shift: run
 - Escape: quit
 
-Freeze's special attacks use Attack + Defend + Left/Right for the ice ball, Attack + Jump + Left/Right for the ice columns, and Attack + Defend + Up for the ice tornado.
+Jan summons three healing birds with Attack + Defend + Up and fires her homing orb with Attack + Jump + Up. Jack's special attacks use Attack + Defend + Left/Right to fire Jack Blast, Attack + Jump + Left/Right for a knockdown attack, and Attack + Defend + Up for a launching attack. Freeze's special attacks use Attack + Defend + Left/Right for the ice ball, Attack + Jump + Left/Right for the ice columns, and Attack + Defend + Up for the ice tornado.
