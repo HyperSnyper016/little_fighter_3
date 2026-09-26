@@ -5,6 +5,7 @@ from pathlib import Path
 import pygame
 
 from game.constants import SCREEN_HEIGHT, SCREEN_WIDTH, TEXT_COLOR
+from game.data.characters import CHARACTERS
 
 PORTRAIT_SIZE = (240, 240)
 
@@ -30,7 +31,7 @@ class CharacterSelectScene:
 
         for directory in sorted(path for path in self.sprites_root.iterdir() if path.is_dir()):
             # skip placeholder folders (e.g. _example_asset)
-            if directory.name.startswith("_"):
+            if directory.name.startswith("_") or directory.name not in CHARACTERS:
                 continue
             profile_path = self._resolve_profile_path(directory)
             if profile_path is None:
