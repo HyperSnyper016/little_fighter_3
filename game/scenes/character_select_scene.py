@@ -31,7 +31,8 @@ class CharacterSelectScene:
 
         for directory in sorted(path for path in self.sprites_root.iterdir() if path.is_dir()):
             # skip placeholder folders (e.g. _example_asset)
-            if directory.name.startswith("_") or directory.name not in CHARACTERS:
+            character_key = directory.name.lower()
+            if directory.name.startswith("_") or character_key not in CHARACTERS:
                 continue
             profile_path = self._resolve_profile_path(directory)
             if profile_path is None:
@@ -42,8 +43,8 @@ class CharacterSelectScene:
             scaled = pygame.transform.smoothscale(profile, PORTRAIT_SIZE)
             characters.append(
                 {
-                    "key": directory.name,
-                    "display_name": directory.name.replace("_", " ").title(),
+                    "key": character_key,
+                    "display_name": CHARACTERS[character_key]["display_name"],
                     "profile": scaled,
                 }
             )

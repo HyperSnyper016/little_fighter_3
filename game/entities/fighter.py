@@ -131,10 +131,25 @@ class Fighter:
         self.has_applied_attack_damage = False
         self.attack_started = False
         self.attack_projectile_fired = False
+        self.knight_sword_swing_sfx_pending = False
+        self.knight_armor_hit_sfx_pending: str | None = None
+        self.knight_next_armor_hit_sfx = "armor_hit_1"
         self.jack_blast_pending = False
         self.jack_yell_sfx_pending = False
         self.jan_healing_birds_pending = False
         self.jan_follow_orb_pending = False
+        self.john_blast_pending = False
+        self.john_barrier_pending = False
+        self.john_follow_disk_pending = False
+        self.john_heal_orb_pending = False
+        self.axle_shot_pending = False
+        self.julian_skull_pending = False
+        self.julian_ball_pending = False
+        self.julian_sp_vert_attack_1_pending = False
+        self.julian_sp_vert_attack_2_pending = False
+        self.julian_sp_move_attack_1_stage = 0
+        self.axle_uppercut_shear_sfx_pending = False
+        self.axle_dash_attack_sfx_pending = False
         self.hunter_draw_arrow_sfx_pending = False
         self.hunter_shoot_arrow_sfx_pending = False
         self.last_step_state = False
@@ -246,6 +261,8 @@ class Fighter:
         self.pending_projectile = None
         self.hunter_projectile_style = "basic"
         self.push_velocity_x = push_velocity_x
+        if self.name == "knight" and state == "basic_attack":
+            self.knight_sword_swing_sfx_pending = True
         if self.name == "jack" and state == "sp_move_attack_1":
             self.jack_blast_pending = False
         if self.name == "jack" and state == "sp_vert_attack_1":
@@ -254,6 +271,24 @@ class Fighter:
             self.jan_healing_birds_pending = False
         if self.name == "jan" and state == "sp_vert_attack_2":
             self.jan_follow_orb_pending = False
+        if self.name == "john":
+            self.john_blast_pending = False
+            self.john_barrier_pending = False
+            self.john_follow_disk_pending = False
+            self.john_heal_orb_pending = False
+        if self.name == "axle" and state == "sp_move_attack_1":
+            self.axle_shot_pending = False
+        if self.name == "axle" and state == "sp_move_attack_2":
+            self.axle_uppercut_shear_sfx_pending = True
+        if self.name == "axle" and state == "sp_vert_attack_1":
+            self.axle_dash_attack_sfx_pending = True
+        if self.name == "julian":
+            self.julian_skull_pending = False
+            self.julian_ball_pending = False
+            self.julian_sp_vert_attack_1_pending = False
+            self.julian_sp_vert_attack_2_pending = False
+            if state == "sp_move_attack_1":
+                self.julian_sp_move_attack_1_stage = 1
         if self.name in {"hunter", "henry"} and state in {"basic_attack", "jump_throw", "sp_move_attack_1", "sp_vert_attack_1"}:
             self.hunter_draw_arrow_sfx_pending = True
         if self.name == "henry" and state == "sp_move_attack_1":
@@ -346,7 +381,7 @@ class Fighter:
         return True
 
     def _can_continue_special(self, state: str, hold_active: bool) -> bool:
-        return self.name in {"deep", "template", "davis", "firen", "henry"} and self.special_move_followup_state == state and hold_active
+        return self.name in {"deep", "template", "davis", "firen", "henry", "axle", "julian"} and self.special_move_followup_state == state and hold_active
 
     def _restart_firen_move_attack_1(self, stage: int, hold_active: bool) -> bool:
         if self.name != "firen" or not hold_active:
@@ -424,7 +459,7 @@ class Fighter:
         return True
 
     def _restart_move_followup(self, state: str, hold_active: bool, start_frame_index: int = 0) -> bool:
-        if self.name not in {"deep", "template", "davis", "firen", "henry"} or not hold_active:
+        if self.name not in {"deep", "template", "davis", "firen", "henry", "axle", "julian"} or not hold_active:
             return False
         if not self._consume_mana_for_state(state):
             self.state = "idle"
@@ -438,6 +473,10 @@ class Fighter:
         self.attack_started = True
         self.attack_projectile_fired = False
         self.special_move_followup_state = state
+        if self.name == "axle" and state == "sp_move_attack_1":
+            self.axle_shot_pending = False
+        if self.name == "julian" and state == "sp_move_attack_1":
+            self.julian_sp_move_attack_1_stage += 1
         if self.name == "henry" and state == "sp_vert_attack_1":
             self.hunter_draw_arrow_sfx_pending = True
         followup_name = state
@@ -453,6 +492,8 @@ class Fighter:
                 followup_name = "sp_move_attack_1_follow"
             elif self.firen_sp_move_attack_1_stage == 3 and "sp_move_attack_1_follow_2" in self.animations:
                 followup_name = "sp_move_attack_1_follow_2"
+        elif self.name == "julian" and state == "sp_move_attack_1":
+            followup_name = f"sp_move_attack_1_follow_{self.julian_sp_move_attack_1_stage}"
         elif state == "sp_move_attack_2" and "sp_move_attack_2_follow" in self.animations and self.name in {"deep"}:
             followup_name = "sp_move_attack_2_follow"
         elif self.name == "firen" and state == "sp_move_attack_2":
@@ -681,6 +722,11 @@ class Fighter:
 
         self.health = max(0, self.health - amount)
         self.damage_cooldown = 0.18
+        if self.name == "knight":
+            self.knight_armor_hit_sfx_pending = self.knight_next_armor_hit_sfx
+            self.knight_next_armor_hit_sfx = (
+                "armor_hit_2" if self.knight_next_armor_hit_sfx == "armor_hit_1" else "armor_hit_1"
+            )
         if self.health == 0:
             self._start_death()
             return
@@ -724,6 +770,8 @@ class Fighter:
         self.has_applied_attack_damage = False
         self.attack_started = True
         self.attack_projectile_fired = False
+        if self.name == "knight":
+            self.knight_sword_swing_sfx_pending = True
         if self.name == "henry":
             self.hunter_projectile_style = "henry_jump"
         if self.name == "dark_bat":
@@ -1054,7 +1102,7 @@ class Fighter:
                 else:
                     special_attack_started = True
             if special_attack_started and self.state == "sp_move_attack_1":
-                if self.name in {"deep", "template", "davis", "firen"}:
+                if self.name in {"deep", "template", "davis", "firen", "axle", "julian"}:
                     self.special_move_followup_state = "sp_move_attack_1"
                     self.special_attack_lock = "sp_move_attack_1"
                 else:
@@ -1194,6 +1242,12 @@ class Fighter:
                     animation_name = "sp_move_attack_1_follow_2"
                 else:
                     animation_name = "sp_move_attack_1" if "sp_move_attack_1" in self.animations else ("heavy_attack" if "heavy_attack" in self.animations else "idle")
+            elif self.name == "julian":
+                animation_name = (
+                    "sp_move_attack_1"
+                    if self.julian_sp_move_attack_1_stage <= 1
+                    else f"sp_move_attack_1_follow_{self.julian_sp_move_attack_1_stage}"
+                )
             else:
                 if self.animation_player.current_name == "sp_move_attack_1_follow" and "sp_move_attack_1_follow" in self.animations:
                     animation_name = "sp_move_attack_1_follow"
@@ -1316,6 +1370,45 @@ class Fighter:
                 self.jan_healing_birds_pending = True
             if self.state == "sp_vert_attack_2" and current_animation_name == "sp_vert_attack_2" and 3 in crossed_frames:
                 self.jan_follow_orb_pending = True
+        if self.name == "john" and previous_animation_name == self.animation_player.current_name:
+            current_animation_name = self.animation_player.current_name
+            frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
+            crossed_frames = self._crossed_frame_indices(previous_frame_index, self.animation_player.frame_index, frame_count)
+            if self.state == "sp_move_attack_1" and current_animation_name == "sp_move_attack_1" and 5 in crossed_frames:
+                self.john_blast_pending = True
+            if self.state == "sp_move_attack_2" and current_animation_name == "sp_move_attack_2" and 5 in crossed_frames:
+                self.john_barrier_pending = True
+            if self.state == "sp_vert_attack_1" and current_animation_name == "sp_vert_attack_1" and 1 in crossed_frames:
+                self.john_follow_disk_pending = True
+            if self.state == "sp_vert_attack_2" and current_animation_name == "sp_vert_attack_2" and 3 in crossed_frames:
+                self.john_heal_orb_pending = True
+        if self.name == "axle" and self.state == "sp_move_attack_1" and self.animation_player.current_name == "sp_move_attack_1":
+            current_animation_name = self.animation_player.current_name
+            frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
+            crossed_frames = self._crossed_frame_indices(previous_frame_index, self.animation_player.frame_index, frame_count)
+            if 2 in crossed_frames:
+                self.axle_shot_pending = True
+        if self.name == "julian":
+            current_animation_name = self.animation_player.current_name
+            frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
+            crossed_frames = self._crossed_frame_indices(previous_frame_index, self.animation_player.frame_index, frame_count)
+            if self.state == "sp_move_attack_1" and 1 in crossed_frames:
+                self.julian_skull_pending = True
+            if self.state == "sp_move_attack_2" and current_animation_name == "sp_move_attack_2" and 3 in crossed_frames:
+                self.julian_ball_pending = True
+            if self.state == "sp_vert_attack_1" and current_animation_name == "sp_vert_attack_1" and 2 in crossed_frames:
+                self.julian_sp_vert_attack_1_pending = True
+            if self.state == "sp_vert_attack_2" and current_animation_name == "sp_vert_attack_2" and 4 in crossed_frames:
+                self.julian_sp_vert_attack_2_pending = True
+        if self.name == "axle" and self.state in {"sp_move_attack_2", "sp_vert_attack_1"}:
+            current_animation_name = self.animation_player.current_name
+            if current_animation_name == self.state:
+                frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
+                crossed_frames = self._crossed_frame_indices(previous_frame_index, self.animation_player.frame_index, frame_count)
+                step_distance = self.movement["walk_speed"] * 0.10
+                for frame_index in crossed_frames:
+                    if frame_index in {1, 3}:
+                        self.x = max(self.min_x, min(self.max_x, self.x + self.facing * step_distance))
         if self.name == "firen":
             current_animation_name = self.animation_player.current_name
             current_frame_index = self.animation_player.frame_index
@@ -1389,7 +1482,13 @@ class Fighter:
                     self.freeze_tornado_pending = True
                     self.freeze_tornado_spawned = True
         if self.state == "sp_move_attack_1" and self.animation_player.finished:
-            if self._can_continue_special("sp_move_attack_1", move_special_1_chord):
+            if self.name == "julian" and self.julian_sp_move_attack_1_stage >= 5:
+                self.special_move_followup_state = None
+                self.state = "idle"
+                self.attack_started = False
+                self.has_applied_attack_damage = False
+                self.attack_projectile_fired = False
+            elif self._can_continue_special("sp_move_attack_1", move_special_1_chord):
                 if self.name == "deep":
                     self._queue_deep_blade_swipe()
                 elif self.name == "firen":
