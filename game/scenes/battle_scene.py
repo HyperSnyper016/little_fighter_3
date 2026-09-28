@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import random
 import re
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pygame
@@ -581,6 +581,35 @@ class BanditBrain:
             self.attack_cooldown = 0.85
 
         return result
+
+
+@dataclass
+class RudolfClone:
+    fighter: Fighter
+    brain: BanditBrain
+    lifetime: float = 8.0
+
+
+class RudolfSmokeEffect:
+    FRAME_DURATION = 0.08
+
+    def __init__(self, x: float, lane_y: float, frames: list[pygame.Surface]) -> None:
+        self.x = x
+        self.floor_y = GROUND_Y + lane_y
+        self.frames = frames
+        self.elapsed = 0.0
+
+    def update(self, dt: float) -> bool:
+        self.elapsed += dt
+        return self.elapsed >= len(self.frames) * self.FRAME_DURATION
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        frame_index = min(int(self.elapsed / self.FRAME_DURATION), len(self.frames) - 1)
+        frame = self.frames[frame_index]
+        surface.blit(
+            frame,
+            frame.get_rect(midbottom=(int(self.x - camera_x), int(self.floor_y))),
+        )
 
 
 class ArrowProjectile:
@@ -1934,14 +1963,16 @@ class FreezeColumnEffect:
         self,
         x: float,
         y: float,
-        column_number: int,
+        column_number: int | str,
         facing: int = 1,
         lane_y: float = 0.0,
+        owner: Fighter | None = None,
     ) -> None:
         self.x = float(x)
         self.y = float(y)
         self.facing = 1 if facing >= 0 else -1
         self.lane_y = float(lane_y)
+        self.owner = owner
         self.scale = 1.8
         root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "freeze_colum"
         self.frames = _load_folder_frames(root / f"freeze_colum_{column_number}")
@@ -2696,6 +2727,377 @@ class FireballProjectile:
         surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
 
 
+class FirzenCharBlastProjectile:
+    FRAME_DURATION = 0.08
+    BODY_SEGMENT_COUNT = 4
+    SPRITE_SCALE = 1.794
+
+    def __init__(self, owner: Fighter, x: float, y: float, facing: int) -> None:
+        self.owner = owner
+        self.y = float(y)
+        self.facing = 1 if facing >= 0 else -1
+        self.origin_x = float(x) + self.facing * owner.hitbox_size[0] / 2
+        self.damage = 1
+        self.can_damage = True
+        self.finished = False
+        self.phase = "fly"
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        self.travel_distance = 0.0
+        self.speed_x = 650.0
+        root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "firzen_char_blast"
+        self.front_frames = _scale_frames(_load_folder_frames(root / "front"), self.SPRITE_SCALE)
+        self.body_frames = _scale_frames(_load_folder_frames(root / "body"), self.SPRITE_SCALE)
+        self.burst_frames = _scale_frames(_load_folder_frames(root / "burst"), self.SPRITE_SCALE)
+        if not self.front_frames or not self.body_frames or not self.burst_frames:
+            raise FileNotFoundError(f"Firzen character blast sprites are missing from {root}")
+        self.x = float(x) + self.facing * (
+            owner.hitbox_size[0] / 2 + self.front_frames[0].get_width() / 2
+        )
+        self.frames = self.front_frames
+
+    def _start_burst(self, impact_x: float | None = None) -> None:
+        if self.phase == "burst":
+            return
+        if impact_x is not None:
+            self.x = impact_x
+        self.phase = "burst"
+        self.can_damage = False
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        self.frames = self.burst_frames
+
+    def segment_rects(self) -> list[pygame.Rect]:
+        if self.phase == "burst":
+            frame = self.burst_frames[self.frame_index]
+            return [pygame.Rect(
+                int(self.x - frame.get_width() / 2),
+                int(self.y - frame.get_height() / 2),
+                frame.get_width(),
+                frame.get_height(),
+            )]
+        front = self.front_frames[self.frame_index % len(self.front_frames)]
+        spacing = front.get_width() * 0.58
+        body_count = min(self.BODY_SEGMENT_COUNT, int(self.travel_distance / spacing))
+        frames = [
+            (front, self.x),
+            *(
+                (
+                    self.body_frames[(self.frame_index + index) % len(self.body_frames)],
+                    self.x - self.facing * spacing * index,
+                )
+                for index in range(1, body_count + 1)
+            ),
+        ]
+        return [
+            pygame.Rect(
+                int(segment_x - frame.get_width() / 2),
+                int(self.y - frame.get_height() / 2),
+                frame.get_width(),
+                frame.get_height(),
+            )
+            for frame, segment_x in frames
+        ]
+
+    def rect(self) -> pygame.Rect:
+        return self.segment_rects()[0].unionall(self.segment_rects()[1:])
+
+    def update(self, dt: float) -> None:
+        self.frame_timer += dt
+        while self.frame_timer >= self.FRAME_DURATION:
+            self.frame_timer -= self.FRAME_DURATION
+            if self.phase == "fly":
+                self.frame_index = (self.frame_index + 1) % max(len(self.front_frames), len(self.body_frames))
+            else:
+                self.frame_index += 1
+                if self.frame_index >= len(self.burst_frames):
+                    self.frame_index = len(self.burst_frames) - 1
+                    self.finished = True
+                    break
+        if self.phase == "fly":
+            self.x += self.facing * self.speed_x * dt
+            self.travel_distance += self.speed_x * dt
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        if self.phase == "burst":
+            frame = self.burst_frames[self.frame_index]
+            if self.facing < 0:
+                frame = pygame.transform.flip(frame, True, False)
+            surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
+            return
+        for index, rect in enumerate(self.segment_rects()):
+            frames = self.front_frames if index == 0 else self.body_frames
+            frame = frames[self.frame_index % len(frames)]
+            if self.facing < 0:
+                frame = pygame.transform.flip(frame, True, False)
+            surface.blit(frame, (int(rect.x - camera_x), rect.y))
+
+
+class FirzenFireProjectile:
+    FRAME_DURATION = 0.07
+
+    def __init__(self, owner: Fighter, x: float, y: float, facing: int) -> None:
+        self.owner = owner
+        self.y = float(y)
+        self.facing = 1 if facing >= 0 else -1
+        self.origin_x = float(x) + self.facing * owner.hitbox_size[0] / 2
+        self.damage = 1
+        self.can_damage = True
+        self.finished = False
+        self.phase = "fly"
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        self.speed_x = 700.0
+        root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "firzen_fire"
+        self.fly_frames = _load_folder_frames(root / "fly")
+        self.burst_frames = _load_folder_frames(root / "burst")
+        if not self.fly_frames or not self.burst_frames:
+            raise FileNotFoundError(f"Firzen fire sprites are missing from {root}")
+        self.x = float(x) + self.facing * (
+            owner.hitbox_size[0] / 2 + self.fly_frames[0].get_width() / 2
+        )
+        self.frames = self.fly_frames
+
+    def _start_burst(self) -> None:
+        if self.phase == "burst":
+            return
+        self.phase = "burst"
+        self.can_damage = False
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        self.frames = self.burst_frames
+
+    def rect(self) -> pygame.Rect:
+        frame = self.frames[self.frame_index]
+        return pygame.Rect(
+            int(self.x - frame.get_width() / 2),
+            int(self.y - frame.get_height() / 2),
+            frame.get_width(),
+            frame.get_height(),
+        )
+
+    def update(self, dt: float) -> None:
+        self.frame_timer += dt
+        if self.phase == "fly":
+            self.x += self.facing * self.speed_x * dt
+            while self.frame_timer >= self.FRAME_DURATION:
+                self.frame_timer -= self.FRAME_DURATION
+                self.frame_index = (self.frame_index + 1) % len(self.fly_frames)
+            return
+        while self.frame_timer >= self.FRAME_DURATION:
+            self.frame_timer -= self.FRAME_DURATION
+            self.frame_index += 1
+            if self.frame_index >= len(self.burst_frames):
+                self.frame_index = len(self.burst_frames) - 1
+                self.finished = True
+                break
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        frame = self.frames[self.frame_index]
+        if self.facing < 0:
+            frame = pygame.transform.flip(frame, True, False)
+        surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
+
+
+class FirzenFireIceOrb:
+    FRAME_DURATION = 0.08
+
+    def __init__(self, owner: Fighter, x: float, y: float) -> None:
+        self.owner = owner
+        self.x = float(x)
+        self.y = float(y)
+        self.speed_y = -650.0
+        self.phase = "create"
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        self.finished = False
+        self.just_split = False
+        root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "firzen_fire_ice_orb"
+        self.create_frames = _load_folder_frames(root / "create")
+        self.burst_frames = _load_folder_frames(root / "burst")
+        if not self.create_frames or not self.burst_frames:
+            raise FileNotFoundError(f"Firzen fire/ice orb sprites are missing from {root}")
+        self.frames = self.create_frames
+
+    def update(self, dt: float) -> None:
+        self.frame_timer += dt
+        if self.phase == "create":
+            self.y += self.speed_y * dt
+            while self.frame_timer >= self.FRAME_DURATION:
+                self.frame_timer -= self.FRAME_DURATION
+                self.frame_index += 1
+                if self.frame_index >= len(self.create_frames):
+                    self.phase = "burst"
+                    self.frames = self.burst_frames
+                    self.frame_index = 0
+                    self.frame_timer = 0.0
+                    self.just_split = True
+                    break
+            return
+        while self.frame_timer >= self.FRAME_DURATION:
+            self.frame_timer -= self.FRAME_DURATION
+            self.frame_index += 1
+            if self.frame_index >= len(self.burst_frames):
+                self.frame_index = len(self.burst_frames) - 1
+                self.finished = True
+                break
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        frame = self.frames[self.frame_index]
+        surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
+
+
+class FirzenTargetOrbProjectile:
+    FRAME_DURATION = 0.08
+    FLIGHT_DURATION = 0.35
+
+    def __init__(
+        self,
+        owner: Fighter,
+        orb_kind: str,
+        x: float,
+        y: float,
+        target_x: float,
+        target_lane_y: float,
+        target_y: float,
+    ) -> None:
+        if orb_kind not in {"ice", "fire"}:
+            raise ValueError(f"Unknown Firzen orb kind: {orb_kind}")
+        self.owner = owner
+        self.orb_kind = orb_kind
+        self.x = float(x)
+        self.y = float(y)
+        self.start_x = self.x
+        self.start_y = self.y
+        self.target_x = float(target_x)
+        self.target_lane_y = float(target_lane_y)
+        self.target_y = float(target_y)
+        self.facing = 1 if self.target_x >= self.start_x else -1
+        self.elapsed = 0.0
+        self.phase = "fly"
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        self.finished = False
+        self.just_hit_ground = False
+        root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "firzen_fire_ice_orb" / f"{orb_kind}_orb"
+        self.fly_frames = _load_folder_frames(root / "fly")
+        self.burst_frames = _load_folder_frames(root / "burst")
+        if not self.fly_frames or not self.burst_frames:
+            raise FileNotFoundError(f"Firzen {orb_kind} orb sprites are missing from {root}")
+        self.frames = self.fly_frames
+
+    def _start_burst(self) -> None:
+        self.phase = "burst"
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        self.frames = self.burst_frames
+
+    def rect(self) -> pygame.Rect:
+        frame = self.frames[self.frame_index]
+        return pygame.Rect(
+            int(self.x - frame.get_width() / 2),
+            int(self.y - frame.get_height() / 2),
+            frame.get_width(),
+            frame.get_height(),
+        )
+
+    def update(self, dt: float) -> None:
+        self.frame_timer += dt
+        if self.phase == "fly":
+            self.elapsed = min(self.FLIGHT_DURATION, self.elapsed + dt)
+            progress = self.elapsed / self.FLIGHT_DURATION
+            self.x = self.start_x + (self.target_x - self.start_x) * progress
+            self.y = self.start_y + (self.target_y - self.start_y) * progress * progress
+            while self.frame_timer >= self.FRAME_DURATION:
+                self.frame_timer -= self.FRAME_DURATION
+                self.frame_index = (self.frame_index + 1) % len(self.fly_frames)
+            if self.elapsed >= self.FLIGHT_DURATION:
+                self.x = self.target_x
+                self.y = self.target_y
+                self._start_burst()
+                self.just_hit_ground = True
+            return
+        while self.frame_timer >= self.FRAME_DURATION:
+            self.frame_timer -= self.FRAME_DURATION
+            self.frame_index += 1
+            if self.frame_index >= len(self.burst_frames):
+                self.frame_index = len(self.burst_frames) - 1
+                self.finished = True
+                break
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        frame = self.frames[self.frame_index]
+        if self.facing < 0:
+            frame = pygame.transform.flip(frame, True, False)
+        surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
+
+
+class WoodyShotProjectile:
+    FRAME_DURATION = 0.08
+
+    def __init__(self, owner: Fighter, x: float, y: float, facing: int, shot_set: int) -> None:
+        self.owner = owner
+        self.x = float(x)
+        self.y = float(y)
+        self.facing = 1 if facing >= 0 else -1
+        self.damage = 1
+        self.can_damage = True
+        self.finished = False
+        self.phase = "fly"
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        self.speed_x = owner.movement["run_speed"] * 1.25
+        root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "woody_shot"
+        self.fly_frames = _load_folder_frames(root / str(shot_set))
+        self.burst_frames = _load_folder_frames(root / "burst")
+        if not self.fly_frames or not self.burst_frames:
+            raise FileNotFoundError(f"Woody shot sprites are missing from {root}")
+        self.frames = self.fly_frames
+
+    def _start_burst(self) -> None:
+        if self.phase == "burst":
+            return
+        self.phase = "burst"
+        self.can_damage = False
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        self.frames = self.burst_frames
+
+    def rect(self) -> pygame.Rect:
+        frame = self.frames[self.frame_index]
+        return pygame.Rect(
+            int(self.x - frame.get_width() / 2),
+            int(self.y - frame.get_height() / 2),
+            frame.get_width(),
+            frame.get_height(),
+        )
+
+    def update(self, dt: float) -> None:
+        self.frame_timer += dt
+        if self.phase == "fly":
+            self.x += self.facing * self.speed_x * dt
+            while self.frame_timer >= self.FRAME_DURATION:
+                self.frame_timer -= self.FRAME_DURATION
+                self.frame_index += 1
+                if self.frame_index >= len(self.fly_frames):
+                    self._start_burst()
+                    break
+        else:
+            while self.frame_timer >= self.FRAME_DURATION:
+                self.frame_timer -= self.FRAME_DURATION
+                self.frame_index += 1
+                if self.frame_index >= len(self.burst_frames):
+                    self.frame_index = len(self.burst_frames) - 1
+                    self.finished = True
+                    break
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        frame = self.frames[self.frame_index]
+        if self.facing < 0:
+            frame = pygame.transform.flip(frame, True, False)
+        surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
+
+
 class FireBreathProjectile:
     def __init__(self, owner: Fighter, x: float, y: float, facing: int) -> None:
         self.owner = owner
@@ -2904,7 +3306,13 @@ class BattleScene:
         ]
         if any(not frames for frames in self.rudolf_metal_fragments):
             raise FileNotFoundError(f"Rudolf shuriken fragments are missing from {fragment_root}")
+        rudolf_smoke_root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "rudolf_smoke" / "red_smoke"
+        self.rudolf_red_smoke_frames = _scale_frames(_load_folder_frames(rudolf_smoke_root), 2.0)
+        if not self.rudolf_red_smoke_frames:
+            raise FileNotFoundError(f"Rudolf red smoke sprites are missing from {rudolf_smoke_root}")
         self.rudolf_metal_fragment_index = 0
+        self.rudolf_clones: list[RudolfClone] = []
+        self.rudolf_clone_smoke_effects: list[RudolfSmokeEffect] = []
         self.consumable_spawn_timer = 18.0
         self.audio = AudioBank(sounds_root)
         x_bounds = (self.stage.play_min_x, self.stage.play_max_x)
@@ -2917,6 +3325,49 @@ class BattleScene:
         self.enemy_brain = BanditBrain()
         self.victory_played = False
         self.victory_played = False
+
+    def _fighters(self) -> list[Fighter]:
+        return [self.fighter, self.enemy, *(clone.fighter for clone in self.rudolf_clones)]
+
+    def _opponents_of(self, fighter: Fighter) -> list[Fighter]:
+        if fighter is self.enemy:
+            return [self.fighter, *(clone.fighter for clone in self.rudolf_clones)]
+        return [self.enemy]
+
+    def _spawn_rudolf_clones(self, fighter: Fighter) -> None:
+        if not fighter.rudolf_clones_pending:
+            return
+        fighter.rudolf_clones_pending = False
+        clone_config = FighterConfig("rudolf", CHARACTERS["rudolf"])
+        for horizontal_offset, lane_offset in ((-72.0, -18.0), (72.0, 18.0)):
+            clone_x = max(
+                self.stage.play_min_x,
+                min(self.stage.play_max_x, fighter.x + horizontal_offset),
+            )
+            clone = Fighter(
+                clone_config,
+                (
+                    clone_x,
+                    fighter.lane_y + lane_offset,
+                ),
+                x_bounds=(self.stage.play_min_x, self.stage.play_max_x),
+            )
+            clone.facing = fighter.facing
+            clone.is_rudolf_clone = True
+            clone.max_health = 1
+            clone.health = 1
+            self.rudolf_clones.append(RudolfClone(clone, BanditBrain()))
+
+    def _remove_rudolf_clone(self, clone: RudolfClone) -> None:
+        self.rudolf_clones.remove(clone)
+        self.rudolf_clone_smoke_effects.append(
+            RudolfSmokeEffect(clone.fighter.x, clone.fighter.lane_y, self.rudolf_red_smoke_frames)
+        )
+
+    def _remove_finished_rudolf_clones(self) -> None:
+        for clone in tuple(self.rudolf_clones):
+            if clone.fighter.is_dead or clone.lifetime <= 0.0:
+                self._remove_rudolf_clone(clone)
 
     def _camera_focus_x(self) -> float:
         player_margin = SCREEN_WIDTH * 0.3
@@ -3114,10 +3565,17 @@ class BattleScene:
         for item in tuple(self.consumable_items):
             if not isinstance(item, ThrownItem) or item.phase != "thrown":
                 continue
-            target = self.enemy if item.owner is self.fighter else self.fighter
-            if abs(target.lane_y - item.lane_y) > 28.0:
-                continue
-            if not item.world_rect().colliderect(target.world_hitbox_rect()):
+            target = next(
+                (
+                    target
+                    for target in self._opponents_of(item.owner)
+                    if not target.is_dead
+                    and abs(target.lane_y - item.lane_y) <= 28.0
+                    and item.world_rect().colliderect(target.world_hitbox_rect())
+                ),
+                None,
+            )
+            if target is None:
                 continue
 
             item.drop_at_hit()
@@ -3242,12 +3700,14 @@ class BattleScene:
 
     def _resolve_freeze_column_obstruction(self, previous_x_by_fighter: dict[int, float]) -> None:
         columns = [projectile for projectile in self.projectiles if isinstance(projectile, FreezeColumnEffect) and not projectile.finished]
-        for fighter in (self.fighter, self.enemy):
+        for fighter in self._fighters():
             if fighter.is_dead or fighter.z > 0:
                 continue
             previous_x = previous_x_by_fighter.get(id(fighter), fighter.x)
             half_width = fighter.hitbox_size[0] / 2
             for column in columns:
+                if column.owner is fighter:
+                    continue
                 if abs(fighter.lane_y - column.lane_y) > 36:
                     continue
                 column_rect = column.rect()
@@ -3274,7 +3734,7 @@ class BattleScene:
 
     def _break_freeze_columns_with_melee(self) -> None:
         columns = [projectile for projectile in self.projectiles if isinstance(projectile, FreezeColumnEffect)]
-        for attacker in (self.fighter, self.enemy):
+        for attacker in self._fighters():
             if (
                 attacker.is_dead
                 or attacker.state not in (COMBAT_ATTACK_STATES | {"jump_throw"})
@@ -3295,8 +3755,9 @@ class BattleScene:
 
     def _handle_combat(self) -> None:
         self._break_freeze_columns_with_melee()
-        for attacker, defender in ((self.fighter, self.enemy), (self.enemy, self.fighter)):
-            if attacker.is_dead or defender.is_dead or defender.state == "henry_float":
+        for attacker in self._fighters():
+            defenders = self._opponents_of(attacker)
+            if attacker.is_dead or all(defender.is_dead or defender.state == "henry_float" for defender in defenders):
                 continue
             if (
                 attacker.name == "mark"
@@ -3309,7 +3770,13 @@ class BattleScene:
                 continue
             if attacker.state not in (COMBAT_ATTACK_STATES | {"jump_throw"}):
                 continue
-            if attacker.name in {"hunter", "rudolf"} and attacker.state == "basic_attack":
+            if (
+                attacker.state == "basic_attack"
+                and (
+                    attacker.name == "hunter"
+                    or (attacker.name == "rudolf" and not attacker.is_rudolf_clone)
+                )
+            ):
                 continue
             if attacker.name == "henry" and attacker.state in {"basic_attack", "sp_move_attack_1", "sp_vert_attack_1", "sp_vert_attack_2"}:
                 continue
@@ -3326,6 +3793,10 @@ class BattleScene:
             if attacker.name == "monk" and attacker.state == "sp_move_attack_1":
                 continue
             if attacker.name == "john" and attacker.state in {"sp_move_attack_1", "sp_move_attack_2", "sp_vert_attack_1", "sp_vert_attack_2"}:
+                continue
+            if attacker.name == "sorcerer" and attacker.state in {"sp_move_attack_1", "sp_move_attack_2", "sp_vert_attack_2"}:
+                continue
+            if attacker.name == "woody" and attacker.state in {"sp_move_attack_1", "sp_move_attack_2", "sp_vert_attack_1", "sp_vert_attack_2"}:
                 continue
             if attacker.name == "luis" and attacker.state == "sp_move_attack_2":
                 continue
@@ -3349,22 +3820,24 @@ class BattleScene:
                 attacker.has_applied_attack_damage = True
                 attacker.attack_started = False
                 continue
-            if abs(attacker.lane_y - defender.lane_y) > 36:
-                if luis_contact_attack or mark_plow_attack:
-                    continue
-                attacker.has_applied_attack_damage = True
-                attacker.attack_started = False
-                if attacker.name == "freeze" and attacker.state == "basic_attack":
-                    self.audio.play_freeze_basic_miss()
-                else:
-                    self.audio.play_hit_miss()
-                continue
             attack_range = 72
             if attacker.name == "dark_bat" and attacker.state == "sp_move_attack_1":
                 attack_range = 132
             if attacker.name == "dark_bat" and attacker.state == "jump_throw" and attacker.jump_attack_active:
                 attack_range = 96
-            if not attacker.world_hitbox_rect().inflate(attack_range, 0).colliderect(defender.world_hitbox_rect()):
+            attack_rect = attacker.world_hitbox_rect().inflate(attack_range, 0)
+            defender = next(
+                (
+                    target
+                    for target in defenders
+                    if not target.is_dead
+                    and target.state != "henry_float"
+                    and abs(attacker.lane_y - target.lane_y) <= 36
+                    and attack_rect.colliderect(target.world_hitbox_rect())
+                ),
+                None,
+            )
+            if defender is None:
                 if luis_contact_attack or mark_plow_attack:
                     continue
                 attacker.has_applied_attack_damage = True
@@ -3374,7 +3847,6 @@ class BattleScene:
                 else:
                     self.audio.play_hit_miss()
                 continue
-
             if mark_plow_attack and id(defender) in attacker.mark_sp_move_attack_1_targets_hit:
                 attacker.has_applied_attack_damage = True
                 attacker.attack_started = False
@@ -3454,15 +3926,89 @@ class BattleScene:
             defender.receive_damage(attacker.touch_damage)
             self.audio.play("sword_cut")
 
+    def _handle_woody_punches(self) -> None:
+        for fighter in self._fighters():
+            while fighter.woody_punches_pending:
+                animation_name, frame_index = fighter.woody_punches_pending.pop(0)
+                punch_frames = (1, 5, 9) if animation_name == "sp_move_attack_2" else (2, 5, 7)
+                if fighter.name != "woody" or frame_index not in punch_frames:
+                    continue
+                attack_rect = fighter.world_hitbox_rect().inflate(84, 0)
+                target = next(
+                    (
+                        opponent
+                        for opponent in self._opponents_of(fighter)
+                        if not opponent.is_dead
+                        and abs(opponent.lane_y - fighter.lane_y) <= 36
+                        and attack_rect.colliderect(opponent.world_hitbox_rect())
+                    ),
+                    None,
+                )
+                if target is None:
+                    self.audio.play_hit_miss()
+                    continue
+                if target.state == "block" and target.block_strength > 0:
+                    target.block_strength = 0
+                    target.block_hold_timer = 0.0
+                    self.audio.play("hit_guard")
+                    continue
+                if target.state == "block":
+                    target._start_block_break()
+                    self.audio.play("hit_guard")
+                    continue
+                target.receive_damage(fighter.touch_damage)
+                self.audio.play("hit_success")
+
+    def _handle_woody_dash_hits(self, previous_x_by_fighter: dict[int, float]) -> None:
+        for fighter in self._fighters():
+            if fighter.name != "woody" or not fighter.woody_vert_dash_active:
+                continue
+            current_rect = fighter.world_hitbox_rect()
+            previous_x = previous_x_by_fighter.get(id(fighter), fighter.x)
+            previous_rect = current_rect.move(round(previous_x - fighter.x), 0)
+            swept_rect = current_rect.union(previous_rect)
+            for target in self._opponents_of(fighter):
+                if (
+                    target.is_dead
+                    or id(target) in fighter.woody_vert_dash_hit_targets
+                    or abs(target.lane_y - fighter.lane_y) > 36
+                    or not swept_rect.colliderect(target.world_hitbox_rect())
+                ):
+                    continue
+                fighter.woody_vert_dash_hit_targets.add(id(target))
+                if target.state == "block" and target.block_strength > 0:
+                    target.block_strength = 0
+                    target.block_hold_timer = 0.0
+                    self.audio.play("hit_guard")
+                    continue
+                if target.state == "block":
+                    target._start_block_break()
+                    self.audio.play("hit_guard")
+                    continue
+                target.receive_damage(fighter.touch_damage)
+                if not target.is_dead:
+                    target._start_knockdown()
+                    target.push_velocity_x = fighter.facing * fighter.movement["run_speed"]
+                self.audio.play("hit_success")
+
     def _handle_audio(self, dt: float) -> None:
         self.audio.update_sequences()
-        fighters = [self.fighter, self.enemy]
+        fighters = self._fighters()
 
         for fighter in fighters:
             while fighter.rudolf_sounds_pending:
                 self.audio.play(fighter.rudolf_sounds_pending.pop(0))
             while fighter.luis_sounds_pending:
                 self.audio.play(fighter.luis_sounds_pending.pop(0))
+            if fighter.woody_yell_sfx_pending:
+                self.audio.play("woody_yell")
+                fighter.woody_yell_sfx_pending = False
+            if fighter.woody_shadowstep_sfx_pending:
+                self.audio.play("woody_shadowstep")
+                fighter.woody_shadowstep_sfx_pending = False
+            if fighter.sorcerer_healed_target_sfx_pending:
+                self.audio.play("healed_target")
+                fighter.sorcerer_healed_target_sfx_pending = False
             if fighter.knight_sword_swing_sfx_pending:
                 self.audio.play("sword_swing")
                 fighter.knight_sword_swing_sfx_pending = False
@@ -3687,6 +4233,17 @@ class BattleScene:
         self.projectiles.append(JohnHealOrbParticleEffect(origin_x, origin_y))
         self.audio.play("john_heal_orb")
 
+    def _spawn_sorcerer_heal_orb(self, fighter: Fighter) -> None:
+        if fighter.name != "sorcerer" or fighter.state != "sp_vert_attack_2" or not fighter.sorcerer_heal_orb_pending:
+            return
+        fighter.sorcerer_heal_orb_pending = False
+        fighter.health = min(fighter.max_health, fighter.health + 5)
+        origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.72)
+        origin_y = fighter.world_hitbox_rect().centery
+        self.projectiles.append(JohnHealOrbProjectile(fighter, origin_x, origin_y, fighter.facing))
+        self.projectiles.append(JohnHealOrbParticleEffect(origin_x, origin_y))
+        self.audio.play("john_heal_orb")
+
     def _spawn_freeze_ball(self, fighter: Fighter) -> None:
         if fighter.name != "freeze" or fighter.state != "sp_move_attack_1":
             return
@@ -3695,6 +4252,16 @@ class BattleScene:
         fighter.freeze_ball_pending = False
         fighter.attack_projectile_fired = True
         fighter.freeze_ball_spawned = True
+        origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.42)
+        origin_y = GROUND_Y + fighter.lane_y - fighter.z - 56.0
+        self.projectiles.append(FreezeBallProjectile(fighter, origin_x, origin_y, fighter.facing))
+        self.audio.play("freeze_ball")
+
+    def _spawn_sorcerer_freeze_ball(self, fighter: Fighter) -> None:
+        if fighter.name != "sorcerer" or fighter.state != "sp_move_attack_2" or not fighter.sorcerer_freeze_ball_pending:
+            return
+        fighter.sorcerer_freeze_ball_pending = False
+        fighter.attack_projectile_fired = True
         origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.42)
         origin_y = GROUND_Y + fighter.lane_y - fighter.z - 56.0
         self.projectiles.append(FreezeBallProjectile(fighter, origin_x, origin_y, fighter.facing))
@@ -3748,7 +4315,7 @@ class BattleScene:
 
         fighter.henry_sp_vert_attack_2_pending = False
         self.audio.play_sequence(("flute_1", "flute_2", "flute_3"))
-        for target in (self.fighter, self.enemy):
+        for target in self._opponents_of(fighter):
             if target is fighter or target.is_dead:
                 continue
             if abs(target.x - fighter.x) > 240.0 or abs(target.lane_y - fighter.lane_y) > 52.0:
@@ -3896,6 +4463,122 @@ class BattleScene:
             origin_y = GROUND_Y + fighter.lane_y - fighter.z - 54.0
             self.projectiles.append(FireballProjectile(fighter, origin_x, origin_y, fighter.facing))
             self.audio.play_fireball()
+
+    def _spawn_sorcerer_fireball(self, fighter: Fighter) -> None:
+        if fighter.name != "sorcerer" or fighter.state != "sp_move_attack_1" or not fighter.sorcerer_fireball_pending:
+            return
+        fighter.sorcerer_fireball_pending = False
+        fighter.attack_projectile_fired = True
+        origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.42)
+        origin_y = GROUND_Y + fighter.lane_y - fighter.z - 54.0
+        self.projectiles.append(FireballProjectile(fighter, origin_x, origin_y, fighter.facing))
+        self.audio.play_fireball()
+
+    def _spawn_firzen_char_blast(self, fighter: Fighter) -> None:
+        if fighter.name != "firzen" or fighter.state != "sp_move_attack_1" or not fighter.firzen_char_blast_pending:
+            return
+        fighter.firzen_char_blast_pending = False
+        origin_y = GROUND_Y + fighter.lane_y - fighter.z - 74.0
+        self.projectiles.append(FirzenCharBlastProjectile(fighter, fighter.x, origin_y, fighter.facing))
+
+    def _spawn_firzen_fire_shots(self, fighter: Fighter, dt: float) -> None:
+        if fighter.name != "firzen" or fighter.firzen_fire_shots_pending <= 0:
+            return
+        fighter.firzen_fire_shot_timer = max(0.0, fighter.firzen_fire_shot_timer - dt)
+        if fighter.firzen_fire_shot_timer > 0.0:
+            return
+        origin_y = fighter.world_hitbox_rect().centery
+        self.projectiles.append(FirzenFireProjectile(fighter, fighter.x, origin_y, fighter.facing))
+        fighter.firzen_fire_shots_pending -= 1
+        fighter.firzen_fire_shot_timer = 0.14 if fighter.firzen_fire_shots_pending else 0.0
+
+    def _spawn_firzen_fire_ice_orb(self, fighter: Fighter) -> None:
+        if fighter.name != "firzen" or fighter.state != "sp_vert_attack_1" or not fighter.firzen_fire_ice_orb_pending:
+            return
+        fighter.firzen_fire_ice_orb_pending = False
+        fighter.attack_projectile_fired = True
+        origin_y = GROUND_Y + fighter.lane_y - fighter.z - 56.0
+        self.projectiles.append(FirzenFireIceOrb(fighter, fighter.x, origin_y))
+
+    def _spawn_firzen_ground_orbs(self, orb: FirzenFireIceOrb) -> None:
+        owner = orb.owner
+        for orb_kind in ("ice", "fire"):
+            target_x = max(
+                self.stage.play_min_x,
+                min(self.stage.play_max_x, owner.x + random.uniform(-360.0, 360.0)),
+            )
+            target_lane_y = random.uniform(LANE_MIN_Y, LANE_MAX_Y)
+            target_y = GROUND_Y + target_lane_y - 22.0
+            self.projectiles.append(
+                FirzenTargetOrbProjectile(
+                    owner,
+                    orb_kind,
+                    orb.x,
+                    orb.y,
+                    target_x,
+                    target_lane_y,
+                    target_y,
+                )
+            )
+
+    def _spawn_firzen_vert_attack_2(self, fighter: Fighter) -> None:
+        if fighter.name != "firzen":
+            return
+        if fighter.firzen_vert_attack_2_columns_pending:
+            fighter.firzen_vert_attack_2_columns_pending = False
+            frozen_targets: set[int] = set()
+            for offset_x in (-96.0, 96.0):
+                for offset_lane in (-24.0, 24.0):
+                    column_x = max(
+                        self.stage.play_min_x,
+                        min(self.stage.play_max_x, fighter.x + offset_x),
+                    )
+                    column_lane = max(
+                        LANE_MIN_Y,
+                        min(LANE_MAX_Y, fighter.lane_y + offset_lane),
+                    )
+                    column = FreezeColumnEffect(
+                        column_x,
+                        GROUND_Y + column_lane,
+                        random.choice((1, 2, 3)),
+                        random.choice((-1, 1)),
+                        column_lane,
+                        fighter,
+                    )
+                    self.projectiles.append(column)
+                    for target in self._opponents_of(fighter):
+                        if (
+                            target is None
+                            or target.is_dead
+                            or id(target) in frozen_targets
+                            or abs(target.lane_y - column.lane_y) > 36
+                            or not column.rect().colliderect(target.world_hitbox_rect())
+                        ):
+                            continue
+                        target._start_ice_knockdown()
+                        frozen_targets.add(id(target))
+                        self.audio.play("freeze")
+        if fighter.firzen_vert_attack_2_orbs_pending:
+            origin_y = GROUND_Y + fighter.lane_y - fighter.z - 56.0
+            for offset_x in (-60.0, 0.0, 60.0):
+                if fighter.firzen_vert_attack_2_orbs_pending <= 0:
+                    break
+                orb_x = max(
+                    self.stage.play_min_x,
+                    min(self.stage.play_max_x, fighter.x + offset_x),
+                )
+                self.projectiles.append(FirzenFireIceOrb(fighter, orb_x, origin_y))
+                fighter.firzen_vert_attack_2_orbs_pending -= 1
+
+    def _spawn_woody_shots(self, fighter: Fighter) -> None:
+        while fighter.woody_shots_pending:
+            shot_set = fighter.woody_shots_pending.pop(0)
+            origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.42)
+            origin_y = fighter.world_hitbox_rect().centery
+            self.projectiles.append(
+                WoodyShotProjectile(fighter, origin_x, origin_y, fighter.facing, shot_set)
+            )
+            self.audio.play("woody_shot")
 
     def _spawn_firen_fire_breath(self, fighter: Fighter) -> None:
         if fighter.name != "firen":
@@ -4097,6 +4780,27 @@ class BattleScene:
         visible_right = camera_x + SCREEN_WIDTH
         for projectile in list(self.projectiles):
             projectile.update(dt)
+            if isinstance(projectile, FirzenFireIceOrb) and projectile.just_split:
+                projectile.just_split = False
+                self._spawn_firzen_ground_orbs(projectile)
+            if isinstance(projectile, FirzenTargetOrbProjectile) and projectile.just_hit_ground:
+                projectile.just_hit_ground = False
+                ground_y = GROUND_Y + projectile.target_lane_y
+                if projectile.orb_kind == "ice":
+                    self.projectiles.append(
+                        FreezeColumnEffect(
+                            projectile.target_x,
+                            ground_y,
+                            "4_spike",
+                            projectile.owner.facing,
+                            projectile.target_lane_y,
+                            projectile.owner,
+                        )
+                    )
+                else:
+                    self.projectiles.append(
+                        FireTrailEffect(projectile.owner, projectile.target_x, ground_y - 22.0)
+                    )
             if isinstance(projectile, AxleShotProjectile) and projectile.just_axle_shot_hit:
                 self.audio.play("axle_shot_hit")
                 projectile.just_axle_shot_hit = False
@@ -4162,6 +4866,12 @@ class BattleScene:
             if projectile.finished:
                 self.projectiles.remove(projectile)
                 continue
+            if isinstance(projectile, (FirzenFireIceOrb, FirzenTargetOrbProjectile)):
+                continue
+            if isinstance(projectile, FirzenFireProjectile) and projectile.phase == "fly":
+                if projectile.x <= visible_left or projectile.x >= visible_right:
+                    self.projectiles.remove(projectile)
+                    continue
             if isinstance(projectile, JulianBallProjectile) and projectile.phase == "fly":
                 if projectile.x <= visible_left or projectile.x >= visible_right:
                     projectile.x = max(visible_left, min(visible_right, projectile.x))
@@ -4186,6 +4896,10 @@ class BattleScene:
                     projectile._start_hit()
                     projectile.just_burst = False
                     self.audio.play_fireball()
+            if isinstance(projectile, FirzenCharBlastProjectile) and projectile.phase == "fly":
+                if projectile.x <= visible_left or projectile.x >= visible_right:
+                    projectile.x = max(visible_left, min(visible_right, projectile.x))
+                    projectile._start_burst()
             if isinstance(projectile, ArrowProjectile) and projectile.phase == "fly":
                 if projectile.x <= visible_left or projectile.x >= visible_right:
                     projectile.x = max(visible_left, min(visible_right, projectile.x))
@@ -4300,7 +5014,7 @@ class BattleScene:
                 continue
             if isinstance(projectile, JulianBallProjectile):
                 if projectile.phase == "fly" and projectile.can_damage:
-                    for target in (self.fighter, self.enemy):
+                    for target in self._opponents_of(projectile.owner):
                         if (
                             target is None
                             or target is projectile.owner
@@ -4332,7 +5046,7 @@ class BattleScene:
                         break
                 continue
             if isinstance(projectile, JulianExplosionEffect):
-                for target in (self.fighter, self.enemy):
+                for target in self._opponents_of(projectile.owner):
                     if target is None or target is projectile.owner or target.is_dead or id(target) in projectile.hit_targets:
                         continue
                     dx = target.world_hitbox_rect().centerx - projectile.x
@@ -4356,7 +5070,7 @@ class BattleScene:
                                 target._start_knockdown()
                 continue
 
-            for target in (self.fighter, self.enemy):
+            for target in self._opponents_of(projectile.owner):
                 if target is None or target is projectile.owner or target.is_dead:
                     continue
                 if not projectile.can_damage:
@@ -4383,6 +5097,78 @@ class BattleScene:
                             self.audio.play("freeze")
                     projectile._start_burst()
                     continue
+                if isinstance(projectile, WoodyShotProjectile):
+                    if abs(target.lane_y - projectile.owner.lane_y) > 36:
+                        continue
+                    if abs(projectile.y - target.world_hitbox_rect().centery) > 42:
+                        continue
+                    if not projectile.rect().colliderect(target.world_hitbox_rect()):
+                        continue
+                    if target.state == "block" and target.block_strength > 0:
+                        target.block_strength = 0
+                        target.block_hold_timer = 0.0
+                        self.audio.play("hit_guard")
+                    elif target.state == "block":
+                        target._start_block_break()
+                        self.audio.play("hit_guard")
+                    else:
+                        target.receive_damage(projectile.damage)
+                        self.audio.play("hit_success")
+                    projectile._start_burst()
+                    break
+                if isinstance(projectile, FirzenFireProjectile):
+                    if abs(target.lane_y - projectile.owner.lane_y) > 36:
+                        continue
+                    target_rect = target.world_hitbox_rect()
+                    if (
+                        abs(projectile.y - target_rect.centery) > 42
+                        or (projectile.facing > 0 and target_rect.centerx < projectile.origin_x)
+                        or (projectile.facing < 0 and target_rect.centerx > projectile.origin_x)
+                        or not projectile.rect().colliderect(target_rect)
+                    ):
+                        continue
+                    if target.state == "block" and target.block_strength > 0:
+                        target.block_strength = 0
+                        target.block_hold_timer = 0.0
+                        self.audio.play("hit_guard")
+                    elif target.state == "block":
+                        target._start_block_break()
+                        self.audio.play("hit_guard")
+                    else:
+                        target.receive_damage(projectile.damage)
+                        if not target.is_dead:
+                            target._start_fire_knockdown()
+                        self.audio.play_fireball()
+                    projectile._start_burst()
+                    break
+                if isinstance(projectile, FirzenCharBlastProjectile):
+                    if abs(target.lane_y - projectile.owner.lane_y) > 36:
+                        continue
+                    if abs(projectile.y - target.world_hitbox_rect().centery) > 42:
+                        continue
+                    if (
+                        (projectile.facing > 0 and target.world_hitbox_rect().centerx < projectile.origin_x)
+                        or (projectile.facing < 0 and target.world_hitbox_rect().centerx > projectile.origin_x)
+                        or not any(rect.colliderect(target.world_hitbox_rect()) for rect in projectile.segment_rects())
+                    ):
+                        continue
+                    if target.state == "block" and target.block_strength > 0:
+                        target.block_strength = 0
+                        target.block_hold_timer = 0.0
+                        self.audio.play("hit_guard")
+                    elif target.state == "block":
+                        target._start_block_break()
+                        self.audio.play("hit_guard")
+                    else:
+                        target.receive_damage(projectile.damage)
+                        self.audio.play("hit_success")
+                    segment = next(
+                        rect
+                        for rect in projectile.segment_rects()
+                        if rect.colliderect(target.world_hitbox_rect())
+                    )
+                    projectile._start_burst(segment.centerx)
+                    break
                 if isinstance(projectile, FreezeTornadoProjectile):
                     if abs(target.lane_y - projectile.owner.lane_y) > 10 or id(target) in projectile.hit_targets:
                         continue
@@ -4555,11 +5341,11 @@ class BattleScene:
         if self.fighter.held_item is not None and _is_throwable_item(self.fighter.held_item):
             fighter_inputs = replace(fighter_inputs, drink_just_pressed=False)
         previous_x_by_fighter = {
-            id(self.fighter): self.fighter.x,
-            id(self.enemy): self.enemy.x,
+            id(fighter): fighter.x for fighter in self._fighters()
         }
         was_drinking = (self.fighter.state == "drink", self.enemy.state == "drink")
         self.fighter.update(dt, fighter_inputs, target=self.enemy, controlled=True)
+        self._spawn_rudolf_clones(self.fighter)
         self.enemy_brain.update(dt)
         enemy_input = self.enemy_brain.build_input(self.enemy.snapshot, self.fighter.snapshot)
         enemy_throw_was_active = self.enemy.item_throw_animation is not None
@@ -4578,7 +5364,19 @@ class BattleScene:
         if self.enemy.held_item is not None and _is_throwable_item(self.enemy.held_item):
             enemy_input.drink_just_pressed = False
         self.enemy.update(dt, enemy_input, target=self.fighter, controlled=True)
-        for fighter in (self.fighter, self.enemy):
+        for clone in tuple(self.rudolf_clones):
+            clone.lifetime -= dt
+            if clone.lifetime <= 0.0:
+                self._remove_rudolf_clone(clone)
+                continue
+            clone.brain.update(dt)
+            clone_input = (
+                clone.brain.build_input(clone.fighter.snapshot, self.enemy.snapshot)
+                if not self.enemy.is_dead
+                else FighterInput()
+            )
+            clone.fighter.update(dt, clone_input, target=self.enemy, controlled=True)
+        for fighter in self._fighters():
             if fighter.luis_transform_pending:
                 fighter.transform_to(FighterConfig("luis_liberated", CHARACTERS["luis_liberated"]))
         self._finish_held_item_throw(self.fighter)
@@ -4595,9 +5393,10 @@ class BattleScene:
                         fighter.health = min(fighter.max_health, fighter.health + 10)
                     self.start_item_overlay(fighter, item_id, "drink", active_state="drink")
 
-        for fighter in (self.fighter, self.enemy):
+        for fighter in self._fighters():
             self._apply_henry_flute_attack(fighter)
             self._spawn_freeze_ball(fighter)
+            self._spawn_sorcerer_freeze_ball(fighter)
             self._spawn_freeze_columns(fighter)
             self._spawn_freeze_tornado(fighter)
             self._spawn_hunter_projectile(fighter)
@@ -4611,6 +5410,7 @@ class BattleScene:
             self._spawn_john_barrier(fighter)
             self._spawn_john_follow_disk(fighter)
             self._spawn_john_heal_orb(fighter)
+            self._spawn_sorcerer_heal_orb(fighter)
             self._spawn_henry_vertical_volley(fighter)
             self._spawn_template_projectile(fighter)
             self._spawn_denis_projectile(fighter)
@@ -4622,6 +5422,12 @@ class BattleScene:
             self._spawn_jan_follow_orb(fighter)
             self._spawn_deep_projectile(fighter)
             self._spawn_firen_fireball(fighter)
+            self._spawn_sorcerer_fireball(fighter)
+            self._spawn_firzen_char_blast(fighter)
+            self._spawn_firzen_fire_shots(fighter, dt)
+            self._spawn_firzen_fire_ice_orb(fighter)
+            self._spawn_firzen_vert_attack_2(fighter)
+            self._spawn_woody_shots(fighter)
             self._spawn_firen_fire_breath(fighter)
             self._spawn_henry_wind(fighter)
             self._spawn_luis_wind(fighter)
@@ -4634,6 +5440,9 @@ class BattleScene:
         for effect in tuple(self.consumable_break_effects):
             if effect.update(dt):
                 self.consumable_break_effects.remove(effect)
+        for effect in tuple(self.rudolf_clone_smoke_effects):
+            if effect.update(dt):
+                self.rudolf_clone_smoke_effects.remove(effect)
         for item in tuple(self.consumable_items):
             item_event = item.update(dt)
             if item_event == "landed":
@@ -4672,7 +5481,11 @@ class BattleScene:
             else:
                 animation.update(dt)
         self._update_projectiles(dt)
+        self._remove_finished_rudolf_clones()
+        self._handle_woody_punches()
+        self._handle_woody_dash_hits(previous_x_by_fighter)
         self._handle_combat()
+        self._remove_finished_rudolf_clones()
         self._handle_audio(dt)
 
     def draw(self, surface: pygame.Surface) -> None:
@@ -4686,7 +5499,9 @@ class BattleScene:
             item.draw(surface, camera_x)
         for effect in self.consumable_break_effects:
             effect.draw(surface, camera_x)
-        fighters = [self.fighter, self.enemy]
+        for effect in self.rudolf_clone_smoke_effects:
+            effect.draw(surface, camera_x)
+        fighters = self._fighters()
         fighters.sort(key=lambda fighter: fighter.lane_y)
         for fighter in fighters:
             fighter.draw(surface, camera_x)

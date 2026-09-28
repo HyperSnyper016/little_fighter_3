@@ -80,6 +80,7 @@ class Fighter:
     def __init__(self, config: FighterConfig, start_pos: tuple[float, float], x_bounds: tuple[float, float] = (60.0, 900.0)) -> None:
         self.name = config.name
         self.definition = config.definition
+        self.is_rudolf_clone = False
         self.x, self.lane_y = start_pos
         self.min_x, self.max_x = x_bounds
         self.lane_y = max(LANE_MIN_Y, min(LANE_MAX_Y, self.lane_y))
@@ -135,6 +136,7 @@ class Fighter:
         self.knight_armor_hit_sfx_pending: str | None = None
         self.knight_next_armor_hit_sfx = "armor_hit_1"
         self.rudolf_sounds_pending: list[str] = []
+        self.rudolf_clones_pending = False
         self.rudolf_next_blade_sound = "rudolf_blade_1"
         self.rudolf_shuriken_lanes_pending: list[float] = []
         self.luis_sounds_pending: list[str] = []
@@ -154,6 +156,18 @@ class Fighter:
         self.john_barrier_pending = False
         self.john_follow_disk_pending = False
         self.john_heal_orb_pending = False
+        self.sorcerer_fireball_pending = False
+        self.sorcerer_freeze_ball_pending = False
+        self.sorcerer_healed_target_sfx_pending = False
+        self.sorcerer_heal_orb_pending = False
+        self.firzen_char_blast_pending = False
+        self.woody_shots_pending: list[int] = []
+        self.woody_punches_pending: list[tuple[str, int]] = []
+        self.woody_sp_move_attack_2_stage = 1
+        self.woody_vert_dash_active = False
+        self.woody_vert_dash_hit_targets: set[int] = set()
+        self.woody_yell_sfx_pending = False
+        self.woody_shadowstep_sfx_pending = False
         self.axle_shot_pending = False
         self.julian_skull_pending = False
         self.julian_ball_pending = False
@@ -203,6 +217,11 @@ class Fighter:
         self.firen_sp_move_attack_2_looping = False
         self.firen_sp_move_attack_2_stage = 0
         self.firen_sp_vert_attack_2_spawned = False
+        self.firzen_fire_shots_pending = 0
+        self.firzen_fire_shot_timer = 0.0
+        self.firzen_fire_ice_orb_pending = False
+        self.firzen_vert_attack_2_columns_pending = False
+        self.firzen_vert_attack_2_orbs_pending = 0
         self.henry_wind_projectiles_pending = 0
         self.henry_wind_sfx_pending = False
         self.henry_sp_vert_attack_2_pending = False
@@ -366,6 +385,35 @@ class Fighter:
             self.john_barrier_pending = False
             self.john_follow_disk_pending = False
             self.john_heal_orb_pending = False
+        if self.name == "sorcerer":
+            if state == "sp_move_attack_1":
+                self.sorcerer_fireball_pending = False
+            elif state == "sp_move_attack_2":
+                self.sorcerer_freeze_ball_pending = False
+            elif state == "sp_vert_attack_1":
+                self.sorcerer_healed_target_sfx_pending = True
+            elif state == "sp_vert_attack_2":
+                self.sorcerer_heal_orb_pending = False
+        if self.name == "firzen" and state == "sp_move_attack_1":
+            self.firzen_char_blast_pending = False
+        if self.name == "firzen" and state == "sp_move_attack_2":
+            self.firzen_fire_shots_pending = 0
+            self.firzen_fire_shot_timer = 0.0
+        if self.name == "firzen" and state == "sp_vert_attack_1":
+            self.firzen_fire_ice_orb_pending = False
+        if self.name == "firzen" and state == "sp_vert_attack_2":
+            self.firzen_vert_attack_2_columns_pending = False
+            self.firzen_vert_attack_2_orbs_pending = 0
+        if self.name == "woody":
+            if state == "sp_move_attack_1":
+                self.woody_shots_pending.clear()
+            elif state == "sp_move_attack_2":
+                self.woody_sp_move_attack_2_stage = 1
+                self.woody_punches_pending.clear()
+                self.special_move_followup_state = state
+            elif state == "sp_vert_attack_1":
+                self.woody_vert_dash_active = False
+                self.woody_vert_dash_hit_targets.clear()
         if self.name == "axle" and state == "sp_move_attack_1":
             self.axle_shot_pending = False
         if self.name == "axle" and state == "sp_move_attack_2":
@@ -478,7 +526,7 @@ class Fighter:
                 and self.special_move_followup_state == state
                 and hold_active
             )
-        return self.name in {"deep", "template", "davis", "firen", "henry", "axle", "julian"} and self.special_move_followup_state == state and hold_active
+        return self.name in {"deep", "template", "davis", "firen", "firzen", "henry", "axle", "julian", "woody"} and self.special_move_followup_state == state and hold_active
 
     def _restart_firen_move_attack_1(self, stage: int, hold_active: bool) -> bool:
         if self.name != "firen" or not hold_active:
@@ -556,7 +604,7 @@ class Fighter:
         return True
 
     def _restart_move_followup(self, state: str, hold_active: bool, start_frame_index: int = 0) -> bool:
-        if self.name not in {"deep", "template", "davis", "firen", "henry", "axle", "julian", "mark"} or not hold_active:
+        if self.name not in {"deep", "template", "davis", "firen", "firzen", "henry", "axle", "julian", "mark", "woody"} or not hold_active:
             return False
         if not self._consume_mana_for_state(state):
             self.state = "idle"
@@ -595,6 +643,9 @@ class Fighter:
             followup_name = "sp_move_attack_2_follow"
         elif self.name == "firen" and state == "sp_move_attack_2":
             followup_name = "sp_move_attack_2_follow" if self.firen_sp_move_attack_2_stage == 2 and "sp_move_attack_2_follow" in self.animations else "sp_move_attack_2"
+        elif self.name == "woody" and state == "sp_move_attack_2":
+            self.woody_sp_move_attack_2_stage = 3 - self.woody_sp_move_attack_2_stage
+            followup_name = "sp_move_attack_2_follow" if self.woody_sp_move_attack_2_stage == 2 else state
         self._reset_firen_special_state(state, clear_pending=False)
         self.animation_player.play(followup_name if followup_name in self.animations else state)
         if start_frame_index > 0:
@@ -1188,7 +1239,7 @@ class Fighter:
                 if self._consume_mana_for_state("sp_vert_attack_1"):
                     self.state = "sp_vert_attack_1"
                     self._start_attack_state("sp_vert_attack_1")
-                    if self.name in {"firen", "henry"}:
+                    if self.name in {"firen", "firzen", "henry"}:
                         self.special_move_followup_state = "sp_vert_attack_1"
                     special_attack_started = True
                     self.special_attack_lock = "sp_vert_attack_1"
@@ -1202,13 +1253,15 @@ class Fighter:
                     self.special_attack_lock = "sp_move_attack_2"
                     self.special_move_projectile_timer = 0.0
                     self.special_move_followup_state = "sp_move_attack_2" if self.name in {"deep", "firen"} else None
+                    if self.name == "woody":
+                        self.special_move_followup_state = "sp_move_attack_2"
                     if self.name == "firen":
                         self.firen_sp_move_attack_2_stage = 1
                         self.firen_sp_move_attack_2_spawned = False
                 else:
                     special_attack_started = True
             if special_attack_started and self.state == "sp_move_attack_1":
-                if self.name in {"deep", "template", "davis", "firen", "axle", "julian", "mark"}:
+                if self.name in {"deep", "template", "davis", "firen", "firzen", "axle", "julian", "mark"}:
                     self.special_move_followup_state = "sp_move_attack_1"
                     self.special_attack_lock = "sp_move_attack_1"
                 else:
@@ -1221,6 +1274,8 @@ class Fighter:
                     self.state = "block_dodge"
                     self.state_timer = 0.22
                     self.dodge_invulnerable = True
+                    if self.name == "rudolf":
+                        self.rudolf_sounds_pending.append("rudolf_shadow_step")
                     self.block_hold_timer = 0.0
                     self.defense_cooldown = 0.5
                     self.block_dodge_animation = self.block_dodge_cycle[self.block_dodge_index] if self.block_dodge_cycle else "block_dodge"
@@ -1305,6 +1360,8 @@ class Fighter:
         elif self.name == "firen" and self.state == "sp_vert_attack_1":
             speed = self.movement["run_speed"]
             self.x += self.facing * speed * dt
+        elif self.name == "woody" and self.state == "sp_vert_attack_1" and self.woody_vert_dash_active:
+            self.x += self.facing * self.movement["run_speed"] * 1.25 * dt
         elif self.name in {"luis", "luis_liberated"} and self.state == "sp_vert_attack_1":
             self.x += self.facing * self.movement["run_speed"] * dt
         elif (
@@ -1326,6 +1383,12 @@ class Fighter:
             self.lane_y += move_y * self.movement["lane_speed"] * dt
         if self.name == "deep" and self.state == "sp_move_attack_2":
             self.x += self.facing * 220.0 * dt
+        if (
+            self.name == "woody"
+            and self.state == "sp_move_attack_2"
+            and self.woody_sp_move_attack_2_stage == 2
+        ):
+            self.x += self.facing * self.movement["run_speed"] * 1.25 * dt
 
         self.x = max(self.min_x, min(self.max_x, self.x))
         self.lane_y = max(LANE_MIN_Y, min(LANE_MAX_Y, self.lane_y))
@@ -1373,6 +1436,8 @@ class Fighter:
                     animation_name = "sp_move_attack_2_follow"
                 else:
                     animation_name = "sp_move_attack_2" if "sp_move_attack_2" in self.animations else ("heavy_attack" if "heavy_attack" in self.animations else "idle")
+            elif self.name == "woody" and self.woody_sp_move_attack_2_stage == 2 and "sp_move_attack_2_follow" in self.animations:
+                animation_name = "sp_move_attack_2_follow"
             elif self.animation_player.current_name == "sp_move_attack_2_follow" and "sp_move_attack_2_follow" in self.animations:
                 animation_name = "sp_move_attack_2_follow"
             else:
@@ -1544,6 +1609,12 @@ class Fighter:
                 for frame_index in (2, 5):
                     if frame_index in crossed_frames:
                         self._queue_rudolf_blade_sound()
+            if (
+                self.state == "sp_vert_attack_2"
+                and current_animation_name == "sp_vert_attack_2"
+                and 4 in crossed_frames
+            ):
+                self.rudolf_clones_pending = True
             if self.state == "sp_vert_attack_1" and current_animation_name == "sp_vert_attack_1" and 2 in crossed_frames:
                 self._queue_rudolf_blade_sound()
         if self.name == "luis":
@@ -1673,6 +1744,19 @@ class Fighter:
                     if frame_index == 4 and not self.firen_sp_vert_attack_2_spawned:
                         self.firen_fire_explosion_pending += 1
                         self.firen_sp_vert_attack_2_spawned = True
+        if self.name == "firzen":
+            current_animation_name = self.animation_player.current_name
+            frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
+            crossed_frames = self._crossed_frame_indices(previous_frame_index, self.animation_player.frame_index, frame_count)
+            if self.state == "sp_move_attack_1" and current_animation_name == "sp_move_attack_1" and 2 in crossed_frames:
+                self.firzen_char_blast_pending = True
+            if self.state == "sp_move_attack_2" and current_animation_name == "sp_move_attack_2" and 2 in crossed_frames:
+                self.firzen_fire_shots_pending = 3
+            if self.state == "sp_vert_attack_1" and current_animation_name == "sp_vert_attack_1" and 2 in crossed_frames:
+                self.firzen_fire_ice_orb_pending = True
+            if self.state == "sp_vert_attack_2" and current_animation_name == "sp_vert_attack_2" and 5 in crossed_frames:
+                self.firzen_vert_attack_2_columns_pending = True
+                self.firzen_vert_attack_2_orbs_pending = 3
         if self.name == "henry":
             current_animation_name = self.animation_player.current_name
             current_frame_index = self.animation_player.frame_index
@@ -1700,6 +1784,40 @@ class Fighter:
                 if 3 in crossed_frames and not self.freeze_tornado_spawned:
                     self.freeze_tornado_pending = True
                     self.freeze_tornado_spawned = True
+        if self.name == "sorcerer":
+            current_animation_name = self.animation_player.current_name
+            frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
+            crossed_frames = self._crossed_frame_indices(previous_frame_index, self.animation_player.frame_index, frame_count)
+            if self.state == "sp_move_attack_1" and current_animation_name == "sp_move_attack_1" and 4 in crossed_frames:
+                self.sorcerer_fireball_pending = True
+            if self.state == "sp_move_attack_2" and current_animation_name == "sp_move_attack_2" and 3 in crossed_frames:
+                self.sorcerer_freeze_ball_pending = True
+            if self.state == "sp_vert_attack_2" and current_animation_name == "sp_vert_attack_2" and 2 in crossed_frames:
+                self.sorcerer_heal_orb_pending = True
+        if self.name == "woody":
+            current_animation_name = self.animation_player.current_name
+            frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
+            crossed_frames = self._crossed_frame_indices(previous_frame_index, self.animation_player.frame_index, frame_count)
+            if self.state == "sp_move_attack_1" and current_animation_name == "sp_move_attack_1":
+                for frame_index, shot_set in ((4, 1), (7, 2)):
+                    if frame_index in crossed_frames:
+                        self.woody_shots_pending.append(shot_set)
+            if self.state == "sp_move_attack_2":
+                punch_frames = (1, 5, 9) if current_animation_name == "sp_move_attack_2" else (2, 5, 7)
+                for frame_index in punch_frames:
+                    if frame_index in crossed_frames:
+                        self.woody_punches_pending.append((current_animation_name, frame_index))
+            if self.state == "sp_vert_attack_1" and current_animation_name == "sp_vert_attack_1" and 3 in crossed_frames:
+                self.woody_yell_sfx_pending = True
+                self.woody_vert_dash_active = True
+            if self.state == "sp_vert_attack_2" and current_animation_name == "sp_vert_attack_2":
+                if 2 in crossed_frames:
+                    self.woody_shadowstep_sfx_pending = True
+                if 5 in crossed_frames:
+                    self.x = max(
+                        self.min_x,
+                        min(self.max_x, self.x + self.facing * 240.0),
+                    )
         if self.state == "sp_move_attack_1" and self.animation_player.finished:
             if self.name == "julian" and self.julian_sp_move_attack_1_stage >= 5:
                 self.special_move_followup_state = None
@@ -1718,6 +1836,8 @@ class Fighter:
                         self.state = "idle"
                         self.attack_started = False
                         self.has_applied_attack_damage = False
+                elif self.name == "firzen":
+                    self._restart_move_followup("sp_move_attack_1", move_special_1_chord, start_frame_index=1)
                 else:
                     self._restart_move_followup("sp_move_attack_1", move_special_1_chord)
             else:
@@ -1726,7 +1846,14 @@ class Fighter:
                 self.attack_started = False
                 self.has_applied_attack_damage = False
         if self.state == "sp_move_attack_2" and self.animation_player.finished:
-            if self._can_continue_special("sp_move_attack_2", move_special_2_chord):
+            if self.name == "woody" and self.woody_sp_move_attack_2_stage == 1:
+                self.woody_sp_move_attack_2_stage = 2
+                self.attack_timer = self.combat["attack_duration"]
+                self.has_applied_attack_damage = False
+                self.attack_started = True
+                self.attack_projectile_fired = False
+                self.animation_player.play("sp_move_attack_2_follow")
+            elif self._can_continue_special("sp_move_attack_2", move_special_2_chord):
                 if self.name == "firen":
                     self.firen_sp_move_attack_2_stage = 2
                     self.firen_sp_move_attack_2_spawned = True
@@ -1740,6 +1867,8 @@ class Fighter:
                 self.attack_started = False
                 self.has_applied_attack_damage = False
         if self.state == "sp_vert_attack_1" and self.animation_player.finished:
+            if self.name == "woody":
+                self.woody_vert_dash_active = False
             if self._can_continue_special("sp_vert_attack_1", vert_special_1_chord):
                 self._restart_move_followup("sp_vert_attack_1", vert_special_1_chord, start_frame_index=3 if self.name == "firen" else 0)
             else:
