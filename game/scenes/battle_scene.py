@@ -17,6 +17,11 @@ from game.systems.stage import ForestStage
 
 
 THROWN_ITEM_MAX_DISTANCE = 330.0
+THROWABLE_DISTANCE_MULTIPLIER = 2.0
+
+
+def _is_throwable_item(item_id: str) -> bool:
+    return item_id.partition("/")[0] == "throwables"
 
 
 def _load_folder_frames(folder: Path) -> list[pygame.Surface]:
@@ -337,6 +342,53 @@ class ConsumableBreakEffect:
         surface.blit(small, small.get_rect(midbottom=(x + side_offset, int(self.floor_y))))
 
 
+class ItemBreakEffect:
+    FRAME_DURATION = 0.08
+
+    def __init__(self, x: float, lane_y: float, frames: list[pygame.Surface]) -> None:
+        self.x = x
+        self.floor_y = GROUND_Y + lane_y
+        self.frames = frames
+        self.elapsed = 0.0
+
+    def update(self, dt: float) -> bool:
+        self.elapsed += dt
+        return self.elapsed >= len(self.frames) * self.FRAME_DURATION
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        frame_index = min(int(self.elapsed / self.FRAME_DURATION), len(self.frames) - 1)
+        frame = self.frames[frame_index]
+        surface.blit(
+            frame,
+            frame.get_rect(midbottom=(int(self.x - camera_x), int(self.floor_y))),
+        )
+
+
+class MetalFragmentEffect(ItemBreakEffect):
+    INITIAL_UPWARD_SPEED = 420.0
+    GRAVITY = 1400.0
+
+    def __init__(self, x: float, lane_y: float, frames: list[pygame.Surface]) -> None:
+        super().__init__(x, lane_y, frames)
+        self.flight_duration = (2.0 * self.INITIAL_UPWARD_SPEED) / self.GRAVITY
+        self.duration = max(len(frames) * self.FRAME_DURATION, self.flight_duration)
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        frame_index = min(int(self.elapsed / self.FRAME_DURATION), len(self.frames) - 1)
+        frame = self.frames[frame_index]
+        flight_time = min(self.elapsed, self.flight_duration)
+        vertical_offset = max(
+            0.0,
+            self.INITIAL_UPWARD_SPEED * flight_time - 0.5 * self.GRAVITY * flight_time**2,
+        )
+        surface.blit(
+            frame,
+            frame.get_rect(
+                midbottom=(int(self.x - camera_x), int(self.floor_y - vertical_offset))
+            ),
+        )
+
+
 class ItemSpriteAnimation:
     def __init__(self, frames: list[pygame.Surface], loop: bool = False) -> None:
         self.frames = frames
@@ -535,8 +587,21 @@ class ArrowProjectile:
     HENRY_SPEED_X = 585.0
     HENRY_RANGE_FACTOR = 0.5625
 
-    def __init__(self, owner: Fighter, x: float, y: float, facing: int, style: str = "basic", vertical_speed: float = 0.0) -> None:
+    def __init__(
+        self,
+        owner: Fighter,
+        x: float,
+        y: float,
+        facing: int,
+        style: str = "basic",
+        vertical_speed: float = 0.0,
+        target_lane_y: float | None = None,
+    ) -> None:
         self.owner = owner
+        self.origin_lane_y = float(owner.lane_y)
+        self.lane_y = self.origin_lane_y
+        self.target_lane_y = float(owner.lane_y if target_lane_y is None else target_lane_y)
+        self.lane_change_distance = 220.0
         self.x = float(x)
         self.y = float(y)
         self.origin_y = float(y)
@@ -560,24 +625,28 @@ class ArrowProjectile:
         self.can_damage = True
         self.finished = False
         self.just_broke = False
+        self.just_ground_hit = False
         self.break_velocity_y = 0.0
         self.break_bounced = False
         arrows_root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "arrow"
-        fly_frames = [
-            pygame.transform.flip(frame, False, True)
-            for frame in _load_folder_frames(arrows_root / "arrow_fly")
-        ]
+        if style == "rudolf":
+            self.fly_frames = _load_folder_frames(arrows_root.parent / "rudolf_shuriken")
+        else:
+            self.fly_frames = [
+                pygame.transform.flip(frame, False, True)
+                for frame in _load_folder_frames(arrows_root / "arrow_fly")
+            ]
         enchanted_frames = _load_folder_frames(arrows_root / "arrow_enchanted") if style == "enchanted" else []
         self.enchanted_launch_frames = enchanted_frames[:1]
         self.enchanted_loop_frames = enchanted_frames[1:] if len(enchanted_frames) > 1 else enchanted_frames
         self.enchanted_launch_done = False
-        self.fly_frames = fly_frames or [pygame.Surface((12, 12), pygame.SRCALPHA)]
-        self.henry_jump_frames = fly_frames[5:6]
+        self.fly_frames = self.fly_frames or [pygame.Surface((12, 12), pygame.SRCALPHA)]
+        self.henry_jump_frames = self.fly_frames[5:6]
         self.break_frames = _load_folder_frames(arrows_root / "arrow_break")
         self.frames = self.henry_jump_frames if style == "henry_jump" else self.fly_frames
         if not self.frames:
             self.frames = [pygame.Surface((12, 12), pygame.SRCALPHA)]
-        self.ground_y = GROUND_Y + owner.lane_y - 18.0
+        self.ground_y = GROUND_Y + self.lane_y - 18.0
         if style in {"henry_basic", "henry_vertical"}:
             self.speed_x = self.HENRY_SPEED_X
             self.max_distance *= self.HENRY_RANGE_FACTOR
@@ -625,11 +694,18 @@ class ArrowProjectile:
             ground_duration = ascent_duration + fall_duration
         return min(ground_duration, max_distance_duration)
 
-    def _start_break(self) -> None:
+    def _start_break(self, ground_hit: bool = False) -> None:
         if self.phase == "break":
+            return
+        if self.style == "rudolf" and ground_hit:
+            self.phase = "break"
+            self.finished = True
+            self.can_damage = False
+            self.just_ground_hit = True
             return
         self.phase = "break"
         self.just_broke = True
+        self.just_ground_hit = ground_hit
         self.can_damage = False
         self.frame_timer = 0.0
         self.frame_index = 0
@@ -645,7 +721,7 @@ class ArrowProjectile:
         if self.phase == "fly":
             if self.style != "enchanted":
                 self.flight_elapsed += dt
-                if self.flight_duration > 0.0:
+                if self.flight_duration > 0.0 and self.style != "rudolf":
                     progress = min(self.flight_elapsed / self.flight_duration, 1.0)
                     self.frame_index = min(int(progress * len(self.frames)), len(self.frames) - 1)
             if self.style in {"henry_basic", "henry_vertical"}:
@@ -654,16 +730,23 @@ class ArrowProjectile:
                 self.vertical_speed += self.gravity * dt
                 if self.y >= self.ground_y:
                     self.y = self.ground_y
-                    self._start_break()
+                    self._start_break(ground_hit=True)
             elif self.style == "henry_jump":
                 self.frames = self.henry_jump_frames or self.fly_frames
                 self.x += self.facing * self.speed_x * dt
                 self.y += self.fall_speed * dt
                 if self.y >= self.ground_y:
                     self.y = self.ground_y
-                    self._start_break()
+                    self._start_break(ground_hit=True)
             else:
                 self.x += self.facing * self.speed_x * dt
+            if self.style == "rudolf":
+                lane_progress = min(abs(self.x - self.origin_x) / self.lane_change_distance, 1.0)
+                next_lane_y = self.origin_lane_y + (self.target_lane_y - self.origin_lane_y) * lane_progress
+                lane_delta = next_lane_y - self.lane_y
+                self.lane_y = next_lane_y
+                self.y += lane_delta
+                self.ground_y += lane_delta
             if self.style == "enchanted":
                 if not self.enchanted_launch_done:
                     self.frames = self.enchanted_launch_frames or self.enchanted_loop_frames or self.frames
@@ -694,9 +777,14 @@ class ArrowProjectile:
                     self.motion_frame_timer -= 0.08
                     if self.motion_frame_index < 2:
                         self.motion_frame_index += 1
+                if self.style == "rudolf":
+                    self.frame_timer += dt
+                    while self.frame_timer >= 0.08:
+                        self.frame_timer -= 0.08
+                        self.frame_index = (self.frame_index + 1) % len(self.fly_frames)
                 if self.y >= self.ground_y:
                     self.y = self.ground_y
-                    self._start_break()
+                    self._start_break(ground_hit=True)
             if self.style != "enchanted" and abs(self.x - self.origin_x) >= self.max_distance:
                 if self.style == "henry_jump":
                     self.x = self.origin_x + (self.facing * self.max_distance)
@@ -2798,18 +2886,25 @@ class BattleScene:
             or any(not frames for frames in self.milk_break_frames.values())
         ):
             raise FileNotFoundError(f"Milk sprites are missing from {milk_root}")
-        self.spawnable_consumables = sorted(
+        self.spawnable_items = sorted(
             item_id
             for item_id, animations in self.item_sprite_animations.items()
             if animations.get("spawn")
             and animations.get("holding")
-            and animations.get("drink")
             and animations.get("throw")
             and self._land_frame_sets_for_item(item_id)
         )
         self.active_item_overlays: dict[Fighter, tuple[str, ItemSpriteAnimation, str | None]] = {}
         self.held_item_animations: dict[Fighter, tuple[str, ItemSpriteAnimation]] = {}
-        self.consumable_break_effects: list[ConsumableBreakEffect] = []
+        self.consumable_break_effects: list[ConsumableBreakEffect | ItemBreakEffect | MetalFragmentEffect] = []
+        fragment_root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "particals"
+        self.rudolf_metal_fragments = [
+            _scale_frames(_load_folder_frames(fragment_root / name), 2.0)
+            for name in ("metal_fragment_1", "metal_fragment_2")
+        ]
+        if any(not frames for frames in self.rudolf_metal_fragments):
+            raise FileNotFoundError(f"Rudolf shuriken fragments are missing from {fragment_root}")
+        self.rudolf_metal_fragment_index = 0
         self.consumable_spawn_timer = 18.0
         self.audio = AudioBank(sounds_root)
         x_bounds = (self.stage.play_min_x, self.stage.play_max_x)
@@ -2873,7 +2968,7 @@ class BattleScene:
             or fighter.state in (COMBAT_ATTACK_STATES | {"grapple", "grappled", "jump_throw", "die", "dead"})
         ):
             return None
-        if "drink" not in self.item_sprite_animations.get(fighter.held_item, {}):
+        if _is_throwable_item(fighter.held_item) or "drink" not in self.item_sprite_animations.get(fighter.held_item, {}):
             return None
         return fighter.held_item
 
@@ -2985,7 +3080,12 @@ class BattleScene:
 
             facing = fighter.facing
             start_x = fighter.x + facing * 32.0
-            end_x = fighter.x + facing * THROWN_ITEM_MAX_DISTANCE
+            distance_multiplier = (
+                THROWABLE_DISTANCE_MULTIPLIER
+                if _is_throwable_item(item_id)
+                else 1.0
+            )
+            end_x = fighter.x + facing * THROWN_ITEM_MAX_DISTANCE * distance_multiplier
             start_x = max(self.stage.play_min_x, min(self.stage.play_max_x, start_x))
             end_x = max(self.stage.play_min_x, min(self.stage.play_max_x, end_x))
             self.consumable_items.append(
@@ -3198,9 +3298,18 @@ class BattleScene:
         for attacker, defender in ((self.fighter, self.enemy), (self.enemy, self.fighter)):
             if attacker.is_dead or defender.is_dead or defender.state == "henry_float":
                 continue
+            if (
+                attacker.name == "mark"
+                and attacker.state == "sp_move_attack_1"
+                and len(attacker.mark_sp_move_attack_1_targets_hit) >= 2
+            ):
+                continue
+            if attacker.name == "luis_liberated" and attacker.state == "sp_vert_attack_1":
+                self._handle_luis_liberated_dash_hits(attacker, defender)
+                continue
             if attacker.state not in (COMBAT_ATTACK_STATES | {"jump_throw"}):
                 continue
-            if attacker.name == "hunter" and attacker.state == "basic_attack":
+            if attacker.name in {"hunter", "rudolf"} and attacker.state == "basic_attack":
                 continue
             if attacker.name == "henry" and attacker.state in {"basic_attack", "sp_move_attack_1", "sp_vert_attack_1", "sp_vert_attack_2"}:
                 continue
@@ -3214,7 +3323,11 @@ class BattleScene:
                 continue
             if attacker.name == "jan" and attacker.state in {"sp_vert_attack_1", "sp_vert_attack_2"}:
                 continue
+            if attacker.name == "monk" and attacker.state == "sp_move_attack_1":
+                continue
             if attacker.name == "john" and attacker.state in {"sp_move_attack_1", "sp_move_attack_2", "sp_vert_attack_1", "sp_vert_attack_2"}:
+                continue
+            if attacker.name == "luis" and attacker.state == "sp_move_attack_2":
                 continue
             if attacker.name == "julian" and attacker.state in {"sp_move_attack_1", "sp_move_attack_2", "sp_vert_attack_1", "sp_vert_attack_2"}:
                 continue
@@ -3228,11 +3341,17 @@ class BattleScene:
                 continue
             if not attacker.attack_started:
                 continue
-            if attacker.attack_timer <= 0:
+            luis_contact_attack = attacker.name == "luis" and attacker.state in {"sp_move_attack_1", "sp_vert_attack_1"}
+            mark_plow_attack = attacker.name == "mark" and attacker.state == "sp_move_attack_1"
+            if attacker.attack_timer <= 0 and not (
+                (luis_contact_attack or mark_plow_attack) and not attacker.animation_player.finished
+            ):
                 attacker.has_applied_attack_damage = True
                 attacker.attack_started = False
                 continue
             if abs(attacker.lane_y - defender.lane_y) > 36:
+                if luis_contact_attack or mark_plow_attack:
+                    continue
                 attacker.has_applied_attack_damage = True
                 attacker.attack_started = False
                 if attacker.name == "freeze" and attacker.state == "basic_attack":
@@ -3246,6 +3365,8 @@ class BattleScene:
             if attacker.name == "dark_bat" and attacker.state == "jump_throw" and attacker.jump_attack_active:
                 attack_range = 96
             if not attacker.world_hitbox_rect().inflate(attack_range, 0).colliderect(defender.world_hitbox_rect()):
+                if luis_contact_attack or mark_plow_attack:
+                    continue
                 attacker.has_applied_attack_damage = True
                 attacker.attack_started = False
                 if attacker.name == "freeze" and attacker.state == "basic_attack":
@@ -3254,6 +3375,10 @@ class BattleScene:
                     self.audio.play_hit_miss()
                 continue
 
+            if mark_plow_attack and id(defender) in attacker.mark_sp_move_attack_1_targets_hit:
+                attacker.has_applied_attack_damage = True
+                attacker.attack_started = False
+                continue
             attacker.has_applied_attack_damage = True
             attacker.attack_started = False
             if defender.state == "block" and defender.block_strength > 0:
@@ -3266,7 +3391,11 @@ class BattleScene:
                 self.audio.play("hit_guard")
                 continue
 
+            previous_health = defender.health
             defender.receive_damage(attacker.touch_damage)
+            if mark_plow_attack:
+                if defender.health < previous_health:
+                    attacker.mark_sp_move_attack_1_targets_hit.add(id(defender))
             if not defender.is_dead:
                 if attacker.state == "jump_throw" and attacker.jump_attack_active:
                     defender._start_knockdown()
@@ -3281,7 +3410,11 @@ class BattleScene:
                     defender._start_knockdown()
                 elif attacker.name == "axle" and attacker.state == "sp_move_attack_2":
                     defender._start_knockdown()
-            if attacker.name == "knight":
+                elif attacker.name == "luis" and attacker.state == "sp_move_attack_1":
+                    defender._start_knockdown()
+                elif mark_plow_attack:
+                    defender._start_knockdown()
+            if attacker.name in {"knight", "luis_liberated"}:
                 self.audio.play("sword_cut")
             elif attacker.name == "dark_bat" and attacker.state in {"sp_move_attack_1", "jump_throw"}:
                 self.audio.play("sword_cut")
@@ -3293,12 +3426,43 @@ class BattleScene:
                 self.audio.play("hit_success")
             else:
                 self.audio.play("hit_success")
+            if mark_plow_attack and len(attacker.mark_sp_move_attack_1_targets_hit) >= 2:
+                attacker.state = "idle"
+                attacker.attack_timer = 0.0
+                attacker.has_applied_attack_damage = False
+                attacker.attack_started = False
+                attacker.attack_projectile_fired = False
+                attacker.special_move_followup_state = None
+                attacker.animation_player.play("idle")
+
+    def _handle_luis_liberated_dash_hits(self, attacker: Fighter, defender: Fighter) -> None:
+        while attacker.luis_liberated_swing_hits_pending:
+            attacker.luis_liberated_swing_hits_pending.pop(0)
+            if abs(attacker.lane_y - defender.lane_y) > 36:
+                continue
+            if not attacker.world_hitbox_rect().inflate(72, 0).colliderect(defender.world_hitbox_rect()):
+                continue
+            if defender.state == "block" and defender.block_strength > 0:
+                defender.block_strength = 0
+                defender.block_hold_timer = 0.0
+                self.audio.play("hit_guard")
+                continue
+            if defender.state == "block" and defender.block_strength == 0:
+                defender._start_block_break()
+                self.audio.play("hit_guard")
+                continue
+            defender.receive_damage(attacker.touch_damage)
+            self.audio.play("sword_cut")
 
     def _handle_audio(self, dt: float) -> None:
         self.audio.update_sequences()
         fighters = [self.fighter, self.enemy]
 
         for fighter in fighters:
+            while fighter.rudolf_sounds_pending:
+                self.audio.play(fighter.rudolf_sounds_pending.pop(0))
+            while fighter.luis_sounds_pending:
+                self.audio.play(fighter.luis_sounds_pending.pop(0))
             if fighter.knight_sword_swing_sfx_pending:
                 self.audio.play("sword_swing")
                 fighter.knight_sword_swing_sfx_pending = False
@@ -3388,7 +3552,9 @@ class BattleScene:
             self.victory_played = True
 
     def _spawn_hunter_projectile(self, fighter: Fighter) -> None:
-        if fighter.name not in {"hunter", "henry"}:
+        if fighter.name not in {"hunter", "henry", "rudolf"}:
+            return
+        if fighter.name == "rudolf" and fighter.state != "basic_attack":
             return
         if fighter.state not in {"basic_attack", "jump_throw"} and not (fighter.name == "henry" and fighter.state == "sp_move_attack_1"):
             return
@@ -3401,11 +3567,31 @@ class BattleScene:
         style = fighter.hunter_projectile_style
         if fighter.name in {"henry", "hunter"} and fighter.state == "basic_attack":
             style = "henry_basic"
+        elif fighter.name == "rudolf":
+            style = "rudolf"
         self.projectiles.append(ArrowProjectile(fighter, origin_x, origin_y, fighter.facing, style))
         if style == "enchanted":
             self.audio.play("arrow_enchanted_shot")
-        else:
+        elif fighter.name != "rudolf":
             fighter.hunter_shoot_arrow_sfx_pending = True
+
+    def _spawn_rudolf_shurikens(self, fighter: Fighter) -> None:
+        if fighter.name != "rudolf" or fighter.state != "sp_move_attack_1":
+            return
+        while fighter.rudolf_shuriken_lanes_pending:
+            target_lane_y = fighter.rudolf_shuriken_lanes_pending.pop(0)
+            origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.42)
+            origin_y = GROUND_Y + fighter.lane_y - fighter.z - 58.0
+            self.projectiles.append(
+                ArrowProjectile(
+                    fighter,
+                    origin_x,
+                    origin_y,
+                    fighter.facing,
+                    "rudolf",
+                    target_lane_y=target_lane_y,
+                )
+            )
 
     def _spawn_jack_blast(self, fighter: Fighter) -> None:
         if fighter.name != "jack" or fighter.state != "sp_move_attack_1" or not fighter.jack_blast_pending:
@@ -3746,6 +3932,115 @@ class BattleScene:
                 target_wind.hit_targets.add(id(target))
                 self.projectiles.append(target_wind)
 
+    def _spawn_luis_wind(self, fighter: Fighter) -> None:
+        if fighter.name != "luis" or fighter.state != "sp_move_attack_2" or not fighter.luis_wind_pending:
+            return
+        fighter.luis_wind_pending = False
+        self.audio.play("luis_wind")
+
+        hitbox = fighter.world_hitbox_rect()
+        wind_y = hitbox.bottom - 42.0
+        wind_offset = hitbox.width * 0.55 + 24.0
+        winds = [
+            WindProjectile(fighter, hitbox.centerx + facing * wind_offset, wind_y, facing)
+            for facing in (-1, 1)
+        ]
+        self.projectiles.extend(winds)
+
+        target = self.enemy if fighter is self.fighter else self.fighter
+        if target is None or target.is_dead or abs(target.lane_y - fighter.lane_y) > 36:
+            return
+
+        for wind in winds:
+            wind.hit_targets.add(id(target))
+        if target.state == "block" and target.block_strength > 0:
+            target.block_strength = 0
+            target.block_hold_timer = 0.0
+            self.audio.play("hit_guard")
+        elif target.state == "block":
+            target._start_block_break()
+            self.audio.play("hit_guard")
+        else:
+            target.receive_damage(fighter.touch_damage)
+            if not target.is_dead:
+                target._start_knockdown()
+
+        facing_toward_luis = 1 if fighter.x > target.x else -1
+        if fighter.x == target.x:
+            facing_toward_luis = -fighter.facing
+        target_hitbox = target.world_hitbox_rect()
+        target_wind_x = target_hitbox.centerx + facing_toward_luis * target.hitbox_size[0] * 0.48
+        target_wind_y = target_hitbox.bottom - 42.0
+        target_wind = WindProjectile(fighter, target_wind_x, target_wind_y, facing_toward_luis)
+        target_wind.hit_targets.add(id(target))
+        self.projectiles.append(target_wind)
+
+    def _spawn_luis_liberated_wind(self, fighter: Fighter) -> None:
+        if (
+            fighter.name != "luis_liberated"
+            or fighter.state != "sp_move_attack_2"
+            or not fighter.luis_liberated_wind_pending
+        ):
+            return
+        fighter.luis_liberated_wind_pending = False
+
+        hitbox = fighter.world_hitbox_rect()
+        wind = WindProjectile(
+            fighter,
+            hitbox.centerx + fighter.facing * (hitbox.width * 0.55 + 24.0),
+            hitbox.bottom - 42.0,
+            fighter.facing,
+        )
+        self.projectiles.append(wind)
+
+        target = self.enemy if fighter is self.fighter else self.fighter
+        if target is None or target.is_dead or abs(target.lane_y - fighter.lane_y) > 36:
+            return
+
+        wind.hit_targets.add(id(target))
+        target._start_knockdown()
+        facing_toward_luis = 1 if fighter.x > target.x else -1
+        if fighter.x == target.x:
+            facing_toward_luis = -fighter.facing
+        target_hitbox = target.world_hitbox_rect()
+        target_wind = WindProjectile(
+            fighter,
+            target_hitbox.centerx + facing_toward_luis * target.hitbox_size[0] * 0.48,
+            target_hitbox.bottom - 42.0,
+            facing_toward_luis,
+        )
+        target_wind.hit_targets.add(id(target))
+        self.projectiles.append(target_wind)
+
+    def _spawn_monk_wind(self, fighter: Fighter) -> None:
+        if fighter.name != "monk" or fighter.state != "sp_move_attack_1" or not fighter.monk_wind_pending:
+            return
+        fighter.monk_wind_pending = False
+        hitbox = fighter.world_hitbox_rect()
+        wind = WindProjectile(
+            fighter,
+            hitbox.centerx + fighter.facing * (hitbox.width * 0.55 + 24.0),
+            hitbox.bottom - 42.0,
+            fighter.facing,
+        )
+        self.projectiles.append(wind)
+        self.audio.play("monk_wind")
+
+        target = self.enemy if fighter is self.fighter else self.fighter
+        if (
+            target is None
+            or target.is_dead
+            or abs(target.lane_y - fighter.lane_y) > 36
+            or not wind.rect().colliderect(target.world_hitbox_rect())
+        ):
+            return
+
+        wind.hit_targets.add(id(target))
+        target.receive_damage(fighter.touch_damage)
+        if not target.is_dead:
+            target._start_knockdown()
+        self.audio.play("wind_hit")
+
     def _spawn_firen_fire_trail(self, fighter: Fighter) -> None:
         if fighter.name != "firen":
             return
@@ -3808,6 +4103,15 @@ class BattleScene:
             if isinstance(projectile, JulianSkullProjectile) and projectile.just_burst_sound:
                 self.audio.play("summon_bats_died")
                 projectile.just_burst_sound = False
+            if getattr(projectile, "just_ground_hit", False):
+                if isinstance(projectile, ArrowProjectile) and projectile.style == "rudolf":
+                    self.audio.play("rudolf_shuriken")
+                    frames = self.rudolf_metal_fragments[self.rudolf_metal_fragment_index]
+                    self.consumable_break_effects.append(
+                        MetalFragmentEffect(projectile.x, projectile.lane_y, frames)
+                    )
+                    self.rudolf_metal_fragment_index = 1 - self.rudolf_metal_fragment_index
+                projectile.just_ground_hit = False
             if isinstance(projectile, JohnBarrierEffect):
                 if projectile.just_barrier_sound:
                     self.audio.play("john_barrier")
@@ -3841,7 +4145,8 @@ class BattleScene:
                 self.audio.play("freeze_break")
                 projectile.just_expired = False
             if getattr(projectile, "just_broke", False):
-                self.audio.play("broken_arrow")
+                if not (isinstance(projectile, ArrowProjectile) and projectile.style == "rudolf"):
+                    self.audio.play("broken_arrow")
                 projectile.just_broke = False
             if getattr(projectile, "just_burst", False):
                 if isinstance(projectile, FireballProjectile):
@@ -4136,6 +4441,9 @@ class BattleScene:
                     continue
                 if isinstance(projectile, JulianSkullProjectile) and abs(target.lane_y - projectile.owner.lane_y) > 36:
                     continue
+                if isinstance(projectile, ArrowProjectile) and projectile.style == "rudolf":
+                    if abs(target.lane_y - projectile.lane_y) > 36:
+                        continue
                 if abs(projectile.y - target.world_hitbox_rect().centery) > 42:
                     continue
                 target_center_x = target.world_hitbox_rect().centerx
@@ -4227,7 +4535,7 @@ class BattleScene:
             return
         self.consumable_spawn_timer -= dt
         while self.consumable_spawn_timer <= 0.0:
-            self._spawn_consumable(random.choice(self.spawnable_consumables))
+            self._spawn_consumable(random.choice(self.spawnable_items))
             self.consumable_spawn_timer += 18.0
         if inputs.spawn_milk_just_pressed:
             self._spawn_consumable("consumables/milk")
@@ -4244,6 +4552,8 @@ class BattleScene:
                 fighter_inputs = replace(inputs, attack_pressed=False, attack_just_pressed=False)
             else:
                 fighter_inputs = inputs
+        if self.fighter.held_item is not None and _is_throwable_item(self.fighter.held_item):
+            fighter_inputs = replace(fighter_inputs, drink_just_pressed=False)
         previous_x_by_fighter = {
             id(self.fighter): self.fighter.x,
             id(self.enemy): self.enemy.x,
@@ -4265,7 +4575,12 @@ class BattleScene:
                 enemy_input.drink_just_pressed = True
             elif self._try_pick_up_consumable(self.enemy, enemy_input):
                 enemy_input.attack_just_pressed = False
+        if self.enemy.held_item is not None and _is_throwable_item(self.enemy.held_item):
+            enemy_input.drink_just_pressed = False
         self.enemy.update(dt, enemy_input, target=self.fighter, controlled=True)
+        for fighter in (self.fighter, self.enemy):
+            if fighter.luis_transform_pending:
+                fighter.transform_to(FighterConfig("luis_liberated", CHARACTERS["luis_liberated"]))
         self._finish_held_item_throw(self.fighter)
         self._finish_held_item_throw(self.enemy)
         for fighter, previously_drinking, item_id in zip(
@@ -4286,6 +4601,7 @@ class BattleScene:
             self._spawn_freeze_columns(fighter)
             self._spawn_freeze_tornado(fighter)
             self._spawn_hunter_projectile(fighter)
+            self._spawn_rudolf_shurikens(fighter)
             self._spawn_jack_blast(fighter)
             self._spawn_axle_shot(fighter)
             self._spawn_julian_skull(fighter)
@@ -4308,6 +4624,9 @@ class BattleScene:
             self._spawn_firen_fireball(fighter)
             self._spawn_firen_fire_breath(fighter)
             self._spawn_henry_wind(fighter)
+            self._spawn_luis_wind(fighter)
+            self._spawn_luis_liberated_wind(fighter)
+            self._spawn_monk_wind(fighter)
             self._spawn_firen_fire_trail(fighter)
             self._spawn_firen_explosion(fighter)
 
@@ -4318,7 +4637,12 @@ class BattleScene:
         for item in tuple(self.consumable_items):
             item_event = item.update(dt)
             if item_event == "landed":
-                self.audio.play("drink_land")
+                sound = (
+                    "armor_piece_land"
+                    if item.item_id in {"throwables/armor_piece_1", "throwables/armor_piece_2"}
+                    else "drink_land"
+                )
+                self.audio.play(sound)
             elif item_event == "break":
                 self.consumable_items.remove(item)
                 self.audio.play("drink_break")
@@ -4332,6 +4656,12 @@ class BattleScene:
                             self.milk_break_frames["small"],
                         )
                     )
+                else:
+                    broken_frames = self.item_sprite_animations.get(item.item_id, {}).get("broken")
+                    if broken_frames:
+                        self.consumable_break_effects.append(
+                            ItemBreakEffect(item.x, item.lane_y, broken_frames)
+                        )
         self._resolve_thrown_item_hits()
         for fighter, (_, animation, active_state) in tuple(self.active_item_overlays.items()):
             if (active_state is not None and fighter.state != active_state) or animation.update(dt):
@@ -4356,7 +4686,6 @@ class BattleScene:
             item.draw(surface, camera_x)
         for effect in self.consumable_break_effects:
             effect.draw(surface, camera_x)
-
         fighters = [self.fighter, self.enemy]
         fighters.sort(key=lambda fighter: fighter.lane_y)
         for fighter in fighters:

@@ -89,7 +89,12 @@ class CharacterSelectScene:
 
         return None
 
-    def update(self, dt: float) -> None:
+    def update(
+        self,
+        dt: float,
+        mouse_pos: tuple[int, int] | None = None,
+        mouse_click: tuple[int, int] | None = None,
+    ) -> None:
         _ = dt
         keys = pygame.key.get_pressed()
 
@@ -98,6 +103,12 @@ class CharacterSelectScene:
         confirm_pressed = keys[pygame.K_j]
 
         if self.characters:
+            if mouse_pos is not None:
+                for index, character in enumerate(self.characters):
+                    option_rect = pygame.Rect(70, 174 + index * 28, 360, 28)
+                    if option_rect.collidepoint(mouse_pos):
+                        self.selected_index = index
+                        break
             if up_pressed and not self._up_pressed:
                 self.selected_index = (self.selected_index - 1) % len(self.characters)
             if down_pressed and not self._down_pressed:
@@ -105,7 +116,21 @@ class CharacterSelectScene:
 
             self.selected_character = self.characters[self.selected_index]["key"]
 
-            if confirm_pressed and not self._confirm_pressed:
+            clicked_character = None
+            if mouse_click is not None:
+                clicked_character = next(
+                    (
+                        index
+                        for index in range(len(self.characters))
+                        if pygame.Rect(70, 174 + index * 28, 360, 28).collidepoint(mouse_click)
+                    ),
+                    None,
+                )
+            if clicked_character is not None:
+                self.selected_index = clicked_character
+                self.selected_character = self.characters[self.selected_index]["key"]
+                self.selection_confirmed = True
+            elif confirm_pressed and not self._confirm_pressed:
                 self.selection_confirmed = True
 
         self._up_pressed = up_pressed

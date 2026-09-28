@@ -10,12 +10,22 @@ from game.systems.audio import AudioBank
 
 
 class MainMenuScene:
+    MAIN_OPTIONS = ("Play", "Settings", "Quit")
+
     def __init__(self) -> None:
         self.title_font = pygame.font.Font(None, 72)
         self.option_font = pygame.font.Font(None, 40)
         self.credit_font = pygame.font.Font(None, 24)
         self.start_requested = False
+        self.quit_requested = False
+        self.settings_open = False
+        self.selected_index = 0
+        self._up_pressed = False
+        self._down_pressed = False
+        self._left_pressed = False
+        self._right_pressed = False
         self._confirm_pressed = False
+        self._escape_pressed = False
         self.sprites_root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "characters"
         self.tile_size = (176, 132)
         self.scroll_x = 0.0
@@ -84,13 +94,99 @@ class MainMenuScene:
         scaled.set_colorkey((0, 0, 0))
         return scaled
 
-    def update(self, dt: float) -> None:
+    def _menu_options(self) -> tuple[str, ...]:
+        if self.settings_open:
+            sound_state = "Off" if AudioBank.muted else "On"
+            return (f"Sound: {sound_state}", "Volume", "Back")
+        return self.MAIN_OPTIONS
+
+    def _option_rects(self) -> list[pygame.Rect]:
+        options = self._menu_options()
+        return [
+            pygame.Rect(0, 0, 300, 54).move(
+                SCREEN_WIDTH // 2 - 150,
+                310 + index * 68,
+            )
+            for index in range(len(options))
+        ]
+
+    def _activate_selected(self) -> None:
+        self.audio.play("menu_accept")
+        if self.settings_open:
+            if self.selected_index == 0:
+                AudioBank.set_muted(not AudioBank.muted)
+            elif self.selected_index == 1:
+                AudioBank.set_master_volume(AudioBank.master_volume + 0.1)
+            else:
+                self.settings_open = False
+                self.selected_index = 0
+            return
+
+        if self.selected_index == 0:
+            self.start_requested = True
+        elif self.selected_index == 1:
+            self.settings_open = True
+            self.selected_index = 0
+        else:
+            self.quit_requested = True
+
+    def update(
+        self,
+        dt: float,
+        mouse_pos: tuple[int, int] | None = None,
+        mouse_click: tuple[int, int] | None = None,
+    ) -> None:
         keys = pygame.key.get_pressed()
-        confirm_pressed = keys[pygame.K_j]
-        self.start_requested = confirm_pressed and not self._confirm_pressed
-        if self.start_requested:
-            self.audio.play("menu_accept")
+        up_pressed = keys[pygame.K_UP]
+        down_pressed = keys[pygame.K_DOWN]
+        left_pressed = keys[pygame.K_LEFT]
+        right_pressed = keys[pygame.K_RIGHT]
+        confirm_pressed = keys[pygame.K_j] or keys[pygame.K_RETURN] or keys[pygame.K_SPACE]
+        escape_pressed = keys[pygame.K_ESCAPE]
+        options = self._menu_options()
+        rects = self._option_rects()
+
+        if mouse_pos is not None:
+            for index, rect in enumerate(rects):
+                if rect.collidepoint(mouse_pos):
+                    self.selected_index = index
+                    break
+        if up_pressed and not self._up_pressed:
+            self.selected_index = (self.selected_index - 1) % len(options)
+        elif down_pressed and not self._down_pressed:
+            self.selected_index = (self.selected_index + 1) % len(options)
+        if self.settings_open and self.selected_index == 1:
+            if left_pressed and not self._left_pressed:
+                AudioBank.set_master_volume(AudioBank.master_volume - 0.1)
+            elif right_pressed and not self._right_pressed:
+                AudioBank.set_master_volume(AudioBank.master_volume + 0.1)
+
+        self.start_requested = False
+        self.quit_requested = False
+        if mouse_click is not None:
+            for index, rect in enumerate(rects):
+                if rect.collidepoint(mouse_click):
+                    self.selected_index = index
+                    if self.settings_open and index == 1:
+                        bar_rect = pygame.Rect(rect.x + 100, rect.y + 17, 130, 20)
+                        if bar_rect.collidepoint(mouse_click):
+                            volume = (mouse_click[0] - bar_rect.left) / bar_rect.width
+                            AudioBank.set_master_volume(volume)
+                    else:
+                        self._activate_selected()
+                    break
+        elif confirm_pressed and not self._confirm_pressed:
+            self._activate_selected()
+        elif self.settings_open and escape_pressed and not self._escape_pressed:
+            self.settings_open = False
+            self.selected_index = 0
+
+        self._up_pressed = up_pressed
+        self._down_pressed = down_pressed
+        self._left_pressed = left_pressed
+        self._right_pressed = right_pressed
         self._confirm_pressed = confirm_pressed
+        self._escape_pressed = escape_pressed
         self.scroll_x += self.scroll_speed_x * dt
         self.scroll_y += self.scroll_speed_y * dt
 
@@ -109,12 +205,12 @@ class MainMenuScene:
 
         for row in range(-1, rows):
             source_row = row_base + row
-            y = int(row * tile_h + row_offset) - tile_h
+            y = int(source_row * tile_h - self.scroll_y)
             for col in range(-1, cols):
                 source_col = col_base + col
                 seed = self.grid_seed ^ (source_row * 374761393) ^ (source_col * 668265263)
                 tile = self.background_tiles[abs(seed) % len(self.background_tiles)]
-                x = int(col * tile_w + col_offset) - tile_w
+                x = int(source_col * tile_w - self.scroll_x)
                 surface.blit(tile, (x, y))
 
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
@@ -122,8 +218,6 @@ class MainMenuScene:
         surface.blit(overlay, (0, 0))
 
     def _draw_title(self, surface: pygame.Surface) -> None:
-        option = self.option_font.render("Test Game", True, TEXT_COLOR)
-        prompt = self.credit_font.render("Press Attack Key", True, TEXT_COLOR)
         credit = self.credit_font.render("Official game by Josh Olsson", True, TEXT_COLOR)
 
         if self.title_logo is not None:
@@ -140,14 +234,27 @@ class MainMenuScene:
             surface.blit(shadow, (title_rect.x + 3, title_rect.y + 3))
             surface.blit(title, title_rect)
 
-        for text, pos in (
-            (option, option.get_rect(center=(SCREEN_WIDTH // 2, 260))),
-            (prompt, prompt.get_rect(center=(SCREEN_WIDTH // 2, 305))),
-        ):
-            shadow = text.copy()
-            shadow.fill((0, 0, 0, 120), special_flags=pygame.BLEND_RGBA_MULT)
-            surface.blit(shadow, (pos.x + 3, pos.y + 3))
-            surface.blit(text, pos)
+        heading_text = "Settings" if self.settings_open else "Main Menu"
+        heading = self.option_font.render(heading_text, True, TEXT_COLOR)
+        surface.blit(heading, heading.get_rect(center=(SCREEN_WIDTH // 2, 260)))
+        for index, (label, rect) in enumerate(zip(self._menu_options(), self._option_rects())):
+            color = (80, 110, 165) if index == self.selected_index else (35, 38, 48)
+            pygame.draw.rect(surface, color, rect, border_radius=8)
+            pygame.draw.rect(surface, (210, 210, 220), rect, 2, border_radius=8)
+            if self.settings_open and index == 1:
+                label_text = self.option_font.render(label, True, TEXT_COLOR)
+                surface.blit(label_text, label_text.get_rect(midleft=(rect.x + 14, rect.centery)))
+                bar_rect = pygame.Rect(rect.x + 100, rect.y + 17, 130, 20)
+                pygame.draw.rect(surface, (20, 22, 28), bar_rect, border_radius=6)
+                fill_rect = bar_rect.copy()
+                fill_rect.width = round(bar_rect.width * AudioBank.master_volume)
+                if fill_rect.width:
+                    pygame.draw.rect(surface, (100, 190, 120), fill_rect, border_radius=6)
+                volume_text = self.credit_font.render(f"{round(AudioBank.master_volume * 100)}%", True, TEXT_COLOR)
+                surface.blit(volume_text, volume_text.get_rect(midright=(rect.right - 12, rect.centery)))
+                continue
+            text = self.option_font.render(label, True, TEXT_COLOR)
+            surface.blit(text, text.get_rect(center=rect.center))
 
         credit_rect = credit.get_rect(bottomright=(SCREEN_WIDTH - 20, SCREEN_HEIGHT - 16))
         surface.blit(credit, credit_rect)

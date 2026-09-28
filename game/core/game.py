@@ -32,12 +32,15 @@ class Game:
         while True:
             dt = self.clock.tick(FPS) / 1000.0
             pressed_actions = set()
+            mouse_click = None
             left_pressed = False
             right_pressed = False
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     pygame.quit()
                     sys.exit()
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    mouse_click = event.pos
                 if event.type == pygame.KEYDOWN:
                     pressed_actions.add(event.key)
                     if event.key == pygame.K_F9:
@@ -104,8 +107,15 @@ class Game:
 
             if isinstance(self.scene, BattleScene):
                 self.scene.update(dt, self.input_state)
+            elif isinstance(self.scene, MainMenuScene):
+                self.scene.update(dt, pygame.mouse.get_pos(), mouse_click)
+            elif isinstance(self.scene, CharacterSelectScene):
+                self.scene.update(dt, pygame.mouse.get_pos(), mouse_click)
             else:
                 self.scene.update(dt)
+            if isinstance(self.scene, MainMenuScene) and self.scene.quit_requested:
+                pygame.quit()
+                sys.exit()
             if isinstance(self.scene, MainMenuScene) and self.scene.start_requested:
                 self.scene = CharacterSelectScene(
                     self.sprites_root,

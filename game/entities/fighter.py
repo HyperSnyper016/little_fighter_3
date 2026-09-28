@@ -134,6 +134,18 @@ class Fighter:
         self.knight_sword_swing_sfx_pending = False
         self.knight_armor_hit_sfx_pending: str | None = None
         self.knight_next_armor_hit_sfx = "armor_hit_1"
+        self.rudolf_sounds_pending: list[str] = []
+        self.rudolf_next_blade_sound = "rudolf_blade_1"
+        self.rudolf_shuriken_lanes_pending: list[float] = []
+        self.luis_sounds_pending: list[str] = []
+        self.luis_wind_pending = False
+        self.luis_transform_pending = False
+        self.luis_vert_attack_1_phase: str | None = None
+        self.luis_vert_attack_1_loop_cycles = 0
+        self.luis_liberated_wind_pending = False
+        self.luis_liberated_swing_hits_pending: list[int] = []
+        self.mark_sp_move_attack_1_targets_hit: set[int] = set()
+        self.monk_wind_pending = False
         self.jack_blast_pending = False
         self.jack_yell_sfx_pending = False
         self.jan_healing_birds_pending = False
@@ -242,10 +254,59 @@ class Fighter:
     def _has_animation(self, name: str) -> bool:
         return name in self.animations
 
+    def transform_to(self, config: FighterConfig) -> None:
+        health = self.health
+        mana = self.mana
+        self.name = config.name
+        self.definition = config.definition
+        self.movement = self.definition["movement"]
+        self.combat = self.definition["combat"]
+        self.stats = self.definition.get("stats", {})
+        self.shadow_size = self.definition["shadow_size"]
+        self.max_health = int(self.stats.get("max_health", 20))
+        self.health = health
+        self.max_mana = int(self.stats.get("max_mana", 100))
+        self.mana = mana
+        self.touch_damage = int(self.stats.get("touch_damage", 1))
+        hitbox_width, hitbox_height = self.stats.get("hitbox", (92, 160))
+        self.hitbox_size = (int(hitbox_width), int(hitbox_height))
+        self.animations = load_character_sheet(self.definition)
+        self.animation_player = AnimationPlayer(self.animations, "idle")
+        self.block_dodge_cycle = [
+            name for name in ("block_dodge", "block_dodge_alt", "block_dodge_alt_2") if name in self.animations
+        ] or ["block_dodge"]
+        self.basic_attack_cycle = [
+            name for name in self.definition.get("basic_attack_cycle", ["attack_punch", "attack_kick"])
+            if name in self.animations
+        ] or ["attack_punch"]
+        self.basic_attack_index = 0
+        self.attack_animation = self.basic_attack_cycle[0]
+        self.attack_timer = 0.0
+        self.state_timer = 0.0
+        self.state = "idle"
+        self.has_applied_attack_damage = False
+        self.attack_started = False
+        self.attack_projectile_fired = False
+        self.jump_attack_active = False
+        self.is_defending = False
+        self.special_attack_lock = None
+        self.special_move_followup_state = None
+        self.pending_projectile = None
+        self.luis_wind_pending = False
+        self.luis_transform_pending = False
+        self.luis_vert_attack_1_phase = None
+        self.luis_vert_attack_1_loop_cycles = 0
+
     def _next_basic_attack_animation(self) -> str:
         animation = self.basic_attack_cycle[self.basic_attack_index]
         self.basic_attack_index = (self.basic_attack_index + 1) % len(self.basic_attack_cycle)
         return animation
+
+    def _queue_rudolf_blade_sound(self) -> None:
+        self.rudolf_sounds_pending.append(self.rudolf_next_blade_sound)
+        self.rudolf_next_blade_sound = (
+            "rudolf_blade_2" if self.rudolf_next_blade_sound == "rudolf_blade_1" else "rudolf_blade_1"
+        )
 
     def next_special_move_projectile_index(self) -> int:
         index = self.special_move_projectile_index
@@ -261,6 +322,35 @@ class Fighter:
         self.pending_projectile = None
         self.hunter_projectile_style = "basic"
         self.push_velocity_x = push_velocity_x
+        if self.name == "rudolf" and state == "sp_move_attack_2":
+            self.rudolf_next_blade_sound = "rudolf_blade_1"
+        if self.name == "rudolf" and state == "sp_move_attack_1":
+            self.rudolf_shuriken_lanes_pending = [float(LANE_MIN_Y)]
+        if self.name == "rudolf" and state == "sp_vert_attack_1":
+            self.rudolf_next_blade_sound = "rudolf_blade_1"
+            self.z = 1.0
+            self.velocity_z = self.movement["jump_velocity"] * 0.9
+            self._queue_rudolf_blade_sound()
+        if self.name == "mark" and state == "sp_move_attack_1":
+            self.mark_sp_move_attack_1_targets_hit.clear()
+        if self.name == "monk" and state == "sp_move_attack_1":
+            self.monk_wind_pending = False
+        if self.name in {"luis", "luis_liberated"}:
+            self.luis_sounds_pending.clear()
+            if self.name == "luis":
+                self.luis_wind_pending = False
+                if state == "sp_move_attack_1":
+                    self.luis_sounds_pending.append("luis_shear")
+                if state == "sp_vert_attack_1":
+                    self.luis_vert_attack_1_phase = "opening"
+                    self.luis_vert_attack_1_loop_cycles = 0
+            else:
+                self.luis_liberated_wind_pending = False
+                self.luis_liberated_swing_hits_pending.clear()
+                if state == "sprint_punch":
+                    self.luis_sounds_pending.append("luis_shear")
+                if state == "basic_attack" and self.attack_animation == "attack_3":
+                    self.luis_sounds_pending.append("sword_swing")
         if self.name == "knight" and state == "basic_attack":
             self.knight_sword_swing_sfx_pending = True
         if self.name == "jack" and state == "sp_move_attack_1":
@@ -375,12 +465,19 @@ class Fighter:
         self.has_applied_attack_damage = False
         self.jump_attack_active = False
         self.is_defending = False
-        if airborne and self.current_jump_animation == "jump_attack":
+        if airborne and self.current_jump_animation in {"jump_attack", "second_jump_basic_attack"}:
             self.current_jump_animation = "jump_second" if self.jump_stage == 2 else "jump_normal"
         self.animation_player.play(animation_name)
         return True
 
     def _can_continue_special(self, state: str, hold_active: bool) -> bool:
+        if self.name == "mark":
+            return (
+                state == "sp_move_attack_1"
+                and len(self.mark_sp_move_attack_1_targets_hit) < 2
+                and self.special_move_followup_state == state
+                and hold_active
+            )
         return self.name in {"deep", "template", "davis", "firen", "henry", "axle", "julian"} and self.special_move_followup_state == state and hold_active
 
     def _restart_firen_move_attack_1(self, stage: int, hold_active: bool) -> bool:
@@ -459,7 +556,7 @@ class Fighter:
         return True
 
     def _restart_move_followup(self, state: str, hold_active: bool, start_frame_index: int = 0) -> bool:
-        if self.name not in {"deep", "template", "davis", "firen", "henry", "axle", "julian"} or not hold_active:
+        if self.name not in {"deep", "template", "davis", "firen", "henry", "axle", "julian", "mark"} or not hold_active:
             return False
         if not self._consume_mana_for_state(state):
             self.state = "idle"
@@ -764,7 +861,10 @@ class Fighter:
 
     def _start_jump_attack(self) -> None:
         self.state = "jump_throw"
-        self.current_jump_animation = "jump_attack" if "jump_attack" in self.animations else ("jump_second" if self.jump_stage == 2 else "jump_normal")
+        if self.jump_stage == 2 and "second_jump_basic_attack" in self.animations:
+            self.current_jump_animation = "second_jump_basic_attack"
+        else:
+            self.current_jump_animation = "jump_attack" if "jump_attack" in self.animations else ("jump_second" if self.jump_stage == 2 else "jump_normal")
         self.jump_attack_active = True
         self.attack_timer = self.combat["attack_duration"]
         self.has_applied_attack_damage = False
@@ -772,6 +872,9 @@ class Fighter:
         self.attack_projectile_fired = False
         if self.name == "knight":
             self.knight_sword_swing_sfx_pending = True
+        if self.name == "luis_liberated":
+            sound = "luis_shear" if self.current_jump_animation == "second_jump_basic_attack" else "sword_swing"
+            self.luis_sounds_pending.append(sound)
         if self.name == "henry":
             self.hunter_projectile_style = "henry_jump"
         if self.name == "dark_bat":
@@ -967,7 +1070,7 @@ class Fighter:
                 self.attack_started = False
                 self.attack_projectile_fired = False
                 self.hunter_projectile_style = "basic"
-        if self.attack_timer == 0 and self.current_jump_animation == "jump_attack":
+        if self.attack_timer == 0 and self.current_jump_animation in {"jump_attack", "second_jump_basic_attack"}:
             if self.name == "hunter":
                 self.hunter_shoot_arrow_sfx_pending = True
             self.current_jump_animation = "jump_second" if self.jump_stage == 2 else "jump_normal"
@@ -982,7 +1085,10 @@ class Fighter:
         if self.state == "knocked_fire" and self.state_timer == 0 and self.knock_hold_timer == 0:
             self.state = "get_up"
             self.state_timer = 0.36
-        if self.state_timer == 0 and self.state in {"get_up", "lift_heavy", "block_break", "block_dodge", "grapple_hit"}:
+        if (
+            self.state_timer == 0
+            and self.state in {"get_up", "lift_heavy", "block_break", "block_dodge", "grapple_hit"}
+        ):
             self.state = "idle"
             self.block_strength = 1
             self.dodge_invulnerable = False
@@ -1102,7 +1208,7 @@ class Fighter:
                 else:
                     special_attack_started = True
             if special_attack_started and self.state == "sp_move_attack_1":
-                if self.name in {"deep", "template", "davis", "firen", "axle", "julian"}:
+                if self.name in {"deep", "template", "davis", "firen", "axle", "julian", "mark"}:
                     self.special_move_followup_state = "sp_move_attack_1"
                     self.special_attack_lock = "sp_move_attack_1"
                 else:
@@ -1199,6 +1305,14 @@ class Fighter:
         elif self.name == "firen" and self.state == "sp_vert_attack_1":
             speed = self.movement["run_speed"]
             self.x += self.facing * speed * dt
+        elif self.name in {"luis", "luis_liberated"} and self.state == "sp_vert_attack_1":
+            self.x += self.facing * self.movement["run_speed"] * dt
+        elif (
+            self.name == "mark"
+            and self.state == "sp_move_attack_1"
+            and len(self.mark_sp_move_attack_1_targets_hit) < 2
+        ):
+            self.x += self.facing * self.movement["run_speed"] * 1.5 * dt
         elif self.name == "denis" and self.state == "sp_move_attack_2":
             self.x += self.facing * self.movement["run_speed"] * 1.25 * dt
         elif self.state == "jump_throw":
@@ -1304,7 +1418,11 @@ class Fighter:
         elif self.state == "walk":
             animation_name = "walk"
         elif self.state == "sprint_punch":
-            animation_name = "sprint_punch"
+            animation_name = (
+                "sprint_basic_attack"
+                if self.name == "luis_liberated" and "sprint_basic_attack" in self.animations
+                else "sprint_punch"
+            )
         elif self.state == "hurt":
             animation_name = "hurt"
         elif self.state == "jump_throw":
@@ -1400,6 +1518,107 @@ class Fighter:
                 self.julian_sp_vert_attack_1_pending = True
             if self.state == "sp_vert_attack_2" and current_animation_name == "sp_vert_attack_2" and 4 in crossed_frames:
                 self.julian_sp_vert_attack_2_pending = True
+        if self.name == "monk" and self.state == "sp_move_attack_1" and self.animation_player.current_name == "sp_move_attack_1":
+            current_animation_name = self.animation_player.current_name
+            frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
+            crossed_frames = self._crossed_frame_indices(previous_frame_index, self.animation_player.frame_index, frame_count)
+            if 3 in crossed_frames:
+                self.monk_wind_pending = True
+        if self.name == "rudolf":
+            current_animation_name = self.animation_player.current_name
+            frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
+            crossed_frames = self._crossed_frame_indices(previous_frame_index, self.animation_player.frame_index, frame_count)
+            if self.state == "sp_move_attack_1" and current_animation_name == "sp_move_attack_1":
+                for frame_index, lane_index in zip((1, 2, 3), (1, 2, 3)):
+                    if frame_index in crossed_frames:
+                        self.rudolf_shuriken_lanes_pending.append(
+                            LANE_MIN_Y + lane_index * (LANE_MAX_Y - LANE_MIN_Y) / 3
+                        )
+            if (
+                self.state == "jump_throw"
+                and current_animation_name in {"jump_attack", "second_jump_basic_attack"}
+                and 1 in crossed_frames
+            ):
+                self.rudolf_sounds_pending.append("rudolf_blade_1")
+            if self.state == "sp_move_attack_2" and current_animation_name == "sp_move_attack_2":
+                for frame_index in (2, 5):
+                    if frame_index in crossed_frames:
+                        self._queue_rudolf_blade_sound()
+            if self.state == "sp_vert_attack_1" and current_animation_name == "sp_vert_attack_1" and 2 in crossed_frames:
+                self._queue_rudolf_blade_sound()
+        if self.name == "luis":
+            current_animation_name = self.animation_player.current_name
+            frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
+            crossed_frames = self._crossed_frame_indices(previous_frame_index, self.animation_player.frame_index, frame_count)
+            if self.state == "sp_move_attack_1" and current_animation_name == "sp_move_attack_1":
+                step_distance = self.movement["run_speed"] * 0.08
+                for frame_index in crossed_frames:
+                    if frame_index in {1, 3, 5}:
+                        self.x = max(self.min_x, min(self.max_x, self.x + self.facing * step_distance))
+            if self.state == "sp_move_attack_2" and current_animation_name == "sp_move_attack_2" and 3 in crossed_frames:
+                self.luis_wind_pending = True
+            if self.state == "jump_throw" and current_animation_name == "jump_attack" and 1 in crossed_frames:
+                self.luis_sounds_pending.append("luis_shear")
+            if self.state == "sp_vert_attack_1" and current_animation_name == "sp_vert_attack_1":
+                if 3 in crossed_frames:
+                    self.luis_sounds_pending.append("jump_throw")
+                for frame_index, sound in zip((5, 6, 7, 8), ("hit_miss1", "hit_miss2", "hit_miss1", "hit_miss2")):
+                    if frame_index in crossed_frames and (
+                        self.luis_vert_attack_1_phase == "loop"
+                        or (self.luis_vert_attack_1_phase == "opening" and vert_special_1_chord)
+                    ):
+                        self.luis_sounds_pending.append(sound)
+                if self.luis_vert_attack_1_phase == "opening" and self.animation_player.frame_index >= 5:
+                    if vert_special_1_chord:
+                        self.luis_vert_attack_1_phase = "loop"
+                    else:
+                        self.luis_vert_attack_1_phase = "ending"
+                        self.animation_player.frame_index = 9
+                        self.animation_player.timer = 0.0
+                        self.animation_player.finished = False
+                elif self.luis_vert_attack_1_phase == "loop":
+                    if not vert_special_1_chord:
+                        self.luis_vert_attack_1_phase = "ending"
+                        self.animation_player.frame_index = 9
+                        self.animation_player.timer = 0.0
+                        self.animation_player.finished = False
+                    elif self.animation_player.frame_index >= 9:
+                        can_loop = self.luis_vert_attack_1_loop_cycles == 0
+                        if not can_loop:
+                            can_loop = self._consume_mana_for_state("sp_vert_attack_1")
+                        if can_loop:
+                            self.luis_vert_attack_1_loop_cycles += 1
+                            self.animation_player.frame_index = 5
+                            self.animation_player.timer = 0.0
+                            self.animation_player.finished = False
+                            self.luis_sounds_pending.append("hit_miss1")
+                        else:
+                            self.luis_vert_attack_1_phase = "ending"
+            if self.state == "sp_vert_attack_2" and current_animation_name == "sp_vert_attack_2":
+                for frame_index, sound in ((1, "jump_throw"), (2, "luis_shear"), (3, "julian_ball_explode"), (7, "jump_land")):
+                    if frame_index in crossed_frames:
+                        self.luis_sounds_pending.append(sound)
+                if self.animation_player.finished:
+                    self.luis_transform_pending = True
+        if self.name == "luis_liberated":
+            current_animation_name = self.animation_player.current_name
+            frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
+            crossed_frames = self._crossed_frame_indices(previous_frame_index, self.animation_player.frame_index, frame_count)
+            if self.state == "basic_attack":
+                if current_animation_name in {"attack_1", "attack_2"} and 1 in crossed_frames:
+                    self.luis_sounds_pending.append("sword_swing")
+            if self.state == "sp_move_attack_1" and current_animation_name == "sp_move_attack_1" and 1 in crossed_frames:
+                self.luis_sounds_pending.append("luis_shear")
+            if self.state == "sp_move_attack_2" and current_animation_name == "sp_move_attack_2":
+                if 1 in crossed_frames:
+                    self.luis_sounds_pending.append("luis_wind")
+                if 2 in crossed_frames:
+                    self.luis_liberated_wind_pending = True
+            if self.state == "sp_vert_attack_1" and current_animation_name == "sp_vert_attack_1":
+                for frame_index in (2, 8, 9, 10):
+                    if frame_index in crossed_frames:
+                        self.luis_sounds_pending.append("sword_swing")
+                        self.luis_liberated_swing_hits_pending.append(frame_index)
         if self.name == "axle" and self.state in {"sp_move_attack_2", "sp_vert_attack_1"}:
             current_animation_name = self.animation_player.current_name
             if current_animation_name == self.state:
@@ -1524,6 +1743,8 @@ class Fighter:
             if self._can_continue_special("sp_vert_attack_1", vert_special_1_chord):
                 self._restart_move_followup("sp_vert_attack_1", vert_special_1_chord, start_frame_index=3 if self.name == "firen" else 0)
             else:
+                if self.name == "luis":
+                    self.luis_sounds_pending.append("jump_land")
                 self.special_move_followup_state = None
                 self.state = "idle"
                 self.attack_started = False

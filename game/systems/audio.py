@@ -1,26 +1,86 @@
 from __future__ import annotations
 
+import json
+import math
+import os
 from collections import deque
 from pathlib import Path
+from weakref import WeakSet
 
 import pygame
 
 
 class AudioBank:
     muted = False
+    master_volume = 1.0
+    _instances: WeakSet[AudioBank] = WeakSet()
+
+    @staticmethod
+    def settings_file_path() -> Path:
+        if os.environ.get("APPDATA"):
+            config_root = Path(os.environ["APPDATA"])
+        elif os.environ.get("XDG_CONFIG_HOME"):
+            config_root = Path(os.environ["XDG_CONFIG_HOME"])
+        else:
+            config_root = Path.home() / ".config"
+        return config_root / "little_fighter_3" / "settings.json"
+
+    @classmethod
+    def load_settings(cls) -> None:
+        path = cls.settings_file_path()
+        if not path.exists():
+            return
+
+        settings = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(settings, dict):
+            raise ValueError(f"Game settings must be a JSON object: {path}")
+        volume = settings.get("master_volume", cls.master_volume)
+        muted = settings.get("muted", cls.muted)
+        if isinstance(volume, bool) or not isinstance(volume, (int, float)) or not math.isfinite(volume):
+            raise ValueError(f"Invalid master volume in game settings: {path}")
+        if not isinstance(muted, bool):
+            raise ValueError(f"Invalid mute setting in game settings: {path}")
+        cls.master_volume = max(0.0, min(1.0, float(volume)))
+        cls.muted = muted
+
+    @classmethod
+    def save_settings(cls) -> None:
+        path = cls.settings_file_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = path.with_suffix(".json.tmp")
+        temporary_path.write_text(
+            json.dumps({"master_volume": cls.master_volume, "muted": cls.muted}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        temporary_path.replace(path)
 
     @classmethod
     def toggle_mute(cls) -> bool:
-        cls.muted = not cls.muted
+        cls.set_muted(not cls.muted)
         return cls.muted
 
     @classmethod
     def set_muted(cls, muted: bool) -> None:
         cls.muted = bool(muted)
+        cls.save_settings()
+
+    @classmethod
+    def set_master_volume(cls, volume: float) -> None:
+        cls.master_volume = max(0.0, min(1.0, float(volume)))
+        for bank in cls._instances:
+            for sound in bank.sounds.values():
+                if sound is not None:
+                    sound.set_volume(cls.master_volume)
+        cls.save_settings()
 
     def __init__(self, root: Path) -> None:
         self.root = root
+        self.load_settings()
         self.sounds = self._load_sounds()
+        self._instances.add(self)
+        for sound in self.sounds.values():
+            if sound is not None:
+                sound.set_volume(self.master_volume)
         self.step_toggle = 0
         self.miss_toggle = 0
         self.freeze_basic_miss_toggle = 0
@@ -33,7 +93,9 @@ class AudioBank:
         path = self.root / file_name
         if not path.exists():
             return None
-        return pygame.mixer.Sound(str(path))
+        sound = pygame.mixer.Sound(str(path))
+        sound.set_volume(self.master_volume)
+        return sound
 
     def _load_sounds(self) -> dict[str, pygame.mixer.Sound | None]:
         return {
@@ -43,11 +105,19 @@ class AudioBank:
             "shoot_arrow": self._load_sound("arrow_shot.wav"),
             "arrow_hit": self._load_sound("arrow_hit.wav"),
             "broken_arrow": self._load_sound("arrow_broken.wav"),
+            "rudolf_shuriken": self._load_sound("rudolf_shuriken.wav"),
+            "rudolf_blade_1": self._load_sound("rudolf_blade_1.wav"),
+            "rudolf_blade_2": self._load_sound("rudolf_blade_2.wav"),
             "blade_swipe_sound": self._load_sound("blade_swipe_sound.wav"),
             "sword_swing": self._load_sound("sword_swing.wav"),
             "armor_hit_1": self._load_sound("armor_hit_1.wav"),
             "armor_hit_2": self._load_sound("armor_hit_2.wav"),
             "uppercut_shear": self._load_sound("uppercut_shear.wav"),
+            "luis_wind": self._load_sound("luis_wind.wav"),
+            "luis_shear": self._load_sound("luis_shear.wav"),
+            "armor_piece_land": self._load_sound("armor_piece_land.wav"),
+            "wind_hit": self._load_sound("wind_hit.wav"),
+            "monk_wind": self._load_sound("monk_wind.wav"),
             "davis_uppercut": self._load_sound("davis_uppercut.wav"),
             "jack_blast": self._load_sound("jack_blast.wav"),
             "jack_yell": self._load_sound("jack_yell.wav"),
