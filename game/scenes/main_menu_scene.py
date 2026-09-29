@@ -20,7 +20,7 @@ class UpdateHistoryRelease:
 
 
 class MainMenuScene:
-    MAIN_OPTIONS = ("Play", "Stage Mode", "Settings", "Quit")
+    MAIN_OPTIONS = ("Play", "Test Mode", "Stage Mode", "Settings", "Quit")
     HISTORY_BUTTON = pygame.Rect(24, SCREEN_HEIGHT - 64, 220, 42)
     HISTORY_PANEL = pygame.Rect(SCREEN_WIDTH - 650, 64, 626, SCREEN_HEIGHT - 88)
 
@@ -34,6 +34,7 @@ class MainMenuScene:
         self.history_entry_font = pygame.font.Font(None, 21)
         self.history_hint_font = pygame.font.Font(None, 20)
         self.start_requested = False
+        self.test_mode_requested = False
         self.stage_mode_requested = False
         self.quit_requested = False
         self.settings_open = False
@@ -262,13 +263,17 @@ class MainMenuScene:
                 self.selected_index = 0
             return
 
+        self.test_mode_requested = False
+        self.stage_mode_requested = False
         if self.selected_index == 0:
             self.start_requested = True
-            self.stage_mode_requested = False
         elif self.selected_index == 1:
             self.start_requested = True
-            self.stage_mode_requested = True
+            self.test_mode_requested = True
         elif self.selected_index == 2:
+            self.start_requested = True
+            self.stage_mode_requested = True
+        elif self.selected_index == 3:
             self.settings_open = True
             self.selected_index = 0
         else:

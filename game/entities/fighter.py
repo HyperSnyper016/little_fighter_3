@@ -28,6 +28,8 @@ HENRY_FLOAT_DURATION = HENRY_FLUTE_SEQUENCE_DURATION
 HENRY_FLOAT_HEIGHT = 72.0
 HENRY_FLOAT_BOB_AMPLITUDE = 12.0
 HENRY_FLOAT_BOB_PERIOD = 0.4
+SPECIAL_INPUT_BUFFER_DURATION = 0.18
+BAT_SP_VERT_ATTACK_1_SHADOW_STEP_FRAME = 2
 
 
 def _natural_sort_key(path: Path) -> list[str | int]:
@@ -59,6 +61,7 @@ class FighterInput:
     left: bool = False
     right: bool = False
     up: bool = False
+    up_just_pressed: bool = False
     down: bool = False
     run: bool = False
     horizontal_move_active: bool = False
@@ -79,7 +82,7 @@ class FighterInput:
     fire_knock_just_pressed: bool = False
     ice_knock_just_pressed: bool = False
     hurt_just_pressed: bool = False
-    spawn_milk_just_pressed: bool = False
+    spawn_random_item_just_pressed: bool = False
     spawn_heavy_item_just_pressed: bool = False
 
 
@@ -207,6 +210,13 @@ class Fighter:
         self.speech_text: str | None = None
         self.speech_timer = 0.0
         self.special_attack_lock: str | None = None
+        self.special_input_buffer = {
+            "attack": 0.0,
+            "block": 0.0,
+            "jump": 0.0,
+            "horizontal": 0.0,
+            "up": 0.0,
+        }
         self.special_move_buffer = 0.0
         self.special_vert_buffer = 0.0
         self.special_move_projectile_timer = 0.0
@@ -507,8 +517,6 @@ class Fighter:
             self.dark_bat_sword_swing_sfx_pending = True
         if self.name == "template" and state == "sp_vert_attack_1":
             self.template_uppercut_shear_sfx_pending = True
-        if self.name == "bat" and state == "sp_vert_attack_1":
-            self.bat_shadow_step_sfx_pending = True
         if self.name == "dark_bat" and state == "sp_vert_attack_2":
             self.dark_bat_shadow_step_sfx_pending = True
         if self.name in {"bat", "dark_bat"} and state == "sp_move_attack_2":
@@ -753,6 +761,33 @@ class Fighter:
     def draw_pos(self, camera_x: float = 0.0) -> tuple[int, int]:
         frame = self.animation_player.current_frame
         frame_rect = frame.get_rect()
+        if (
+            self.name == "dark_bat"
+            and self.state == "jump_throw"
+            and self.current_jump_animation == "jump_attack"
+            and self.animation_player.frame_index == 1
+        ):
+            # Keep the torso anchored while the oversized middle frame extends the weapon downward.
+            anchor_frame = self.animations["jump_attack"]["surfaces"][0].get_rect()
+            x_offset = (frame_rect.width - anchor_frame.width) / 2
+            y_offset = frame_rect.height - anchor_frame.height
+            return (
+                int(self.x - camera_x - frame_rect.width / 2 + x_offset),
+                int(GROUND_Y + self.lane_y - self.z - frame_rect.height + y_offset),
+            )
+        if (
+            self.name == "dark_bat"
+            and self.state == "sp_move_attack_1"
+            and self.animation_player.current_name == "sp_move_attack_1"
+            and self.animation_player.frame_index == 2
+        ):
+            anchor_frame = self.animations["sp_move_attack_1"]["surfaces"][0].get_rect()
+            x_offset = (frame_rect.width - anchor_frame.width) / 2
+            y_offset = frame_rect.height - anchor_frame.height
+            return (
+                int(self.x - camera_x - frame_rect.width / 2 + x_offset),
+                int(GROUND_Y + self.lane_y - self.z - frame_rect.height + y_offset),
+            )
         return int(self.x - camera_x - (frame_rect.width / 2)), int(GROUND_Y + self.lane_y - self.z - frame_rect.height)
 
     @property
@@ -1055,10 +1090,32 @@ class Fighter:
             move_y += 1
 
         running = controlled and self.controls_enabled and inputs.run
-        move_special_1_chord = attack_pressed and block_pressed and move_x != 0
-        move_special_2_chord = attack_pressed and jump_pressed and move_x != 0
-        vert_special_1_chord = attack_pressed and block_pressed and inputs.up
-        vert_special_2_chord = attack_pressed and jump_pressed and inputs.up
+        special_inputs = {
+            "attack": attack_pressed or attack_just_pressed,
+            "block": block_pressed or block_just_pressed,
+            "jump": jump_pressed or jump_just_pressed,
+            "horizontal": move_x != 0 or inputs.left_just_pressed or inputs.right_just_pressed,
+            "up": controlled and self.controls_enabled and (inputs.up or inputs.up_just_pressed),
+        }
+        if not self.controls_enabled or not controlled:
+            special_inputs = {key: False for key in self.special_input_buffer}
+        for key, active in special_inputs.items():
+            self.special_input_buffer[key] = max(
+                0.0,
+                self.special_input_buffer[key] - dt,
+            )
+            if active:
+                self.special_input_buffer[key] = SPECIAL_INPUT_BUFFER_DURATION
+
+        attack_chord = self.special_input_buffer["attack"] > 0.0
+        block_chord = self.special_input_buffer["block"] > 0.0
+        jump_chord = self.special_input_buffer["jump"] > 0.0
+        horizontal_chord = self.special_input_buffer["horizontal"] > 0.0
+        up_chord = self.special_input_buffer["up"] > 0.0
+        move_special_1_chord = attack_chord and block_chord and horizontal_chord
+        move_special_2_chord = attack_chord and jump_chord and horizontal_chord
+        vert_special_1_chord = attack_chord and block_chord and up_chord
+        vert_special_2_chord = attack_chord and jump_chord and up_chord
         if self.special_attack_lock == "sp_move_attack_1" and not move_special_1_chord:
             self.special_attack_lock = None
         if self.special_attack_lock == "sp_move_attack_2" and not move_special_2_chord:
@@ -1249,6 +1306,17 @@ class Fighter:
                     self.freeze_timer = 1.0
                     self.ice_launch_freeze_break_pending = True
 
+        special_from_basic_attack = (
+            self.state == "basic_attack"
+            and self.attack_timer > 0.0
+            and self.special_attack_lock is None
+            and (
+                (move_special_1_chord and "sp_move_attack_1" in self.animations)
+                or (move_special_2_chord and "sp_move_attack_2" in self.animations)
+                or (vert_special_1_chord and "sp_vert_attack_1" in self.animations)
+                or (vert_special_2_chord and "sp_vert_attack_2" in self.animations)
+            )
+        )
         if revive_just_pressed and self.state in {"die", "dead"}:
             self._start_revive()
         elif die_just_pressed and self.state not in {"die", "dead"}:
@@ -1268,13 +1336,16 @@ class Fighter:
             self.held_item_landings = 0
         elif break_block_just_pressed and self.state == "block":
             self._start_block_break()
-        elif self.state not in (COMBAT_ATTACK_STATES | {"fall", "henry_float", "knocked_fire", "knocked_freeze", "lift_heavy", "get_up", "die", "dead", "block_break", "block_dodge", "grapple", "grappled", "grapple_hit", "jump_throw", "item_throw", "drink", "hurt"}) and self.z == 0 and self.velocity_z == 0:
+        elif (
+            self.state not in (COMBAT_ATTACK_STATES | {"fall", "henry_float", "knocked_fire", "knocked_freeze", "lift_heavy", "get_up", "die", "dead", "block_break", "block_dodge", "grapple", "grappled", "grapple_hit", "jump_throw", "item_throw", "drink", "hurt"})
+            or special_from_basic_attack
+        ) and self.z == 0 and self.velocity_z == 0:
             special_attack_started = False
             can_move_special_1 = "sp_move_attack_1" in self.animations
             can_move_special_2 = "sp_move_attack_2" in self.animations
             can_vert_special_1 = "sp_vert_attack_1" in self.animations
             can_vert_special_2 = "sp_vert_attack_2" in self.animations
-            if attack_just_pressed and self.z == 0 and move_x != 0 and block_pressed and move_special_1_chord and self.special_attack_lock is None and can_move_special_1:
+            if attack_chord and self.z == 0 and move_special_1_chord and self.special_attack_lock is None and can_move_special_1:
                 if self._consume_mana_for_state("sp_move_attack_1"):
                     self.state = "sp_move_attack_1"
                     self._start_attack_state("sp_move_attack_1")
@@ -1288,7 +1359,7 @@ class Fighter:
                     self.special_move_projectile_timer = 0.0
                 else:
                     special_attack_started = True
-            elif attack_just_pressed and self.z == 0 and vert_special_2_chord and self.special_attack_lock is None and can_vert_special_2:
+            elif attack_chord and self.z == 0 and vert_special_2_chord and self.special_attack_lock is None and can_vert_special_2:
                 if self._consume_mana_for_state("sp_vert_attack_2"):
                     self.state = "sp_vert_attack_2"
                     self._start_attack_state("sp_vert_attack_2")
@@ -1300,7 +1371,7 @@ class Fighter:
                     self.special_attack_lock = "sp_vert_attack_2"
                 else:
                     special_attack_started = True
-            elif attack_just_pressed and self.z == 0 and vert_special_1_chord and self.special_attack_lock is None and can_vert_special_1:
+            elif attack_chord and self.z == 0 and vert_special_1_chord and self.special_attack_lock is None and can_vert_special_1:
                 if self._consume_mana_for_state("sp_vert_attack_1"):
                     self.state = "sp_vert_attack_1"
                     self._start_attack_state("sp_vert_attack_1")
@@ -1310,7 +1381,7 @@ class Fighter:
                     self.special_attack_lock = "sp_vert_attack_1"
                 else:
                     special_attack_started = True
-            elif attack_just_pressed and self.z == 0 and move_special_2_chord and self.special_attack_lock is None and can_move_special_2:
+            elif attack_chord and self.z == 0 and move_special_2_chord and self.special_attack_lock is None and can_move_special_2:
                 if self._consume_mana_for_state("sp_move_attack_2"):
                     self.state = "sp_move_attack_2"
                     self._start_attack_state("sp_move_attack_2")
@@ -1449,6 +1520,13 @@ class Fighter:
         if self.name == "deep" and self.state == "sp_move_attack_2":
             self.x += self.facing * 220.0 * dt
         if (
+            self.name == "davis"
+            and self.state == "sp_move_attack_2"
+            and self.animation_player.current_name == "sp_move_attack_2"
+            and self.animation_player.frame_index in {1, 2}
+        ):
+            self.x += self.facing * self.movement["run_speed"] * dt
+        if (
             self.name == "woody"
             and self.state == "sp_move_attack_2"
             and self.woody_sp_move_attack_2_stage == 2
@@ -1575,6 +1653,15 @@ class Fighter:
         previous_frame_index = self.animation_player.frame_index
         self.animation_previous_frame_index = previous_frame_index
         self.animation_player.update(dt, facing=self.facing)
+        if (
+            self.name == "bat"
+            and self.state == "sp_vert_attack_1"
+            and self.animation_player.current_name == "sp_vert_attack_1"
+        ):
+            frame_count = len(self.animation_player.animations["sp_vert_attack_1"]["surfaces"])
+            crossed_frames = self._crossed_frame_indices(previous_frame_index, self.animation_player.frame_index, frame_count)
+            if BAT_SP_VERT_ATTACK_1_SHADOW_STEP_FRAME in crossed_frames:
+                self.bat_shadow_step_sfx_pending = True
         if self.name == "davis" and self.state == "sp_move_attack_1":
             if self.animation_player.current_name == "sp_move_attack_1" and self.animation_player.frame_index == 3 and not self.davis_ball_spawned_sp_1:
                 self._queue_davis_ball()

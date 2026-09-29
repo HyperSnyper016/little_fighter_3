@@ -124,6 +124,7 @@ class AudioBank:
             "heavy_box_land_1": self._load_sound("heavy_box_land_1.wav"),
             "heavy_box_land_2": self._load_sound("heavy_box_land_2.wav"),
             "heavy_box_break": self._load_sound("heavy_box_break.wav"),
+            "baseball_break": self._load_sound("baseball_break.wav"),
             "wind_hit": self._load_sound("wind_hit.wav"),
             "monk_wind": self._load_sound("monk_wind.wav"),
             "davis_uppercut": self._load_sound("davis_uppercut.wav"),

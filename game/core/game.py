@@ -71,6 +71,7 @@ class Game:
                 left=left_pressed,
                 right=right_pressed,
                 up=keys[pygame.K_UP],
+                up_just_pressed=pygame.K_UP in pressed_actions,
                 down=keys[pygame.K_DOWN],
                 run=keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT] or (self.sprint_direction == -1 and left_pressed) or (self.sprint_direction == 1 and right_pressed),
                 horizontal_move_active=left_pressed or right_pressed,
@@ -91,7 +92,7 @@ class Game:
                 fire_knock_just_pressed=pygame.K_f in pressed_actions,
                 ice_knock_just_pressed=pygame.K_i in pressed_actions,
                 hurt_just_pressed=pygame.K_h in pressed_actions,
-                spawn_milk_just_pressed=pygame.K_p in pressed_actions,
+                spawn_random_item_just_pressed=pygame.K_p in pressed_actions,
                 spawn_heavy_item_just_pressed=pygame.K_o in pressed_actions,
             )
 
@@ -130,9 +131,32 @@ class Game:
                         or keys[pygame.K_SPACE]
                     ),
                     stage_mode=self.scene.stage_mode_requested,
+                    test_mode=self.scene.test_mode_requested,
                 )
             elif isinstance(self.scene, CharacterSelectScene) and self.scene.selection_confirmed and self.scene.selected_character:
-                self.scene = BattleScene(self.scene.selected_character, stage_mode=self.scene.stage_mode)
+                if self.scene.stage_mode:
+                    self.scene = BattleScene(self.scene.selected_character, stage_mode=True)
+                elif self.scene.test_mode:
+                    self.scene = BattleScene(self.scene.selected_character, test_mode=True)
+                elif self.scene.opponent_selection:
+                    if self.scene.player_character is None:
+                        raise RuntimeError("Opponent selection is missing the chosen player character.")
+                    self.scene = BattleScene(
+                        self.scene.player_character,
+                        enemy_names=tuple(sorted(self.scene.selected_opponents)),
+                    )
+                else:
+                    self.scene = CharacterSelectScene(
+                        self.sprites_root,
+                        opponent_selection=True,
+                        player_character=self.scene.selected_character,
+                        confirm_already_pressed=(
+                            keys[pygame.K_j]
+                            or keys[pygame.K_RETURN]
+                            or keys[pygame.K_KP_ENTER]
+                        ),
+                        toggle_already_pressed=keys[pygame.K_SPACE],
+                    )
             elif isinstance(self.scene, BattleScene) and self.scene.return_to_menu_requested:
                 self.scene = MainMenuScene()
             self.screen.fill(BG_COLOR)

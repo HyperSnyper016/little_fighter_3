@@ -31,6 +31,7 @@ THROWN_ITEM_MAX_DISTANCE = 330.0
 THROWABLE_DISTANCE_MULTIPLIER = 2.0
 HEAVY_ITEM_DISTANCE_MULTIPLIER = THROWABLE_DISTANCE_MULTIPLIER / 2
 STAGE_CARD_DURATION = 2.4
+CAMERA_FOLLOW_SPEED = 10.0
 STAGE_ROMAN_NUMERALS = ("I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X")
 STAGE_ENCOUNTERS = (
     (("bandit", 1),),
@@ -146,6 +147,9 @@ def _load_item_sprite_animations(root: Path) -> dict[str, dict[str, list[pygame.
 
 class ConsumableItem:
     BREAK_AFTER_THROW_LANDINGS = 2
+    BASEBALL_ITEM_ID = "throwables/baseball"
+    BASEBALL_BOUNCE_SPEED = -280.0
+    BASEBALL_GRAVITY = 900.0
 
     def _initialize_landings(
         self,
@@ -157,6 +161,7 @@ class ConsumableItem:
         self.landing_elapsed = 0.0
         self.landing_animation_finished = False
         self.break_after_landing = False
+        self.bounce_velocity = 0.0
 
     def _begin_landing(self, counts_toward_breakage: bool) -> str:
         facing = getattr(self, "facing", 0)
@@ -176,7 +181,25 @@ class ConsumableItem:
         self.landing_elapsed = 0.0
         self.landing_animation_finished = False
         self.y = self.floor_y - self.frames[0].get_height() / 2
+        if self.item_id == self.BASEBALL_ITEM_ID:
+            self.phase = "bouncing"
+            self.bounce_velocity = self.BASEBALL_BOUNCE_SPEED
         return "landed"
+
+    def _update_bounce(self, dt: float) -> None:
+        self.frame_timer += dt
+        while self.frame_timer >= 0.08 and self.frame_index < len(self.frames) - 1:
+            self.frame_timer -= 0.08
+            self.frame_index += 1
+        frame = self.frames[self.frame_index]
+        self.bounce_velocity += self.BASEBALL_GRAVITY * dt
+        self.y += self.bounce_velocity * dt
+        if self.y + frame.get_height() / 2 >= self.floor_y:
+            self.y = self.floor_y - frame.get_height() / 2
+            self.phase = "landed"
+            self.frame_index = 0
+            self.frame_timer = 0.0
+            self.bounce_velocity = 0.0
 
     def _update_landing(self, dt: float) -> str | None:
         if self.landing_animation_finished:
@@ -196,7 +219,7 @@ class ConsumableItem:
 
     def world_rect(self) -> pygame.Rect:
         frame = self.frames[self.frame_index]
-        center_y = self.y if self.phase in {"falling", "thrown"} else self.floor_y - frame.get_height() / 2
+        center_y = self.y if self.phase in {"falling", "thrown", "bouncing"} else self.floor_y - frame.get_height() / 2
         return frame.get_rect(center=(round(self.x), round(center_y)))
 
 
@@ -231,6 +254,9 @@ class SpawnedConsumable(ConsumableItem):
     def update(self, dt: float) -> str | None:
         if self.phase == "landed":
             return self._update_landing(dt)
+        if self.phase == "bouncing":
+            self._update_bounce(dt)
+            return None
 
         self.frame_timer += dt
         if self.phase == "falling":
@@ -245,7 +271,7 @@ class SpawnedConsumable(ConsumableItem):
 
     def draw(self, surface: pygame.Surface, camera_x: float) -> None:
         frame = self.frames[self.frame_index]
-        center_y = self.y if self.phase == "falling" else self.floor_y - frame.get_height() / 2
+        center_y = self.y if self.phase in {"falling", "bouncing"} else self.floor_y - frame.get_height() / 2
         surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(center_y - frame.get_height() / 2)))
 
 
@@ -290,6 +316,9 @@ class ThrownItem(ConsumableItem):
     def update(self, dt: float) -> str | None:
         if self.phase == "landed":
             return self._update_landing(dt)
+        if self.phase == "bouncing":
+            self._update_bounce(dt)
+            return None
         self.frame_timer += dt
         if self.phase == "falling":
             while self.frame_timer >= 0.08:
@@ -325,7 +354,11 @@ class ThrownItem(ConsumableItem):
 
     def draw(self, surface: pygame.Surface, camera_x: float) -> None:
         frame = self.frames[self.frame_index]
-        center_y = self.y if self.phase in {"thrown", "falling"} else self.floor_y - frame.get_height() / 2
+        center_y = (
+            self.y
+            if self.phase in {"thrown", "falling", "bouncing"}
+            else self.floor_y - frame.get_height() / 2
+        )
         surface.blit(
             frame,
             (int(self.x - camera_x - frame.get_width() / 2), int(center_y - frame.get_height() / 2)),
@@ -3356,7 +3389,16 @@ class FireExplosionEffect:
 
 
 class BattleScene:
-    def __init__(self, character_name: str = "bandit", *, stage_mode: bool = False) -> None:
+    def __init__(
+        self,
+        character_name: str = "bandit",
+        *,
+        stage_mode: bool = False,
+        test_mode: bool = False,
+        enemy_names: tuple[str, ...] | None = None,
+    ) -> None:
+        if not stage_mode and not test_mode and enemy_names is not None and not enemy_names:
+            raise ValueError("Play mode requires at least one opponent.")
         self.font = pygame.font.Font(None, 32)
         self.small_font = pygame.font.Font(None, 24)
         self.pause_font = pygame.font.Font(None, 54)
@@ -3366,6 +3408,7 @@ class BattleScene:
         self.consumable_items: list[SpawnedConsumable | ThrownItem] = []
         self.paused = False
         self.stage_mode = stage_mode
+        self.test_mode = test_mode
         self.stage_index = 0
         self.stage_card_timer = STAGE_CARD_DURATION if stage_mode else 0.0
         self.stage_mode_complete = False
@@ -3432,14 +3475,21 @@ class BattleScene:
         x_bounds = (self.stage.play_min_x, self.stage.play_max_x)
         start_x = SCREEN_WIDTH / 2
         self.fighter = Fighter(FighterConfig(character_name, CHARACTERS[character_name]), (start_x, 0), x_bounds=x_bounds)
+        self.enemy_names = enemy_names
         self.enemies: list[Fighter] = []
         self.enemy_brains: dict[Fighter, BanditBrain] = {}
         self._spawn_encounter(x_bounds, start_x)
+        self.camera_focus_x = self._desired_camera_focus_x()
         self.victory_played = False
 
     def _spawn_encounter(self, x_bounds: tuple[float, float], start_x: float) -> None:
-        encounter = STAGE_ENCOUNTERS[self.stage_index] if self.stage_mode else (("bandit", 1),)
-        character_names = [name for name, count in encounter for _ in range(count)]
+        if self.stage_mode:
+            encounter = STAGE_ENCOUNTERS[self.stage_index]
+            character_names = [name for name, count in encounter for _ in range(count)]
+        elif self.test_mode:
+            character_names = []
+        else:
+            character_names = list(self.enemy_names if self.enemy_names is not None else ("bandit",))
         self.enemies = []
         self.enemy_brains = {}
 
@@ -3460,8 +3510,14 @@ class BattleScene:
             self.enemy_brains[enemy] = BanditBrain()
 
     @property
-    def enemy(self) -> Fighter:
-        return next((enemy for enemy in self.enemies if not enemy.is_dead), self.enemies[0])
+    def enemy(self) -> Fighter | None:
+        return next(
+            (enemy for enemy in self.enemies if not enemy.is_dead),
+            self.enemies[0] if self.enemies else None,
+        )
+
+    def _target_for(self, fighter: Fighter) -> Fighter | None:
+        return self.enemy if fighter is self.fighter else self.fighter
 
     def _fighters(self) -> list[Fighter]:
         return [self.fighter, *self.enemies, *(clone.fighter for clone in self.rudolf_clones)]
@@ -3518,11 +3574,22 @@ class BattleScene:
                 self._remove_rudolf_clone(clone)
 
     def _camera_focus_x(self) -> float:
+        return self.camera_focus_x
+
+    def _desired_camera_focus_x(self) -> float:
+        enemy = self.enemy
+        if enemy is None:
+            return self.fighter.x
         player_margin = SCREEN_WIDTH * 0.3
         min_focus = self.fighter.x - player_margin
         max_focus = self.fighter.x + player_margin
-        enemy_focus = (self.fighter.x + self.enemy.x) / 2
+        enemy_focus = (self.fighter.x + enemy.x) / 2
         return max(min_focus, min(max_focus, enemy_focus))
+
+    def _update_camera_focus(self, dt: float) -> None:
+        target_focus_x = self._desired_camera_focus_x()
+        blend = 1.0 - math.exp(-CAMERA_FOLLOW_SPEED * dt)
+        self.camera_focus_x += (target_focus_x - self.camera_focus_x) * blend
 
     def _spawn_consumable(self, item_id: str) -> None:
         camera_x = self.stage.camera_x(self._camera_focus_x())
@@ -4396,7 +4463,7 @@ class BattleScene:
             else:
                 fighter.step_cycle_timer = 0.0
 
-        if all(enemy.is_dead for enemy in self.enemies) and not self.victory_played:
+        if self.enemies and all(enemy.is_dead for enemy in self.enemies) and not self.victory_played:
             self.audio.play("win")
             self.victory_played = True
 
@@ -4464,8 +4531,8 @@ class BattleScene:
         if fighter.name != "julian" or fighter.state != "sp_move_attack_1" or not fighter.julian_skull_pending:
             return
         fighter.julian_skull_pending = False
-        target = self.enemy if fighter is self.fighter else self.fighter
-        if target.is_dead:
+        target = self._target_for(fighter)
+        if target is not None and target.is_dead:
             target = None
         origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.48)
         origin_y = fighter.world_hitbox_rect().centery
@@ -4519,7 +4586,7 @@ class BattleScene:
         if fighter.name != "john" or fighter.state != "sp_vert_attack_1" or not fighter.john_follow_disk_pending:
             return
         fighter.john_follow_disk_pending = False
-        target = self.enemy if fighter is self.fighter else self.fighter
+        target = self._target_for(fighter)
         if target is not None and target.is_dead:
             target = None
         origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.52)
@@ -4671,7 +4738,7 @@ class BattleScene:
 
         fighter.denis_follow_orb_pending = False
         fighter.attack_projectile_fired = True
-        target = self.enemy if fighter is self.fighter else self.fighter
+        target = self._target_for(fighter)
         if target is not None and target.is_dead:
             target = None
         origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.55)
@@ -4739,8 +4806,8 @@ class BattleScene:
             return
         fighter.jan_follow_orb_pending = False
         fighter.attack_projectile_fired = True
-        target = self.enemy if fighter is self.fighter else self.fighter
-        if target.is_dead:
+        target = self._target_for(fighter)
+        if target is not None and target.is_dead:
             target = None
         origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.42)
         origin_y = fighter.world_hitbox_rect().centery - 28.0
@@ -5065,7 +5132,7 @@ class BattleScene:
         if hasattr(projectile, "distance_travelled"):
             projectile.distance_travelled = 0.0
         if hasattr(projectile, "target"):
-            target = self.enemy if barrier.owner is self.fighter else self.fighter
+            target = self._target_for(barrier.owner)
             projectile.target = target if target is not None and not target.is_dead else None
         if hasattr(projectile, "hit_targets"):
             projectile.hit_targets.clear()
@@ -5076,7 +5143,8 @@ class BattleScene:
         player_margin = SCREEN_WIDTH * 0.3
         min_focus = self.fighter.x - player_margin
         max_focus = self.fighter.x + player_margin
-        enemy_focus = (self.fighter.x + self.enemy.x) / 2
+        enemy = self.enemy
+        enemy_focus = (self.fighter.x + enemy.x) / 2 if enemy is not None else self.fighter.x
         focus_x = max(min_focus, min(max_focus, enemy_focus))
         camera_x = self.stage.camera_x(focus_x)
         visible_left = camera_x
@@ -5615,7 +5683,10 @@ class BattleScene:
         self._draw_hud_bar(surface, 20, 18, panel_width, 28, self.fighter.health, self.fighter.max_health, (194, 58, 58), f"{self.fighter.definition['display_name']} HP")
         self._draw_hud_bar(surface, 20, 52, panel_width, 24, self.fighter.mana, self.fighter.max_mana, (72, 122, 235), "MP")
         x = SCREEN_WIDTH - panel_width - 20
-        if self.stage_mode:
+        if self.test_mode:
+            label = self.small_font.render("TEST MODE - NO ENEMIES", True, TEXT_COLOR)
+            surface.blit(label, label.get_rect(topright=(SCREEN_WIDTH - 20, 24)))
+        elif self.stage_mode:
             for index, enemy in enumerate(enemy for enemy in self.enemies if not enemy.is_dead):
                 self._draw_hud_bar(
                     surface,
@@ -5628,9 +5699,24 @@ class BattleScene:
                     (194, 58, 58),
                     f"{enemy.definition['display_name']} HP",
                 )
-        else:
-            self._draw_hud_bar(surface, x, 18, panel_width, 28, self.enemy.health, self.enemy.max_health, (194, 58, 58), f"{self.enemy.definition['display_name']} HP")
-            self._draw_hud_bar(surface, x, 52, panel_width, 24, self.enemy.mana, self.enemy.max_mana, (72, 122, 235), "MP")
+        elif len(self.enemies) > 1:
+            for index, enemy in enumerate(enemy for enemy in self.enemies if not enemy.is_dead):
+                self._draw_hud_bar(
+                    surface,
+                    x,
+                    18 + index * 31,
+                    panel_width,
+                    27,
+                    enemy.health,
+                    enemy.max_health,
+                    (194, 58, 58),
+                    f"{enemy.definition['display_name']} HP",
+                )
+        elif self.enemies:
+            enemy = self.enemy
+            if enemy is not None:
+                self._draw_hud_bar(surface, x, 18, panel_width, 28, enemy.health, enemy.max_health, (194, 58, 58), f"{enemy.definition['display_name']} HP")
+                self._draw_hud_bar(surface, x, 52, panel_width, 24, enemy.mana, enemy.max_mana, (72, 122, 235), "MP")
 
     def _draw_stage_mode_card(self, surface: pygame.Surface) -> None:
         if not self.stage_mode:
@@ -5683,8 +5769,8 @@ class BattleScene:
         while self.consumable_spawn_timer <= 0.0:
             self._spawn_consumable(random.choice(self.spawnable_items))
             self.consumable_spawn_timer += 18.0
-        if inputs.spawn_milk_just_pressed:
-            self._spawn_consumable("consumables/milk")
+        if inputs.spawn_random_item_just_pressed:
+            self._spawn_consumable(random.choice(self.spawnable_items))
         if inputs.spawn_heavy_item_just_pressed:
             self._spawn_consumable(HEAVY_BOX_ITEM_ID)
         fighter_throw_was_active = self.fighter.item_throw_animation is not None
@@ -5743,12 +5829,13 @@ class BattleScene:
                 self._remove_rudolf_clone(clone)
                 continue
             clone.brain.update(dt)
+            clone_target = self.enemy
             clone_input = (
-                clone.brain.build_input(clone.fighter.snapshot, self.enemy.snapshot)
-                if not self.enemy.is_dead
+                clone.brain.build_input(clone.fighter.snapshot, clone_target.snapshot)
+                if clone_target is not None and not clone_target.is_dead
                 else FighterInput()
             )
-            clone.fighter.update(dt, clone_input, target=self.enemy, controlled=True)
+            clone.fighter.update(dt, clone_input, target=clone_target, controlled=True)
         for fighter in self._fighters():
             if fighter.luis_transform_pending:
                 fighter.transform_to(FighterConfig("luis_liberated", CHARACTERS["luis_liberated"]))
@@ -5832,7 +5919,11 @@ class BattleScene:
                     self._break_heavy_box(item)
                 else:
                     self.consumable_items.remove(item)
-                    self.audio.play("drink_break")
+                    self.audio.play(
+                        "baseball_break"
+                        if item.item_id == ConsumableItem.BASEBALL_ITEM_ID
+                        else "drink_break"
+                    )
                 if item.item_id == "consumables/milk":
                     self.consumable_break_effects.append(
                         ConsumableBreakEffect(
@@ -5858,6 +5949,7 @@ class BattleScene:
                 del self.held_item_animations[fighter]
             else:
                 animation.update(dt)
+        self._update_camera_focus(dt)
         self._update_projectiles(dt)
         self._remove_finished_rudolf_clones()
         self._handle_woody_punches()

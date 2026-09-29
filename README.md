@@ -28,13 +28,15 @@ PyCharm-friendly Python prototype for a Little Fighter 2-inspired side-scrolling
 ## Current prototype
 
 - Title screen prompt
-- Character selection with a roster of playable fighters, including Jan, Jack, John, Axle, Julian, Knight, Luis, Liberated Luis, Mark, Monk, Rudolf, and Freeze
+- Play mode lets you choose a playable fighter and one or more opponents from the character roster
+- Test Mode lets you choose a fighter and practice in the arena without enemies
 - 2.5D arena movement
 - Idle, walk, run, jump, attack, defend states
 - Spawned items stay on the ground until picked up; after pickup, they can be thrown and land twice before breaking
 - A random consumable or throwable spawns every 18 seconds; milk restores 10 HP when consumed, armor-piece throwables cannot be consumed, and thrown items damage enemies before dropping where they hit
 - Heavy boxes use their spawn, carry, throw, and landing animations; fighters lift them with the get-up animation, use the first heavy-carry walking frame while idle, and switch between carry-walking and carry-sprinting sprites when moving. Landed boxes block movement and break into jumping fragments when hit; box landings alternate between two impact sounds
 - Armor-piece throwables travel twice as far as consumables when thrown
+- Baseballs bounce once on landing and play `baseball_break.wav` when they break
 - Jan's healing-bird summon and homing orb, John's blast, projectile-reflecting barrier, homing disk, and healing orb, Axle's ranged shot and knockdown/launching attacks, Julian's height-guided skulls, piercing ball, and area attacks, Luis's advancing knockdown, bidirectional wind attack, and held sprinting attack, Liberated Luis's sword combos, wind knockdown, and forward dash, Mark's mana-powered charge through the first enemy until a second enemy is hurt, Monk's wind strike, and Freeze's ice-ball, ice-column, and moving tornado special attacks
 - Rudolf's four-lane shuriken volley and air-launching sword strikes
 - The City battle stage, with a parallax sunset-city backdrop, ground-aligned scenery, and a tiled fighting floor
@@ -45,9 +47,10 @@ PyCharm-friendly Python prototype for a Little Fighter 2-inspired side-scrolling
 
 ### Menus and character selection
 
-- Main menu: use Up / Down or click an option; press J, Enter, or Space to select it. Click Update History to open the release notes, then scroll with the mouse wheel or Up / Down / Page Up / Page Down; press Escape or click outside the panel to close it.
+- Main menu: use Up / Down or click an option; press J, Enter, or Space to select it. Choose Test Mode to practice without enemies. Click Update History to open the release notes, then scroll with the mouse wheel or Up / Down / Page Up / Page Down; press Escape or click outside the panel to close it.
 - Settings: select Sound or Volume; use Left / Right to adjust volume, or click the volume bar. Press Escape to return to the main menu. F9 toggles mute during play.
-- Character selection: use the arrow keys or click a portrait; press J, Enter, or numpad Enter, or click Confirm, to start with the selected fighter.
+- Character selection: choose your fighter with the arrow keys or by clicking a portrait, then press J, Enter, or numpad Enter, click Confirm, or double-click the portrait.
+- Opponent selection: choose one or more enemies with the arrow keys and Space, or click portraits to toggle them; press J or Enter, or click Start Battle, to begin.
 - Stage Mode runs through ten encounters. After winning or losing the campaign, press J to return to the main menu.
 
 ### Battle
@@ -59,13 +62,14 @@ PyCharm-friendly Python prototype for a Little Fighter 2-inspired side-scrolling
 - L: defend while held.
 - J + L: throw a held item. Ground and airborne throws use different animations.
 - Carrying an item disables basic and special attacks.
-- P / O: spawn milk / a heavy box for testing.
+- P: spawn a random available item. O: spawn a heavy box for testing.
 - Escape: pause or resume. While paused, press M to return to the main menu.
 
 ### Special attacks
 
 Special attacks cost mana. Press J while holding the listed keys; available moves vary by fighter:
 
+- Chord inputs are buffered for 0.18 seconds, so you can press the keys in any order.
 - J + L + Left / Right: moving special 1.
 - J + K + Left / Right: moving special 2.
 - J + L + Up: vertical special 1.
@@ -77,4 +81,4 @@ Luis uses J + L + Left / Right for an advancing knockdown attack, J + K + Left /
 
 ### Testing controls
 
-These extra keys are intended for testing: V knocks the player down, B lifts, G breaks the player's block, N starts the player's death animation, M revives the player, Q consumes a held item, F / I trigger fire / ice knockdown, H applies a hurt reaction, and F10 defeats the current enemy.
+These extra keys are intended for testing: V knocks the player down, B lifts, G breaks the player's block, N starts the player's death animation, M revives the player, Q consumes a held item, F / I trigger fire / ice knockdown, H applies a hurt reaction, and F10 defeats the current enemy when one is present.
