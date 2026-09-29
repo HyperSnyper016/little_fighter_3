@@ -5,7 +5,7 @@ import json
 import math
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pygame
@@ -15,6 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CHARACTER_ROOT = PROJECT_ROOT / "assets" / "sprites" / "characters"
 ITEM_ROOT = PROJECT_ROOT / "assets" / "sprites" / "item_sprites"
 MILK_ROOT = ITEM_ROOT / "consumables" / "milk"
+HEAVY_CARRY_ITEM_ROOT = ITEM_ROOT / "throwables" / "heavy_box"
 ANCHOR_FILE = ITEM_ROOT / "hand_anchors.json"
 IMAGE_EXTENSIONS = {".bmp", ".png"}
 ANIMATION_FOLDERS = {
@@ -25,10 +26,59 @@ ANIMATION_FOLDERS = {
     "spawn": ("hold_item", "throw_item", "ground_throw"),
     "jump_throw": ("hold_item", "throw_item", "jump_throw"),
     "get_up": ("fall", "get_up"),
+    "heavy_carry_idle": ("hold_item", "heavy_carry", "walking"),
+    "heavy_carry_get_up": ("fall", "get_up"),
+    "heavy_carry_walk": ("hold_item", "heavy_carry", "walking"),
+    "heavy_carry_sprint": ("hold_item", "heavy_carry", "sprinting"),
+    "heavy_carry_throw": ("hold_item", "heavy_carry", "throw"),
+    "heavy_carry_jump_throw": ("hold_item", "throw_item", "jump_throw"),
+}
+MILK_ANIMATIONS = ("idle", "walk", "run", "drink", "spawn", "jump_throw", "get_up")
+HEAVY_CARRY_ANIMATIONS = (
+    "heavy_carry_idle",
+    "heavy_carry_get_up",
+    "heavy_carry_walk",
+    "heavy_carry_sprint",
+    "heavy_carry_throw",
+    "heavy_carry_jump_throw",
+)
+ITEM_ANIMATIONS = {
+    "milk": MILK_ANIMATIONS,
+    "heavy-carry": HEAVY_CARRY_ANIMATIONS,
 }
 ANIMATION_ALIASES = {"ground_throw": "spawn"}
-FOLDER_ANIMATION_KEYS = {folder: animation for animation, folder in ANIMATION_FOLDERS.items()}
+FOLDER_ANIMATION_KEYS: dict[tuple[str, ...], str] = {}
+for animation, folder in ANIMATION_FOLDERS.items():
+    FOLDER_ANIMATION_KEYS.setdefault(folder, animation)
+FOLDER_ANIMATION_KEYS[("hold_item", "heavy_carry", "walking")] = "heavy_carry_walk"
+FOLDER_ANIMATION_KEYS[("hold_item", "heavy_carry", "walk")] = "heavy_carry_walk"
+FOLDER_ANIMATION_KEYS[("hold_item", "heavy_carry", "sprinting")] = "heavy_carry_sprint"
+FOLDER_ANIMATION_KEYS[("hold_item", "heavy_carry", "sprint")] = "heavy_carry_sprint"
+HEAVY_CARRY_FOLDER_ANIMATION_KEYS = {
+    ("hold_item", "heavy_carry", "walking"): "heavy_carry_walk",
+    ("hold_item", "heavy_carry", "walk"): "heavy_carry_walk",
+    ("hold_item", "heavy_carry", "sprinting"): "heavy_carry_sprint",
+    ("hold_item", "heavy_carry", "sprint"): "heavy_carry_sprint",
+    ("fall", "get_up"): "heavy_carry_get_up",
+    ("hold_item", "heavy_carry", "throw"): "heavy_carry_throw",
+    ("hold_item", "throw_item", "jump_throw"): "heavy_carry_jump_throw",
+}
+OPTIONAL_ANIMATIONS = {
+    "spawn",
+    "jump_throw",
+    "heavy_carry_idle",
+    "heavy_carry_walk",
+    "heavy_carry_sprint",
+    "heavy_carry_throw",
+    "heavy_carry_jump_throw",
+}
+HEAVY_CARRY_FOLDER_CANDIDATES = {
+    "heavy_carry_idle": ("walking", "walk"),
+    "heavy_carry_walk": ("walking", "walk"),
+    "heavy_carry_sprint": ("sprinting", "sprint"),
+}
 FALLBACK_ANCHOR = (0.30, 0.62)
+HEAVY_CARRY_FALLBACK_ANCHOR = (0.50, 0.18)
 
 
 @dataclass(frozen=True)
@@ -38,6 +88,7 @@ class SpriteTask:
     frame_index: int
     frame_count: int
     path: Path
+    item_type: str = "milk"
 
 
 def _natural_sort_key(path: Path) -> list[str | int]:
@@ -91,18 +142,19 @@ def _load_trimmed_item_frames(folder: Path) -> list[pygame.Surface]:
     return frames
 
 
-def _load_trimmed_milk_frame() -> pygame.Surface:
-    return _load_trimmed_item_frames(MILK_ROOT / "holding" / "idle")[0]
-
-
-def _tasks_for_folder(character: str, animation: str, folder: Path) -> list[SpriteTask]:
+def _tasks_for_folder(
+    character: str,
+    animation: str,
+    folder: Path,
+    item_type: str = "milk",
+) -> list[SpriteTask]:
     if not folder.is_dir():
         raise FileNotFoundError(f"{character} {animation} sprite folder not found: {folder}")
     paths = _image_paths(folder)
     if not paths:
         raise FileNotFoundError(f"No {character} {animation} frames found in {folder}")
     return [
-        SpriteTask(character, animation, frame_index, len(paths), path)
+        SpriteTask(character, animation, frame_index, len(paths), path, item_type)
         for frame_index, path in enumerate(paths)
     ]
 
@@ -128,32 +180,50 @@ def _specific_folder_task_group(
     return character, animation_key or inferred_key, folder
 
 
+def _animation_folder(character: str, animation: str) -> Path:
+    folder = CHARACTER_ROOT / character
+    if animation in HEAVY_CARRY_FOLDER_CANDIDATES:
+        carry_root = folder / "hold_item" / "heavy_carry"
+        for folder_name in HEAVY_CARRY_FOLDER_CANDIDATES[animation]:
+            candidate = carry_root / folder_name
+            if candidate.is_dir() and _image_paths(candidate):
+                return candidate
+    for part in ANIMATION_FOLDERS[animation]:
+        folder /= part
+    return folder
+
+
 def _build_tasks(
     character_names: list[str],
     animations: list[str] | None = None,
     folders: list[str] | None = None,
     animation_key: str | None = None,
+    item_type: str = "milk",
 ) -> list[SpriteTask]:
     tasks: list[SpriteTask] = []
     if folders:
         for selector in folders:
             character, animation, folder = _specific_folder_task_group(selector, animation_key)
-            tasks.extend(_tasks_for_folder(character, animation, folder))
+            if item_type == "heavy-carry" and animation_key is None:
+                relative_parts = folder.relative_to(CHARACTER_ROOT).parts[1:]
+                animation = HEAVY_CARRY_FOLDER_ANIMATION_KEYS.get(relative_parts, animation)
+            tasks.extend(_tasks_for_folder(character, animation, folder, item_type))
         return tasks
 
     selected_animations = [
         ANIMATION_ALIASES.get(animation, animation)
-        for animation in (animations or list(ANIMATION_FOLDERS))
+        for animation in (animations or ITEM_ANIMATIONS[item_type])
     ]
     for character in character_names:
         for animation in selected_animations:
-            folder_parts = ANIMATION_FOLDERS[animation]
-            folder = CHARACTER_ROOT / character
-            for part in folder_parts:
-                folder /= part
-            if animation in {"spawn", "jump_throw"} and not _image_paths(folder):
+            folder = _animation_folder(character, animation)
+            if animation in OPTIONAL_ANIMATIONS and not _image_paths(folder):
                 continue
-            tasks.extend(_tasks_for_folder(character, animation, folder))
+            animation_tasks = _tasks_for_folder(character, animation, folder, item_type)
+            if animation == "heavy_carry_idle":
+                tasks.append(replace(animation_tasks[0], frame_count=1))
+            else:
+                tasks.extend(animation_tasks)
     return tasks
 
 
@@ -246,20 +316,20 @@ def _draw_crosshair(surface: pygame.Surface, position: tuple[int, int]) -> None:
 def _draw_preview(
     surface: pygame.Surface,
     character: pygame.Surface,
-    milk: pygame.Surface,
+    item: pygame.Surface,
     character_pos: tuple[int, int],
-    milk_center: tuple[int, int],
+    item_center: tuple[int, int],
     facing: str,
 ) -> None:
     surface.fill((62, 66, 72))
     character_frame = character if facing == "right" else pygame.transform.flip(character, True, False)
-    milk_frame = milk if facing == "right" else pygame.transform.flip(milk, True, False)
+    item_frame = item if facing == "right" else pygame.transform.flip(item, True, False)
     surface.blit(character_frame, character_pos)
-    surface.blit(milk_frame, milk_frame.get_rect(center=milk_center))
-    _draw_crosshair(surface, milk_center)
+    surface.blit(item_frame, item_frame.get_rect(center=item_center))
+    _draw_crosshair(surface, item_center)
 
 
-def _current_milk_center(
+def _current_item_center(
     data: dict,
     task: SpriteTask,
     character_size: tuple[int, int],
@@ -267,7 +337,10 @@ def _current_milk_center(
     facing: str,
 ) -> list[int]:
     width, height = character_size
-    default_anchor = (0.68, 0.22) if task.animation == "drink" else FALLBACK_ANCHOR
+    if task.animation.startswith("heavy_carry_"):
+        default_anchor = HEAVY_CARRY_FALLBACK_ANCHOR
+    else:
+        default_anchor = (0.68, 0.22) if task.animation == "drink" else FALLBACK_ANCHOR
     anchor = _existing_anchor(data, task) or default_anchor
     facing_x = anchor[0] if facing == "right" else 1 - anchor[0]
     return [
@@ -281,13 +354,13 @@ def _store_current_anchor(
     task: SpriteTask,
     character_size: tuple[int, int],
     character_pos: tuple[int, int],
-    milk_center: tuple[int, int],
+    item_center: tuple[int, int],
     facing: str,
 ) -> tuple[float, float]:
     width, height = character_size
-    local_x = (milk_center[0] - character_pos[0]) / width
+    local_x = (item_center[0] - character_pos[0]) / width
     x = local_x if facing == "right" else 1 - local_x
-    y = (milk_center[1] - character_pos[1]) / height
+    y = (item_center[1] - character_pos[1]) / height
     point = [round(x, 6), round(y, 6)]
     points = _ensure_anchor_slot(data, task)
     points[task.frame_index] = point
@@ -298,11 +371,15 @@ def main() -> int:
     names = _character_names()
     parser = argparse.ArgumentParser(
         description=(
-            "Calibrate per-frame item anchors for idle, movement, drink, ground-throw, jump-throw, and get-up animations. "
-            "Only characters with authored sprite frames are included."
+            "Calibrate per-frame item anchors for milk or heavy-carry items. Only characters with authored sprite frames are included."
         )
     )
     parser.add_argument("--character", choices=names, help="Calibrate only this character (default: all characters)")
+    parser.add_argument(
+        "--item",
+        choices=tuple(ITEM_ANIMATIONS),
+        help="Item to preview; by default, calibrates milk and heavy-carry items",
+    )
     parser.add_argument(
         "--animation",
         choices=(*ANIMATION_FOLDERS, *ANIMATION_ALIASES),
@@ -331,12 +408,46 @@ def main() -> int:
         parser.error("--scale must be greater than zero")
     if args.folder and (args.character or args.animation):
         parser.error("--folder cannot be combined with --character or --animation")
+    if args.folder and args.item is None:
+        parser.error("--folder requires --item milk or --item heavy-carry")
     if args.animation_key and (not args.folder or len(args.folder) != 1):
         parser.error("--animation-key requires exactly one --folder")
+    item_types = tuple(ITEM_ANIMATIONS) if args.item is None else (args.item,)
+    available_animations = {
+        animation
+        for item_type in item_types
+        for animation in ITEM_ANIMATIONS[item_type]
+    }
+    if args.animation and any(
+        ANIMATION_ALIASES.get(animation, animation) not in available_animations
+        for animation in args.animation
+    ):
+        parser.error(f"--animation choices are: {', '.join(sorted(available_animations))}")
 
     character_names = [args.character] if args.character else names
     try:
-        tasks = _build_tasks(character_names, args.animation, args.folder, args.animation_key)
+        tasks: list[SpriteTask] = []
+        for item_type in item_types:
+            item_animations = (
+                [
+                    animation
+                    for animation in args.animation
+                    if ANIMATION_ALIASES.get(animation, animation) in ITEM_ANIMATIONS[item_type]
+                ]
+                if args.animation
+                else None
+            )
+            if args.animation and not item_animations:
+                continue
+            tasks.extend(
+                _build_tasks(
+                    character_names,
+                    item_animations,
+                    args.folder,
+                    args.animation_key,
+                    item_type=item_type,
+                )
+            )
         if not tasks:
             raise FileNotFoundError("No character sprite frames found for the selected animation folders")
         anchor_data = _load_anchor_data(args.anchors_path)
@@ -346,50 +457,56 @@ def main() -> int:
 
     start_index = _task_start_index(tasks, anchor_data, args.recalibrate)
     if start_index == len(tasks):
-        print(f"All {len(tasks)} hand anchors are already calibrated in {args.anchors_path}.")
+        print(f"All {len(tasks)} item anchors are already calibrated in {args.anchors_path}.")
         print("Run again with --recalibrate to review or adjust them.")
         return 0
-
     pygame.init()
     try:
         pygame.display.set_mode((1, 1))
-        milk = _load_trimmed_milk_frame()
-        milk_drink_frames: list[pygame.Surface] = []
-        drink_tasks = [task for task in tasks if task.animation == "drink"]
-        if drink_tasks:
-            milk_drink_frames = _load_trimmed_item_frames(MILK_ROOT / "drink")
-            character_frame_counts = {task.character: task.frame_count for task in drink_tasks}
-            mismatched_characters = [
-                character
-                for character, frame_count in character_frame_counts.items()
-                if frame_count != len(milk_drink_frames)
-            ]
-            if mismatched_characters:
-                raise ValueError(
-                    "Milk drink frames must match each character's drink frame count; "
-                    f"item has {len(milk_drink_frames)} frames, mismatch: {', '.join(mismatched_characters)}"
-                )
+        task_item_types = {task.item_type for task in tasks}
+        holding_frames: dict[str, pygame.Surface] = {}
+        if "milk" in task_item_types:
+            holding_frames["milk"] = _load_trimmed_item_frames(MILK_ROOT / "holding" / "idle")[0]
+        if "heavy-carry" in task_item_types:
+            holding_frames["heavy-carry"] = _load_trimmed_item_frames(HEAVY_CARRY_ITEM_ROOT / "holding")[0]
+        drink_tasks = [task for task in tasks if task.item_type == "milk" and task.animation == "drink"]
+        milk_drink_frames = _load_trimmed_item_frames(MILK_ROOT / "drink") if drink_tasks else []
+        character_frame_counts = {task.character: task.frame_count for task in drink_tasks}
+        mismatched_characters = [
+            character
+            for character, frame_count in character_frame_counts.items()
+            if frame_count != len(milk_drink_frames)
+        ]
+        if mismatched_characters:
+            raise ValueError(
+                "Milk drink frames must match each character's drink frame count; "
+                f"item has {len(milk_drink_frames)} frames, mismatch: {', '.join(mismatched_characters)}"
+            )
         screen: pygame.Surface | None = None
         font = pygame.font.Font(None, 24)
         clock = pygame.time.Clock()
         task_index = start_index
         character: pygame.Surface
         character_pos: tuple[int, int]
-        milk_center: list[int]
-        item_frame: pygame.Surface
+        item_center: list[int]
+        current_item_frame: pygame.Surface
 
         def load_task() -> None:
-            nonlocal screen, character, character_pos, milk_center, item_frame
+            nonlocal screen, character, character_pos, item_center, current_item_frame
             task = tasks[task_index]
             character = _load_frame(task.path, scale=args.scale)
-            item_frame = milk_drink_frames[task.frame_index] if task.animation == "drink" else milk
+            current_item_frame = (
+                milk_drink_frames[task.frame_index]
+                if task.item_type == "milk" and task.animation == "drink"
+                else holding_frames[task.item_type]
+            )
             width, height = character.get_size()
-            canvas_size = (max(900, width + item_frame.get_width() * 2 + 180), max(700, height + 180))
+            canvas_size = (max(900, width + current_item_frame.get_width() * 2 + 180), max(700, height + 180))
             character_pos = ((canvas_size[0] - width) // 2, canvas_size[1] - height - 90)
-            milk_center = _current_milk_center(anchor_data, task, character.get_size(), character_pos, args.facing)
+            item_center = _current_item_center(anchor_data, task, character.get_size(), character_pos, args.facing)
             screen = pygame.display.set_mode(canvas_size)
             pygame.display.set_caption(
-                f"Hand anchor: {task.character} / {task.animation} "
+                f"Item anchor: {task.character} / {task.animation} "
                 f"{task.frame_index + 1}/{task.frame_count} ({task_index + 1}/{len(tasks)})"
             )
 
@@ -405,11 +522,11 @@ def main() -> int:
                     running = False
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     dragging = True
-                    milk_center[:] = event.pos
+                    item_center[:] = event.pos
                 elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                     dragging = False
                 elif event.type == pygame.MOUSEMOTION and dragging:
-                    milk_center[:] = event.pos
+                    item_center[:] = event.pos
                 elif event.type == pygame.KEYDOWN:
                     if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                         point = _store_current_anchor(
@@ -417,14 +534,11 @@ def main() -> int:
                             task,
                             character.get_size(),
                             character_pos,
-                            (milk_center[0], milk_center[1]),
+                            (item_center[0], item_center[1]),
                             args.facing,
                         )
                         _save_anchor_data(args.anchors_path, anchor_data)
-                        print(
-                            f"Saved {task.character} {task.animation} frame {task.frame_index + 1}: "
-                            f"({point[0]:.3f}, {point[1]:.3f})"
-                        )
+                        print(f"Saved {task.character} {task.animation} frame {task.frame_index + 1}: ({point[0]:.3f}, {point[1]:.3f})")
                         task_index = _next_task_index(tasks, anchor_data, task_index + 1, args.recalibrate)
                         if task_index >= len(tasks):
                             print(f"Reached the end of the calibration list. Saved anchors are in {args.anchors_path}.")
@@ -444,29 +558,29 @@ def main() -> int:
                     elif event.key in (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN):
                         step = 5 if pygame.key.get_mods() & pygame.KMOD_SHIFT else 1
                         if event.key == pygame.K_LEFT:
-                            milk_center[0] -= step
+                            item_center[0] -= step
                         elif event.key == pygame.K_RIGHT:
-                            milk_center[0] += step
+                            item_center[0] += step
                         elif event.key == pygame.K_UP:
-                            milk_center[1] -= step
+                            item_center[1] -= step
                         else:
-                            milk_center[1] += step
+                            item_center[1] += step
 
             if running and screen is not None:
                 task = tasks[task_index]
                 _draw_preview(
                     screen,
                     character,
-                    item_frame,
+                    current_item_frame,
                     character_pos,
-                    (milk_center[0], milk_center[1]),
+                    (item_center[0], item_center[1]),
                     args.facing,
                 )
                 progress = (
                     f"{task.character} | {task.animation} frame {task.frame_index + 1}/{task.frame_count} "
                     f"| {task_index + 1}/{len(tasks)} overall"
                 )
-                controls = "Drag: place milk | Arrows: nudge (Shift: 5 px) | Enter: save/next | N: skip | Backspace: previous | Esc: quit"
+                controls = "Drag: place item | Arrows: nudge (Shift: 5 px) | Enter: save/next | N: skip | Backspace: previous | Esc: quit"
                 screen.blit(font.render(progress, True, (255, 255, 255)), (16, 16))
                 screen.blit(font.render(controls, True, (255, 255, 255)), (16, 44))
                 pygame.display.flip()

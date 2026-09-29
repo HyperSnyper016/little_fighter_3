@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import random
+import re
+from dataclasses import dataclass
 from pathlib import Path
 
 import pygame
@@ -9,16 +11,34 @@ from game.constants import SCREEN_HEIGHT, SCREEN_WIDTH, TEXT_COLOR
 from game.systems.audio import AudioBank
 
 
+@dataclass
+class UpdateHistoryRelease:
+    version: str
+    title: str
+    version_key: tuple[int, int, int]
+    entries: list[tuple[str, str]]
+
+
 class MainMenuScene:
-    MAIN_OPTIONS = ("Play", "Settings", "Quit")
+    MAIN_OPTIONS = ("Play", "Stage Mode", "Settings", "Quit")
+    HISTORY_BUTTON = pygame.Rect(24, SCREEN_HEIGHT - 64, 220, 42)
+    HISTORY_PANEL = pygame.Rect(SCREEN_WIDTH - 650, 64, 626, SCREEN_HEIGHT - 88)
 
     def __init__(self) -> None:
         self.title_font = pygame.font.Font(None, 72)
         self.option_font = pygame.font.Font(None, 40)
         self.credit_font = pygame.font.Font(None, 24)
+        self.history_button_font = pygame.font.Font(None, 24)
+        self.history_heading_font = pygame.font.Font(None, 34)
+        self.history_category_font = pygame.font.Font(None, 24)
+        self.history_entry_font = pygame.font.Font(None, 21)
+        self.history_hint_font = pygame.font.Font(None, 20)
         self.start_requested = False
+        self.stage_mode_requested = False
         self.quit_requested = False
         self.settings_open = False
+        self.history_open = False
+        self.history_scroll = 0
         self.selected_index = 0
         self._up_pressed = False
         self._down_pressed = False
@@ -38,6 +58,126 @@ class MainMenuScene:
         sounds_root = Path(__file__).resolve().parents[2] / "assets" / "sounds"
         self.audio = AudioBank(sounds_root)
         self.audio.play("menu_start")
+        self.history_releases = self._load_update_history()
+        self.history_lines, self.history_content_height = self._build_history_layout()
+
+    def _load_update_history(self) -> list[UpdateHistoryRelease]:
+        history_path = Path(__file__).resolve().parents[2] / "UPDATE_HISTORY.md"
+        if not history_path.exists():
+            return []
+
+        releases: list[UpdateHistoryRelease] = []
+        current_release: UpdateHistoryRelease | None = None
+        version_pattern = re.compile(r"^##\s+(v?(\d+)\.(\d+)(?:\.(\d+))?)(?:\s*[-–—]\s*(.*))?$")
+
+        def save_release() -> None:
+            if current_release is not None:
+                releases.append(current_release)
+
+        for line in history_path.read_text(encoding="utf-8").splitlines():
+            match = version_pattern.match(line)
+            if match:
+                save_release()
+                version = match.group(1)
+                version_numbers = tuple(int(match.group(index) or 0) for index in (2, 3, 4))
+                current_release = UpdateHistoryRelease(
+                    version,
+                    (match.group(5) or "").strip(),
+                    version_numbers,
+                    [],
+                )
+                continue
+            if current_release is None:
+                continue
+
+            stripped = line.strip()
+            if stripped.startswith("### "):
+                current_release.entries.append(("category", stripped[4:]))
+            elif stripped.startswith("- "):
+                current_release.entries.append(("bullet", stripped[2:].strip()))
+            elif line.startswith("  ") and current_release.entries and current_release.entries[-1][0] == "bullet":
+                kind, text = current_release.entries[-1]
+                current_release.entries[-1] = (kind, f"{text} {stripped}")
+
+        save_release()
+        releases.sort(key=lambda release: release.version_key, reverse=True)
+        return releases
+
+    @staticmethod
+    def _wrap_history_text(
+        text: str,
+        font: pygame.font.Font,
+        max_width: int,
+    ) -> list[str]:
+        words = text.split()
+        if not words:
+            return [""]
+
+        lines: list[str] = []
+        current_line = words[0]
+        for word in words[1:]:
+            candidate = f"{current_line} {word}"
+            if font.size(candidate)[0] > max_width:
+                lines.append(current_line)
+                current_line = word
+            else:
+                current_line = candidate
+        lines.append(current_line)
+        return lines
+
+    def _build_history_layout(self) -> tuple[list[tuple[pygame.Surface, int]], int]:
+        lines: list[tuple[pygame.Surface, int]] = []
+        content_width = self.HISTORY_PANEL.width - 64
+        y = 8
+
+        for release in self.history_releases:
+            heading = release.version
+            if release.title:
+                heading = f"{heading} - {release.title}"
+            for text in self._wrap_history_text(heading, self.history_heading_font, content_width):
+                rendered = self.history_heading_font.render(text, True, (255, 207, 122))
+                lines.append((rendered, y))
+                y += rendered.get_height() + 2
+            y += 4
+
+            for kind, text in release.entries:
+                if kind == "category":
+                    y += 4
+                    rendered = self.history_category_font.render(text, True, (154, 204, 231))
+                    lines.append((rendered, y))
+                    y += rendered.get_height() + 3
+                    continue
+
+                wrapped_lines = self._wrap_history_text(
+                    text,
+                    self.history_entry_font,
+                    content_width - 18,
+                )
+                for index, wrapped_line in enumerate(wrapped_lines):
+                    prefix = "- " if index == 0 else "  "
+                    rendered = self.history_entry_font.render(
+                        f"{prefix}{wrapped_line}",
+                        True,
+                        (224, 228, 234),
+                    )
+                    lines.append((rendered, y))
+                    y += rendered.get_height() + 2
+
+            y += 12
+
+        return lines, y
+
+    def _history_viewport(self) -> pygame.Rect:
+        return pygame.Rect(
+            self.HISTORY_PANEL.x + 22,
+            self.HISTORY_PANEL.y + 66,
+            self.HISTORY_PANEL.width - 48,
+            self.HISTORY_PANEL.height - 112,
+        )
+
+    def _clamp_history_scroll(self) -> None:
+        viewport = self._history_viewport()
+        self.history_scroll = max(0, min(self.history_scroll, self.history_content_height - viewport.height))
 
     def _resolve_background_path(self, directory: Path) -> Path | None:
         preferred_names = (
@@ -124,7 +264,11 @@ class MainMenuScene:
 
         if self.selected_index == 0:
             self.start_requested = True
+            self.stage_mode_requested = False
         elif self.selected_index == 1:
+            self.start_requested = True
+            self.stage_mode_requested = True
+        elif self.selected_index == 2:
             self.settings_open = True
             self.selected_index = 0
         else:
@@ -135,6 +279,7 @@ class MainMenuScene:
         dt: float,
         mouse_pos: tuple[int, int] | None = None,
         mouse_click: tuple[int, int] | None = None,
+        mouse_wheel_y: int = 0,
     ) -> None:
         keys = pygame.key.get_pressed()
         up_pressed = keys[pygame.K_UP]
@@ -146,40 +291,65 @@ class MainMenuScene:
         options = self._menu_options()
         rects = self._option_rects()
 
-        if mouse_pos is not None:
-            for index, rect in enumerate(rects):
-                if rect.collidepoint(mouse_pos):
-                    self.selected_index = index
-                    break
-        if up_pressed and not self._up_pressed:
-            self.selected_index = (self.selected_index - 1) % len(options)
-        elif down_pressed and not self._down_pressed:
-            self.selected_index = (self.selected_index + 1) % len(options)
-        if self.settings_open and self.selected_index == 1:
-            if left_pressed and not self._left_pressed:
-                AudioBank.set_master_volume(AudioBank.master_volume - 0.1)
-            elif right_pressed and not self._right_pressed:
-                AudioBank.set_master_volume(AudioBank.master_volume + 0.1)
-
         self.start_requested = False
         self.quit_requested = False
-        if mouse_click is not None:
-            for index, rect in enumerate(rects):
-                if rect.collidepoint(mouse_click):
-                    self.selected_index = index
-                    if self.settings_open and index == 1:
-                        bar_rect = pygame.Rect(rect.x + 100, rect.y + 17, 130, 20)
-                        if bar_rect.collidepoint(mouse_click):
-                            volume = (mouse_click[0] - bar_rect.left) / bar_rect.width
-                            AudioBank.set_master_volume(volume)
-                    else:
-                        self._activate_selected()
-                    break
-        elif confirm_pressed and not self._confirm_pressed:
-            self._activate_selected()
-        elif self.settings_open and escape_pressed and not self._escape_pressed:
-            self.settings_open = False
-            self.selected_index = 0
+        close_rect = pygame.Rect(self.HISTORY_PANEL.right - 52, self.HISTORY_PANEL.y + 12, 36, 36)
+        if self.history_open:
+            if mouse_click is not None and (
+                not self.HISTORY_PANEL.collidepoint(mouse_click) or close_rect.collidepoint(mouse_click)
+            ):
+                self.history_open = False
+            if self.history_open:
+                if escape_pressed and not self._escape_pressed:
+                    self.history_open = False
+                else:
+                    self.history_scroll -= mouse_wheel_y * 52
+                    if up_pressed and not self._up_pressed:
+                        self.history_scroll -= 54
+                    elif down_pressed and not self._down_pressed:
+                        self.history_scroll += 54
+                    if keys[pygame.K_PAGEUP]:
+                        self.history_scroll -= self._history_viewport().height
+                    elif keys[pygame.K_PAGEDOWN]:
+                        self.history_scroll += self._history_viewport().height
+                    self._clamp_history_scroll()
+        elif mouse_click is not None and self.HISTORY_BUTTON.collidepoint(mouse_click):
+            self.history_open = True
+            self.history_scroll = 0
+            self.audio.play("menu_accept")
+        else:
+            if mouse_pos is not None:
+                for index, rect in enumerate(rects):
+                    if rect.collidepoint(mouse_pos):
+                        self.selected_index = index
+                        break
+            if up_pressed and not self._up_pressed:
+                self.selected_index = (self.selected_index - 1) % len(options)
+            elif down_pressed and not self._down_pressed:
+                self.selected_index = (self.selected_index + 1) % len(options)
+            if self.settings_open and self.selected_index == 1:
+                if left_pressed and not self._left_pressed:
+                    AudioBank.set_master_volume(AudioBank.master_volume - 0.1)
+                elif right_pressed and not self._right_pressed:
+                    AudioBank.set_master_volume(AudioBank.master_volume + 0.1)
+
+            if mouse_click is not None:
+                for index, rect in enumerate(rects):
+                    if rect.collidepoint(mouse_click):
+                        self.selected_index = index
+                        if self.settings_open and index == 1:
+                            bar_rect = pygame.Rect(rect.x + 100, rect.y + 17, 130, 20)
+                            if bar_rect.collidepoint(mouse_click):
+                                volume = (mouse_click[0] - bar_rect.left) / bar_rect.width
+                                AudioBank.set_master_volume(volume)
+                        else:
+                            self._activate_selected()
+                        break
+            elif confirm_pressed and not self._confirm_pressed:
+                self._activate_selected()
+            elif self.settings_open and escape_pressed and not self._escape_pressed:
+                self.settings_open = False
+                self.selected_index = 0
 
         self._up_pressed = up_pressed
         self._down_pressed = down_pressed
@@ -189,6 +359,65 @@ class MainMenuScene:
         self._escape_pressed = escape_pressed
         self.scroll_x += self.scroll_speed_x * dt
         self.scroll_y += self.scroll_speed_y * dt
+
+    def _draw_history_button(self, surface: pygame.Surface) -> None:
+        pygame.draw.rect(surface, (35, 38, 48), self.HISTORY_BUTTON, border_radius=8)
+        pygame.draw.rect(surface, (210, 210, 220), self.HISTORY_BUTTON, 2, border_radius=8)
+        label = self.history_button_font.render("Update History", True, TEXT_COLOR)
+        surface.blit(label, label.get_rect(center=self.HISTORY_BUTTON.center))
+
+    def _draw_history_panel(self, surface: pygame.Surface) -> None:
+        panel = self.HISTORY_PANEL
+        pygame.draw.rect(surface, (5, 8, 14), panel.move(5, 5), border_radius=16)
+        panel_surface = pygame.Surface(panel.size, pygame.SRCALPHA)
+        panel_surface.fill((18, 23, 32, 248))
+        surface.blit(panel_surface, panel)
+        pygame.draw.rect(surface, (108, 132, 156), panel, 2, border_radius=16)
+
+        title = self.history_heading_font.render("Update History", True, TEXT_COLOR)
+        surface.blit(title, (panel.x + 22, panel.y + 18))
+        close_rect = pygame.Rect(panel.right - 52, panel.y + 12, 36, 36)
+        pygame.draw.rect(surface, (48, 58, 72), close_rect, border_radius=8)
+        close_label = self.history_button_font.render("X", True, TEXT_COLOR)
+        surface.blit(close_label, close_label.get_rect(center=close_rect.center))
+
+        viewport = self._history_viewport()
+        old_clip = surface.get_clip()
+        surface.set_clip(viewport)
+        if self.history_lines:
+            for rendered, y in self.history_lines:
+                draw_y = viewport.y + y - self.history_scroll
+                if draw_y + rendered.get_height() < viewport.top:
+                    continue
+                if draw_y > viewport.bottom:
+                    break
+                surface.blit(rendered, (viewport.x, draw_y))
+        else:
+            empty = self.history_entry_font.render("No update history found.", True, TEXT_COLOR)
+            surface.blit(empty, (viewport.x, viewport.y))
+        surface.set_clip(old_clip)
+
+        track = pygame.Rect(viewport.right + 5, viewport.y, 6, viewport.height)
+        pygame.draw.rect(surface, (43, 51, 62), track, border_radius=3)
+        max_scroll = max(0, self.history_content_height - viewport.height)
+        if max_scroll:
+            thumb_height = max(30, round(track.height * viewport.height / self.history_content_height))
+            thumb_y = track.y + round((track.height - thumb_height) * self.history_scroll / max_scroll)
+        else:
+            thumb_height = track.height
+            thumb_y = track.y
+        pygame.draw.rect(
+            surface,
+            (147, 166, 184),
+            pygame.Rect(track.x, thumb_y, track.width, thumb_height),
+            border_radius=3,
+        )
+        hint = self.history_hint_font.render(
+            "Scroll: wheel or Up / Down / Page Up / Page Down    Esc: close",
+            True,
+            (174, 188, 204),
+        )
+        surface.blit(hint, hint.get_rect(midbottom=(panel.centerx, panel.bottom - 14)))
 
     def _draw_background(self, surface: pygame.Surface) -> None:
         if not self.background_tiles:
@@ -262,3 +491,6 @@ class MainMenuScene:
     def draw(self, surface: pygame.Surface) -> None:
         self._draw_background(surface)
         self._draw_title(surface)
+        self._draw_history_button(surface)
+        if self.history_open:
+            self._draw_history_panel(surface)

@@ -86,6 +86,7 @@ class AudioBank:
         self.freeze_basic_miss_toggle = 0
         self.fireball_toggle = 0
         self.fire_breath_toggle = 0
+        self.heavy_box_land_toggle = 0
         self._sequence_channel: pygame.mixer.Channel | None = None
         self._sequence_queue: deque[pygame.mixer.Sound] = deque()
 
@@ -120,6 +121,9 @@ class AudioBank:
             "luis_wind": self._load_sound("luis_wind.wav"),
             "luis_shear": self._load_sound("luis_shear.wav"),
             "armor_piece_land": self._load_sound("armor_piece_land.wav"),
+            "heavy_box_land_1": self._load_sound("heavy_box_land_1.wav"),
+            "heavy_box_land_2": self._load_sound("heavy_box_land_2.wav"),
+            "heavy_box_break": self._load_sound("heavy_box_break.wav"),
             "wind_hit": self._load_sound("wind_hit.wav"),
             "monk_wind": self._load_sound("monk_wind.wav"),
             "davis_uppercut": self._load_sound("davis_uppercut.wav"),
@@ -229,3 +233,8 @@ class AudioBank:
     def play_fire_breath(self) -> None:
         self.fire_breath_toggle = 1 - self.fire_breath_toggle
         self.play("fire_breath_1" if self.fire_breath_toggle == 0 else "fire_breath_2")
+
+    def play_heavy_box_land(self) -> None:
+        sound = "heavy_box_land_1" if self.heavy_box_land_toggle == 0 else "heavy_box_land_2"
+        self.heavy_box_land_toggle = 1 - self.heavy_box_land_toggle
+        self.play(sound)

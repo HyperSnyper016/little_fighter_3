@@ -8,16 +8,42 @@ from pathlib import Path
 
 import pygame
 
-from game.constants import GROUND_Y, LANE_MAX_Y, LANE_MIN_Y, SCREEN_HEIGHT, SCREEN_WIDTH, TEXT_COLOR
+from game.constants import (
+    GROUND_Y,
+    HEAVY_BOX_ITEM_ID,
+    HEAVY_ITEM_ANCHOR_KEYS,
+    HEAVY_ITEM_FALLBACK_ANCHOR,
+    HEAVY_ITEM_IDS,
+    LANE_MAX_Y,
+    LANE_MIN_Y,
+    SCREEN_HEIGHT,
+    SCREEN_WIDTH,
+    TEXT_COLOR,
+)
 from game.data.characters import CHARACTERS
 from game.entities.fighter import COMBAT_ATTACK_STATES, Fighter, FighterConfig, FighterInput, FighterSnapshot
 from game.systems.audio import AudioBank
 from game.systems.item_anchors import HandAnchor, load_hand_anchors
-from game.systems.stage import ForestStage
+from game.systems.stage import CityStage
 
 
 THROWN_ITEM_MAX_DISTANCE = 330.0
 THROWABLE_DISTANCE_MULTIPLIER = 2.0
+HEAVY_ITEM_DISTANCE_MULTIPLIER = THROWABLE_DISTANCE_MULTIPLIER / 2
+STAGE_CARD_DURATION = 2.4
+STAGE_ROMAN_NUMERALS = ("I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X")
+STAGE_ENCOUNTERS = (
+    (("bandit", 1),),
+    (("bandit", 1), ("hunter", 1)),
+    (("jack", 1), ("bandit", 2), ("hunter", 1)),
+    (("knight", 2), ("monk", 1)),
+    (("bat", 1),),
+    (("bandit", 3), ("armored_bandit", 1)),
+    (("mark", 3), ("sorcerer", 1)),
+    (("sorcerer", 1), ("monk", 1), ("mark", 1), ("hunter", 2)),
+    (("axle", 3), ("jack", 2)),
+    (("luis_liberated", 1), ("henry", 1)),
+)
 
 
 def _is_throwable_item(item_id: str) -> bool:
@@ -167,6 +193,11 @@ class ConsumableItem:
             return "break"
         self.landing_animation_finished = True
         return None
+
+    def world_rect(self) -> pygame.Rect:
+        frame = self.frames[self.frame_index]
+        center_y = self.y if self.phase in {"falling", "thrown"} else self.floor_y - frame.get_height() / 2
+        return frame.get_rect(center=(round(self.x), round(center_y)))
 
 
 class SpawnedConsumable(ConsumableItem):
@@ -387,6 +418,72 @@ class MetalFragmentEffect(ItemBreakEffect):
                 midbottom=(int(self.x - camera_x), int(self.floor_y - vertical_offset))
             ),
         )
+
+
+@dataclass
+class HeavyBoxFragment:
+    frames: list[pygame.Surface]
+    x: float
+    bottom_y: float
+    velocity_x: float
+    velocity_y: float
+    elapsed: float = 0.0
+    landed: bool = False
+
+
+class HeavyBoxBreakEffect:
+    FRAME_DURATION = 0.08
+    GRAVITY = 1300.0
+
+    def __init__(
+        self,
+        x: float,
+        lane_y: float,
+        large_frames: list[pygame.Surface],
+        left_frames: list[pygame.Surface],
+        right_frames: list[pygame.Surface],
+        tiny_frames: list[pygame.Surface],
+    ) -> None:
+        floor_y = GROUND_Y + lane_y
+        self.floor_y = floor_y
+        self.fragments = [
+            HeavyBoxFragment(large_frames, x, floor_y, 0.0, -480.0),
+            HeavyBoxFragment(left_frames, x - 10.0, floor_y, -220.0, -380.0),
+            HeavyBoxFragment(right_frames, x + 10.0, floor_y, 220.0, -380.0),
+            HeavyBoxFragment(tiny_frames, x, floor_y, 0.0, 0.0, landed=True),
+        ]
+
+    def update(self, dt: float) -> bool:
+        for fragment in self.fragments:
+            fragment.elapsed += dt
+            if fragment.landed:
+                continue
+
+            fragment.x += fragment.velocity_x * dt
+            fragment.bottom_y += fragment.velocity_y * dt
+            fragment.velocity_y += self.GRAVITY * dt
+            if fragment.bottom_y >= self.floor_y:
+                fragment.bottom_y = self.floor_y
+                fragment.velocity_x = 0.0
+                fragment.velocity_y = 0.0
+                fragment.landed = True
+
+        return all(
+            fragment.landed and fragment.elapsed >= len(fragment.frames) * self.FRAME_DURATION
+            for fragment in self.fragments
+        )
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        for fragment in self.fragments:
+            frame_index = min(
+                int(fragment.elapsed / self.FRAME_DURATION),
+                len(fragment.frames) - 1,
+            )
+            frame = fragment.frames[frame_index]
+            surface.blit(
+                frame,
+                frame.get_rect(midbottom=(int(fragment.x - camera_x), int(fragment.bottom_y))),
+            )
 
 
 class ItemSpriteAnimation:
@@ -3259,16 +3356,24 @@ class FireExplosionEffect:
 
 
 class BattleScene:
-    def __init__(self, character_name: str = "bandit") -> None:
+    def __init__(self, character_name: str = "bandit", *, stage_mode: bool = False) -> None:
         self.font = pygame.font.Font(None, 32)
         self.small_font = pygame.font.Font(None, 24)
         self.pause_font = pygame.font.Font(None, 54)
+        self.stage_title_font = pygame.font.Font(None, 82)
+        self.stage_subtitle_font = pygame.font.Font(None, 32)
         self.projectiles: list[object] = []
         self.consumable_items: list[SpawnedConsumable | ThrownItem] = []
         self.paused = False
-        stage_root = Path(__file__).resolve().parents[2] / "assets" / "maps" / "Forrest"
+        self.stage_mode = stage_mode
+        self.stage_index = 0
+        self.stage_card_timer = STAGE_CARD_DURATION if stage_mode else 0.0
+        self.stage_mode_complete = False
+        self.stage_mode_failed = False
+        self.return_to_menu_requested = False
+        stage_root = Path(__file__).resolve().parents[2] / "assets" / "maps" / "The City"
         sounds_root = Path(__file__).resolve().parents[2] / "assets" / "sounds"
-        self.stage = ForestStage(stage_root)
+        self.stage = CityStage(stage_root)
         item_sprites_root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "item_sprites"
         self.item_sprite_animations = _load_item_sprite_animations(item_sprites_root)
         self.item_hand_anchors = load_hand_anchors(item_sprites_root / "hand_anchors.json")
@@ -3288,6 +3393,13 @@ class BattleScene:
             or any(not frames for frames in self.milk_break_frames.values())
         ):
             raise FileNotFoundError(f"Milk sprites are missing from {milk_root}")
+        heavy_box_animations = self.item_sprite_animations.get(HEAVY_BOX_ITEM_ID, {})
+        self.heavy_box_break_frames = {
+            name: heavy_box_animations.get(f"broken/{name}", [])
+            for name in ("large_chunk", "small_chunk_1", "small_chunk_2", "tiny_chunk")
+        }
+        if any(not frames for frames in self.heavy_box_break_frames.values()):
+            raise FileNotFoundError(f"Heavy-box break sprites are missing from {item_sprites_root / 'throwables' / 'heavy_box' / 'broken'}")
         self.spawnable_items = sorted(
             item_id
             for item_id, animations in self.item_sprite_animations.items()
@@ -3298,7 +3410,9 @@ class BattleScene:
         )
         self.active_item_overlays: dict[Fighter, tuple[str, ItemSpriteAnimation, str | None]] = {}
         self.held_item_animations: dict[Fighter, tuple[str, ItemSpriteAnimation]] = {}
-        self.consumable_break_effects: list[ConsumableBreakEffect | ItemBreakEffect | MetalFragmentEffect] = []
+        self.consumable_break_effects: list[
+            ConsumableBreakEffect | HeavyBoxBreakEffect | ItemBreakEffect | MetalFragmentEffect
+        ] = []
         fragment_root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "particals"
         self.rudolf_metal_fragments = [
             _scale_frames(_load_folder_frames(fragment_root / name), 2.0)
@@ -3318,21 +3432,55 @@ class BattleScene:
         x_bounds = (self.stage.play_min_x, self.stage.play_max_x)
         start_x = SCREEN_WIDTH / 2
         self.fighter = Fighter(FighterConfig(character_name, CHARACTERS[character_name]), (start_x, 0), x_bounds=x_bounds)
-        self.enemy = Fighter(FighterConfig("bandit", CHARACTERS["bandit"]), (start_x + 220.0, 0), x_bounds=x_bounds)
-        self.enemy.max_health = 8
-        self.enemy.health = 8
-        self.enemy.controls_enabled = True
-        self.enemy_brain = BanditBrain()
+        self.enemies: list[Fighter] = []
+        self.enemy_brains: dict[Fighter, BanditBrain] = {}
+        self._spawn_encounter(x_bounds, start_x)
         self.victory_played = False
-        self.victory_played = False
+
+    def _spawn_encounter(self, x_bounds: tuple[float, float], start_x: float) -> None:
+        encounter = STAGE_ENCOUNTERS[self.stage_index] if self.stage_mode else (("bandit", 1),)
+        character_names = [name for name, count in encounter for _ in range(count)]
+        self.enemies = []
+        self.enemy_brains = {}
+
+        for index, character_name in enumerate(character_names):
+            x_offset = 220.0 + (index % 3) * 115.0 + (index // 3) * 90.0
+            x = min(x_bounds[1], max(x_bounds[0], start_x + x_offset))
+            lane_y = 0.0 if len(character_names) == 1 else float(36 + (index % 3) * 90)
+            enemy = Fighter(
+                FighterConfig(character_name, CHARACTERS[character_name]),
+                (x, lane_y),
+                x_bounds=x_bounds,
+            )
+            if not self.stage_mode:
+                enemy.max_health = 8
+                enemy.health = 8
+            enemy.controls_enabled = True
+            self.enemies.append(enemy)
+            self.enemy_brains[enemy] = BanditBrain()
+
+    @property
+    def enemy(self) -> Fighter:
+        return next((enemy for enemy in self.enemies if not enemy.is_dead), self.enemies[0])
 
     def _fighters(self) -> list[Fighter]:
-        return [self.fighter, self.enemy, *(clone.fighter for clone in self.rudolf_clones)]
+        return [self.fighter, *self.enemies, *(clone.fighter for clone in self.rudolf_clones)]
 
     def _opponents_of(self, fighter: Fighter) -> list[Fighter]:
-        if fighter is self.enemy:
+        if fighter in self.enemies:
             return [self.fighter, *(clone.fighter for clone in self.rudolf_clones)]
-        return [self.enemy]
+        return [enemy for enemy in self.enemies if not enemy.is_dead]
+
+    def _advance_stage_mode(self) -> None:
+        if self.stage_index + 1 >= len(STAGE_ENCOUNTERS):
+            self.stage_mode_complete = True
+            return
+
+        self.stage_index += 1
+        x_bounds = (self.stage.play_min_x, self.stage.play_max_x)
+        self._spawn_encounter(x_bounds, self.fighter.x)
+        self.stage_card_timer = STAGE_CARD_DURATION
+        self.victory_played = False
 
     def _spawn_rudolf_clones(self, fighter: Fighter) -> None:
         if not fighter.rudolf_clones_pending:
@@ -3391,6 +3539,123 @@ class BattleScene:
             )
         )
 
+    def _heavy_box_obstacles(self) -> list[SpawnedConsumable | ThrownItem]:
+        return [
+            item
+            for item in self.consumable_items
+            if item.item_id in HEAVY_ITEM_IDS and item.phase == "landed"
+        ]
+
+    def _break_heavy_box(self, item: SpawnedConsumable | ThrownItem) -> bool:
+        if item.item_id not in HEAVY_ITEM_IDS or item not in self.consumable_items:
+            return False
+        self.consumable_items.remove(item)
+        self.audio.play("heavy_box_break")
+        self.consumable_break_effects.append(
+            HeavyBoxBreakEffect(
+                item.x,
+                item.lane_y,
+                self.heavy_box_break_frames["large_chunk"],
+                self.heavy_box_break_frames["small_chunk_1"],
+                self.heavy_box_break_frames["small_chunk_2"],
+                self.heavy_box_break_frames["tiny_chunk"],
+            )
+        )
+        return True
+
+    def _break_heavy_box_from_rect(self, attack_rect: pygame.Rect, lane_y: float | None = None) -> bool:
+        for item in self._heavy_box_obstacles():
+            if lane_y is not None and abs(lane_y - item.lane_y) > 36.0:
+                continue
+            if attack_rect.colliderect(item.world_rect()):
+                return self._break_heavy_box(item)
+        return False
+
+    def _resolve_heavy_box_obstruction(self, previous_x_by_fighter: dict[int, float]) -> None:
+        for item in self._heavy_box_obstacles():
+            obstacle_rect = item.world_rect()
+            for fighter in self._fighters():
+                if fighter.is_dead or abs(fighter.lane_y - item.lane_y) > 36.0:
+                    continue
+                fighter_rect = fighter.world_hitbox_rect()
+                if not fighter_rect.colliderect(obstacle_rect):
+                    continue
+
+                previous_x = previous_x_by_fighter.get(id(fighter), fighter.x)
+                half_width = fighter.hitbox_size[0] / 2
+                crossed_from_left = previous_x + half_width <= obstacle_rect.left and fighter_rect.right > obstacle_rect.left
+                crossed_from_right = previous_x - half_width >= obstacle_rect.right and fighter_rect.left < obstacle_rect.right
+                move_left = crossed_from_left or (
+                    not crossed_from_right
+                    and (previous_x < item.x or (previous_x == item.x and fighter.facing > 0))
+                )
+                if move_left:
+                    fighter.x = max(fighter.min_x, obstacle_rect.left - half_width)
+                    if fighter.push_velocity_x > 0.0:
+                        fighter.push_velocity_x = 0.0
+                else:
+                    fighter.x = min(fighter.max_x, obstacle_rect.right + half_width)
+                    if fighter.push_velocity_x < 0.0:
+                        fighter.push_velocity_x = 0.0
+
+    def _damage_heavy_boxes_with_melee(self) -> None:
+        for attacker in self._fighters():
+            if (
+                attacker.is_dead
+                or attacker.state not in (COMBAT_ATTACK_STATES | {"jump_throw"})
+                or not attacker.attack_started
+                or attacker.has_applied_attack_damage
+                or (attacker.state == "jump_throw" and not attacker.jump_attack_active)
+            ):
+                continue
+            luis_contact_attack = attacker.name == "luis" and attacker.state in {"sp_move_attack_1", "sp_vert_attack_1"}
+            mark_plow_attack = attacker.name == "mark" and attacker.state == "sp_move_attack_1"
+            if attacker.attack_timer <= 0.0 and not (
+                (luis_contact_attack or mark_plow_attack) and not attacker.animation_player.finished
+            ):
+                continue
+
+            attack_range = 72
+            if attacker.name == "dark_bat" and attacker.state == "sp_move_attack_1":
+                attack_range = 132
+            elif attacker.name == "dark_bat" and attacker.state == "jump_throw":
+                attack_range = 96
+            attack_rect = attacker.world_hitbox_rect().inflate(attack_range, 0)
+            for item in self._heavy_box_obstacles():
+                if (
+                    abs(attacker.lane_y - item.lane_y) <= 36.0
+                    and attack_rect.colliderect(item.world_rect())
+                    and self._break_heavy_box(item)
+                ):
+                    attacker.has_applied_attack_damage = True
+                    attacker.attack_started = False
+                    break
+
+    def _damage_heavy_box_with_projectile(self, projectile: object) -> None:
+        if isinstance(projectile, FreezeColumnEffect):
+            if not projectile.finished:
+                self._break_heavy_box_from_rect(projectile.rect(), projectile.lane_y)
+            return
+        if isinstance(projectile, JulianExplosionEffect):
+            if projectile.finished:
+                return
+            for item in self._heavy_box_obstacles():
+                dx = item.world_rect().centerx - projectile.x
+                dy = item.lane_y - projectile.lane_y
+                if dx * dx + dy * dy <= projectile.radius * projectile.radius:
+                    self._break_heavy_box(item)
+                    break
+            return
+        if not getattr(projectile, "can_damage", False):
+            return
+
+        rect_method = getattr(projectile, "rect", None)
+        if not callable(rect_method):
+            return
+        owner = getattr(projectile, "owner", None)
+        lane_y = getattr(projectile, "lane_y", getattr(owner, "lane_y", None))
+        self._break_heavy_box_from_rect(rect_method(), lane_y)
+
     def _try_pick_up_consumable(self, fighter: Fighter, inputs: FighterInput) -> bool:
         if (
             not inputs.attack_just_pressed
@@ -3402,7 +3667,10 @@ class BattleScene:
         ):
             return False
         for item in self.consumable_items:
-            if item.pickupable and abs(fighter.x - item.x) <= 56.0 and abs(fighter.lane_y - item.lane_y) <= 24.0:
+            pickup_range = 56.0
+            if item.item_id in HEAVY_ITEM_IDS:
+                pickup_range = max(pickup_range, item.world_rect().width / 2 + fighter.hitbox_size[0] / 2)
+            if item.pickupable and abs(fighter.x - item.x) <= pickup_range and abs(fighter.lane_y - item.lane_y) <= 24.0:
                 self.consumable_items.remove(item)
                 fighter.state = "get_up"
                 fighter.state_timer = 0.36
@@ -3486,7 +3754,11 @@ class BattleScene:
             return True
 
         airborne = fighter.z > 0 or fighter.velocity_z != 0
-        animation_name = "jump_throw" if airborne else "spawn"
+        animation_name = (
+            "jump_throw"
+            if airborne
+            else ("throw_heavy" if item_id in HEAVY_ITEM_IDS else "spawn")
+        )
         if inputs.left != inputs.right:
             fighter.facing = -1 if inputs.left else 1
         if not fighter.start_item_throw(animation_name, airborne):
@@ -3531,11 +3803,12 @@ class BattleScene:
 
             facing = fighter.facing
             start_x = fighter.x + facing * 32.0
-            distance_multiplier = (
-                THROWABLE_DISTANCE_MULTIPLIER
-                if _is_throwable_item(item_id)
-                else 1.0
-            )
+            if item_id in HEAVY_ITEM_IDS:
+                distance_multiplier = HEAVY_ITEM_DISTANCE_MULTIPLIER
+            elif _is_throwable_item(item_id):
+                distance_multiplier = THROWABLE_DISTANCE_MULTIPLIER
+            else:
+                distance_multiplier = 1.0
             end_x = fighter.x + facing * THROWN_ITEM_MAX_DISTANCE * distance_multiplier
             start_x = max(self.stage.play_min_x, min(self.stage.play_max_x, start_x))
             end_x = max(self.stage.play_min_x, min(self.stage.play_max_x, end_x))
@@ -3564,6 +3837,19 @@ class BattleScene:
     def _resolve_thrown_item_hits(self) -> None:
         for item in tuple(self.consumable_items):
             if not isinstance(item, ThrownItem) or item.phase != "thrown":
+                continue
+            heavy_box = next(
+                (
+                    obstacle
+                    for obstacle in self._heavy_box_obstacles()
+                    if abs(obstacle.lane_y - item.lane_y) <= 28.0
+                    and item.world_rect().colliderect(obstacle.world_rect())
+                ),
+                None,
+            )
+            if heavy_box is not None:
+                self._break_heavy_box(heavy_box)
+                item.drop_at_hit()
                 continue
             target = next(
                 (
@@ -3621,14 +3907,21 @@ class BattleScene:
             return None
 
         animation_name = fighter.animation_player.current_name
+        is_heavy_item = fighter.held_item in HEAVY_ITEM_IDS
+        anchor_animation_name = (
+            HEAVY_ITEM_ANCHOR_KEYS.get(animation_name, HEAVY_ITEM_ANCHOR_KEYS["idle"])
+            if is_heavy_item
+            else animation_name
+        )
         frame_index = fighter.animation_player.frame_index
-        animation_anchors = character_anchors.get(animation_name, [])
+        animation_anchors = character_anchors.get(anchor_animation_name, [])
         if frame_index < len(animation_anchors) and animation_anchors[frame_index] is not None:
             return animation_anchors[frame_index]
 
         if not fallback_to_idle:
             return None
-        idle_anchors = character_anchors.get("idle", [])
+        idle_key = HEAVY_ITEM_ANCHOR_KEYS["idle"] if is_heavy_item else "idle"
+        idle_anchors = character_anchors.get(idle_key, [])
         return next((anchor for anchor in idle_anchors if anchor is not None), None)
 
     def _draw_item_sprite(
@@ -3670,7 +3963,11 @@ class BattleScene:
             fighter,
             animation.current_frame,
             camera_x,
-            fallback_anchor=(0.30, 0.62),
+            fallback_anchor=(
+                HEAVY_ITEM_FALLBACK_ANCHOR
+                if fighter.held_item in HEAVY_ITEM_IDS
+                else (0.30, 0.62)
+            ),
         )
 
     def _draw_item_overlay(self, surface: pygame.Surface, fighter: Fighter, camera_x: float) -> None:
@@ -3754,6 +4051,7 @@ class BattleScene:
                     column.break_apart()
 
     def _handle_combat(self) -> None:
+        self._damage_heavy_boxes_with_melee()
         self._break_freeze_columns_with_melee()
         for attacker in self._fighters():
             defenders = self._opponents_of(attacker)
@@ -3910,6 +4208,8 @@ class BattleScene:
     def _handle_luis_liberated_dash_hits(self, attacker: Fighter, defender: Fighter) -> None:
         while attacker.luis_liberated_swing_hits_pending:
             attacker.luis_liberated_swing_hits_pending.pop(0)
+            if self._break_heavy_box_from_rect(attacker.world_hitbox_rect().inflate(72, 0), attacker.lane_y):
+                continue
             if abs(attacker.lane_y - defender.lane_y) > 36:
                 continue
             if not attacker.world_hitbox_rect().inflate(72, 0).colliderect(defender.world_hitbox_rect()):
@@ -3934,6 +4234,8 @@ class BattleScene:
                 if fighter.name != "woody" or frame_index not in punch_frames:
                     continue
                 attack_rect = fighter.world_hitbox_rect().inflate(84, 0)
+                if self._break_heavy_box_from_rect(attack_rect, fighter.lane_y):
+                    continue
                 target = next(
                     (
                         opponent
@@ -3967,6 +4269,7 @@ class BattleScene:
             previous_x = previous_x_by_fighter.get(id(fighter), fighter.x)
             previous_rect = current_rect.move(round(previous_x - fighter.x), 0)
             swept_rect = current_rect.union(previous_rect)
+            self._break_heavy_box_from_rect(swept_rect, fighter.lane_y)
             for target in self._opponents_of(fighter):
                 if (
                     target.is_dead
@@ -4093,7 +4396,7 @@ class BattleScene:
             else:
                 fighter.step_cycle_timer = 0.0
 
-        if self.enemy.is_dead and not self.victory_played:
+        if all(enemy.is_dead for enemy in self.enemies) and not self.victory_played:
             self.audio.play("win")
             self.victory_played = True
 
@@ -4602,9 +4905,9 @@ class BattleScene:
             origin_y = hitbox.bottom - 42.0
             wind = WindProjectile(fighter, origin_x, origin_y, fighter.facing)
             self.projectiles.append(wind)
-            targets = (self.enemy,) if fighter is self.fighter else (self.fighter,)
+            targets = self._opponents_of(fighter)
             for target in targets:
-                if target is None or target.is_dead or abs(target.lane_y - fighter.lane_y) > 10:
+                if target.is_dead or abs(target.lane_y - fighter.lane_y) > 10:
                     continue
                 target._start_knockdown()
                 wind.hit_targets.add(id(target))
@@ -4780,6 +5083,7 @@ class BattleScene:
         visible_right = camera_x + SCREEN_WIDTH
         for projectile in list(self.projectiles):
             projectile.update(dt)
+            self._damage_heavy_box_with_projectile(projectile)
             if isinstance(projectile, FirzenFireIceOrb) and projectile.just_split:
                 projectile.just_split = False
                 self._spawn_firzen_ground_orbs(projectile)
@@ -4834,7 +5138,12 @@ class BattleScene:
                     self.audio.play("john_heal_orb_heal")
                     projectile.just_heal_sound = False
                 if isinstance(projectile, JohnHealOrbProjectile) and projectile.phase == "idle":
-                    for target in (self.fighter, self.enemy):
+                    allies = (
+                        [self.fighter, *(clone.fighter for clone in self.rudolf_clones)]
+                        if projectile.owner is self.fighter
+                        else self.enemies
+                    )
+                    for target in allies:
                         if target is None or target.is_dead or not projectile.contact_rect().colliderect(target.world_hitbox_rect()):
                             continue
                         target.health = min(target.max_health, target.health + 5)
@@ -5305,10 +5614,53 @@ class BattleScene:
         panel_width = 420
         self._draw_hud_bar(surface, 20, 18, panel_width, 28, self.fighter.health, self.fighter.max_health, (194, 58, 58), f"{self.fighter.definition['display_name']} HP")
         self._draw_hud_bar(surface, 20, 52, panel_width, 24, self.fighter.mana, self.fighter.max_mana, (72, 122, 235), "MP")
-        if self.enemy is not None:
-            x = SCREEN_WIDTH - panel_width - 20
+        x = SCREEN_WIDTH - panel_width - 20
+        if self.stage_mode:
+            for index, enemy in enumerate(enemy for enemy in self.enemies if not enemy.is_dead):
+                self._draw_hud_bar(
+                    surface,
+                    x,
+                    18 + index * 31,
+                    panel_width,
+                    27,
+                    enemy.health,
+                    enemy.max_health,
+                    (194, 58, 58),
+                    f"{enemy.definition['display_name']} HP",
+                )
+        else:
             self._draw_hud_bar(surface, x, 18, panel_width, 28, self.enemy.health, self.enemy.max_health, (194, 58, 58), f"{self.enemy.definition['display_name']} HP")
             self._draw_hud_bar(surface, x, 52, panel_width, 24, self.enemy.mana, self.enemy.max_mana, (72, 122, 235), "MP")
+
+    def _draw_stage_mode_card(self, surface: pygame.Surface) -> None:
+        if not self.stage_mode:
+            return
+
+        show_title = self.stage_card_timer > 0.0
+        if not (show_title or self.stage_mode_complete or self.stage_mode_failed):
+            return
+
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((8, 12, 20, 175))
+        surface.blit(overlay, (0, 0))
+        card = pygame.Rect(460, 350, 1000, 330)
+        pygame.draw.rect(surface, (24, 32, 44), card, border_radius=18)
+        pygame.draw.rect(surface, (220, 169, 91), card, width=3, border_radius=18)
+
+        if self.stage_mode_complete:
+            heading_text = "CAMPAIGN COMPLETE"
+            subtitle_text = "All ten stages cleared - press J to return to the menu"
+        elif self.stage_mode_failed:
+            heading_text = "STAGE FAILED"
+            subtitle_text = "Press J to return to the menu"
+        else:
+            heading_text = f"STAGE {STAGE_ROMAN_NUMERALS[self.stage_index]}"
+            subtitle_text = "Prepare for battle"
+
+        heading = self.stage_title_font.render(heading_text, True, TEXT_COLOR)
+        subtitle = self.stage_subtitle_font.render(subtitle_text, True, (195, 205, 218))
+        surface.blit(heading, heading.get_rect(center=(card.centerx, card.centery - 42)))
+        surface.blit(subtitle, subtitle.get_rect(center=(card.centerx, card.centery + 42)))
 
     def _draw_marker(self, surface: pygame.Surface, fighter: Fighter, camera_x: float, text: str) -> None:
         marker = self.small_font.render(text, True, (255, 240, 120))
@@ -5319,12 +5671,22 @@ class BattleScene:
     def update(self, dt: float, inputs: FighterInput) -> None:
         if self.paused:
             return
+        if self.stage_mode and (self.stage_mode_complete or self.stage_mode_failed):
+            if inputs.attack_just_pressed:
+                self.return_to_menu_requested = True
+            return
+        if self.stage_mode and self.stage_card_timer > 0.0:
+            self.stage_card_timer = max(0.0, self.stage_card_timer - dt)
+            return
+
         self.consumable_spawn_timer -= dt
         while self.consumable_spawn_timer <= 0.0:
             self._spawn_consumable(random.choice(self.spawnable_items))
             self.consumable_spawn_timer += 18.0
         if inputs.spawn_milk_just_pressed:
             self._spawn_consumable("consumables/milk")
+        if inputs.spawn_heavy_item_just_pressed:
+            self._spawn_consumable(HEAVY_BOX_ITEM_ID)
         fighter_throw_was_active = self.fighter.item_throw_animation is not None
         fighter_throw_handled = self._handle_held_item_throw_input(self.fighter, inputs)
         if fighter_throw_was_active or fighter_throw_handled:
@@ -5343,27 +5705,38 @@ class BattleScene:
         previous_x_by_fighter = {
             id(fighter): fighter.x for fighter in self._fighters()
         }
-        was_drinking = (self.fighter.state == "drink", self.enemy.state == "drink")
+        fighters_before_enemy_updates = [self.fighter, *self.enemies]
+        was_drinking = {fighter: fighter.state == "drink" for fighter in fighters_before_enemy_updates}
+        items_to_drink: dict[Fighter, str | None] = {self.fighter: fighter_item}
         self.fighter.update(dt, fighter_inputs, target=self.enemy, controlled=True)
         self._spawn_rudolf_clones(self.fighter)
-        self.enemy_brain.update(dt)
-        enemy_input = self.enemy_brain.build_input(self.enemy.snapshot, self.fighter.snapshot)
-        enemy_throw_was_active = self.enemy.item_throw_animation is not None
-        enemy_throw_handled = self._handle_held_item_throw_input(self.enemy, enemy_input)
-        if enemy_throw_was_active or enemy_throw_handled:
-            enemy_input = self._suppress_item_throw_inputs(enemy_input)
-            enemy_item = None
-        else:
-            enemy_item = self._item_to_drink(self.enemy, enemy_input)
-            if enemy_item is not None:
-                enemy_input.attack_pressed = False
-                enemy_input.attack_just_pressed = False
-                enemy_input.drink_just_pressed = True
-            elif self._try_pick_up_consumable(self.enemy, enemy_input):
-                enemy_input.attack_just_pressed = False
-        if self.enemy.held_item is not None and _is_throwable_item(self.enemy.held_item):
-            enemy_input.drink_just_pressed = False
-        self.enemy.update(dt, enemy_input, target=self.fighter, controlled=True)
+        for enemy in tuple(self.enemies):
+            if enemy.is_dead:
+                enemy.update(dt, FighterInput(), target=self.fighter, controlled=True)
+                items_to_drink[enemy] = None
+                continue
+
+            brain = self.enemy_brains[enemy]
+            brain.update(dt)
+            enemy_input = brain.build_input(enemy.snapshot, self.fighter.snapshot)
+            enemy_throw_was_active = enemy.item_throw_animation is not None
+            enemy_throw_handled = self._handle_held_item_throw_input(enemy, enemy_input)
+            if enemy_throw_was_active or enemy_throw_handled:
+                enemy_input = self._suppress_item_throw_inputs(enemy_input)
+                enemy_item = None
+            else:
+                enemy_item = self._item_to_drink(enemy, enemy_input)
+                if enemy_item is not None:
+                    enemy_input.attack_pressed = False
+                    enemy_input.attack_just_pressed = False
+                    enemy_input.drink_just_pressed = True
+                elif self._try_pick_up_consumable(enemy, enemy_input):
+                    enemy_input.attack_just_pressed = False
+            if enemy.held_item is not None and _is_throwable_item(enemy.held_item):
+                enemy_input.drink_just_pressed = False
+            enemy.update(dt, enemy_input, target=self.fighter, controlled=True)
+            items_to_drink[enemy] = enemy_item
+
         for clone in tuple(self.rudolf_clones):
             clone.lifetime -= dt
             if clone.lifetime <= 0.0:
@@ -5380,12 +5753,10 @@ class BattleScene:
             if fighter.luis_transform_pending:
                 fighter.transform_to(FighterConfig("luis_liberated", CHARACTERS["luis_liberated"]))
         self._finish_held_item_throw(self.fighter)
-        self._finish_held_item_throw(self.enemy)
-        for fighter, previously_drinking, item_id in zip(
-            (self.fighter, self.enemy),
-            was_drinking,
-            (fighter_item, enemy_item),
-        ):
+        for enemy in self.enemies:
+            self._finish_held_item_throw(enemy)
+        for fighter, previously_drinking in was_drinking.items():
+            item_id = items_to_drink.get(fighter)
             if fighter.state == "drink" and not previously_drinking:
                 self.audio.play("drink_drink")
                 if item_id is not None:
@@ -5436,6 +5807,7 @@ class BattleScene:
             self._spawn_firen_fire_trail(fighter)
             self._spawn_firen_explosion(fighter)
 
+        self._resolve_heavy_box_obstruction(previous_x_by_fighter)
         self._resolve_freeze_column_obstruction(previous_x_by_fighter)
         for effect in tuple(self.consumable_break_effects):
             if effect.update(dt):
@@ -5446,15 +5818,21 @@ class BattleScene:
         for item in tuple(self.consumable_items):
             item_event = item.update(dt)
             if item_event == "landed":
-                sound = (
-                    "armor_piece_land"
-                    if item.item_id in {"throwables/armor_piece_1", "throwables/armor_piece_2"}
-                    else "drink_land"
-                )
-                self.audio.play(sound)
+                if item.item_id in HEAVY_ITEM_IDS:
+                    self.audio.play_heavy_box_land()
+                else:
+                    sound = (
+                        "armor_piece_land"
+                        if item.item_id in {"throwables/armor_piece_1", "throwables/armor_piece_2"}
+                        else "drink_land"
+                    )
+                    self.audio.play(sound)
             elif item_event == "break":
-                self.consumable_items.remove(item)
-                self.audio.play("drink_break")
+                if item.item_id in HEAVY_ITEM_IDS:
+                    self._break_heavy_box(item)
+                else:
+                    self.consumable_items.remove(item)
+                    self.audio.play("drink_break")
                 if item.item_id == "consumables/milk":
                     self.consumable_break_effects.append(
                         ConsumableBreakEffect(
@@ -5465,7 +5843,7 @@ class BattleScene:
                             self.milk_break_frames["small"],
                         )
                     )
-                else:
+                elif item.item_id not in HEAVY_ITEM_IDS:
                     broken_frames = self.item_sprite_animations.get(item.item_id, {}).get("broken")
                     if broken_frames:
                         self.consumable_break_effects.append(
@@ -5487,6 +5865,13 @@ class BattleScene:
         self._handle_combat()
         self._remove_finished_rudolf_clones()
         self._handle_audio(dt)
+        if self.stage_mode:
+            if self.fighter.state == "dead":
+                self.stage_mode_failed = True
+            elif self.fighter.state != "die" and self.enemies and all(
+                enemy.state == "dead" for enemy in self.enemies
+            ):
+                self._advance_stage_mode()
 
     def draw(self, surface: pygame.Surface) -> None:
         focus_x = self._camera_focus_x()
@@ -5511,6 +5896,7 @@ class BattleScene:
 
         self._draw_marker(surface, self.fighter, camera_x, "P1")
         self._draw_hud(surface)
+        self._draw_stage_mode_card(surface)
         if self.paused:
             overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
             overlay.fill((0, 0, 0, 150))

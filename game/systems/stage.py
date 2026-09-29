@@ -18,6 +18,13 @@ def _load_bitmap(path: Path, *, colorkey: tuple[int, int, int] | None = None) ->
     return image
 
 
+def _load_city_image(path: Path, *, colorkey: tuple[int, int, int] | None = None) -> pygame.Surface:
+    image = pygame.image.load(str(path)).convert_alpha()
+    if colorkey is not None:
+        image.set_colorkey(colorkey)
+    return image
+
+
 def _scale_width(surface: pygame.Surface, width: int) -> pygame.Surface:
     scaled_height = max(1, int(surface.get_height() * (width / surface.get_width())))
     return pygame.transform.smoothscale(surface, (width, scaled_height))
@@ -140,3 +147,82 @@ class ForestStage:
         platform_offset = int(camera_x)
         visible = pygame.Rect(platform_offset, 0, SCREEN_WIDTH, self.platform_surface.get_height())
         surface.blit(self.platform_surface, (0, self.platform_y), visible)
+
+
+class CityStage:
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.world_width = SCREEN_WIDTH * 3
+        self.play_min_x = 80.0
+        self.play_max_x = self.world_width - 80.0
+        self.floor_top = GROUND_Y
+        self.layers = self._build_layers()
+        self.platform_surface = self._build_platform()
+
+    def _build_layers(self) -> list[StageLayer]:
+        max_camera = self.world_width - SCREEN_WIDTH
+        backdrop_parallax = 0.015
+        backdrop_width = SCREEN_WIDTH + round(max_camera * backdrop_parallax)
+        backdrop = pygame.transform.smoothscale(
+            _load_city_image(self.root / "backdrop.jpg"),
+            (backdrop_width, self.floor_top),
+        )
+        layer_specs = (
+            ("near_scenery.png", 0.03, None, 1.0),
+            ("foreground elenment 1.png", 0.06, (0, 0, 0), 0.75),
+            ("foreground elenment 3.png", 0.10, None, 0.75),
+            ("foreground elenment 2.png", 0.14, None, 0.75),
+        )
+        layers = [StageLayer(backdrop, 0, backdrop_parallax, False)]
+
+        for file_name, parallax, colorkey, scale in layer_specs:
+            image = _load_city_image(self.root / file_name, colorkey=colorkey)
+            layer_width = SCREEN_WIDTH + round(max_camera * parallax)
+            image = pygame.transform.smoothscale(image, (layer_width, self.floor_top))
+            y = 0
+            if scale < 1.0:
+                scaled_size = (round(layer_width * scale), round(self.floor_top * scale))
+                scaled = pygame.transform.smoothscale(image, scaled_size)
+                image = pygame.Surface((layer_width, self.floor_top), pygame.SRCALPHA)
+                image.blit(
+                    scaled,
+                    ((layer_width - scaled_size[0]) // 2, self.floor_top - scaled_size[1]),
+                )
+            elif file_name == "near_scenery.png":
+                y = self.floor_top - image.get_bounding_rect(min_alpha=8).bottom
+            layers.append(StageLayer(image, y, parallax, False))
+
+        return layers
+
+    def _build_platform(self) -> pygame.Surface:
+        ground = _load_city_image(self.root / "ground.jpg")
+        floor_height = max(1, SCREEN_HEIGHT - self.floor_top)
+        tile_width = max(1, round(floor_height * ground.get_width() / ground.get_height()))
+        tile = pygame.transform.smoothscale(ground, (tile_width, floor_height))
+        platform = pygame.Surface((self.world_width, floor_height))
+        for x in range(0, self.world_width, tile_width):
+            platform.blit(tile, (x, 0))
+        return platform
+
+    def camera_x(self, focus_x: float) -> float:
+        max_camera = max(0, self.world_width - SCREEN_WIDTH)
+        return max(0.0, min(max_camera, focus_x - (SCREEN_WIDTH / 2)))
+
+    def draw(self, surface: pygame.Surface, focus_x: float) -> None:
+        camera_x = self.camera_x(focus_x)
+        surface.fill(BG_COLOR)
+
+        for layer in self.layers:
+            if layer.repeat_x:
+                width = layer.surface.get_width()
+                offset = -round(camera_x * layer.parallax) % width
+                draw_x = offset - width
+                while draw_x < SCREEN_WIDTH:
+                    surface.blit(layer.surface, (draw_x, layer.y))
+                    draw_x += width
+            else:
+                surface.blit(layer.surface, (-round(camera_x * layer.parallax), layer.y))
+
+        platform_offset = int(camera_x)
+        visible = pygame.Rect(platform_offset, 0, SCREEN_WIDTH, self.platform_surface.get_height())
+        surface.blit(self.platform_surface, (0, self.floor_top), visible)

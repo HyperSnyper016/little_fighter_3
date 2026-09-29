@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
+from pathlib import Path
 
 import pygame
 
-from game.constants import GROUND_Y, HENRY_FLUTE_SEQUENCE_DURATION, LANE_MAX_Y, LANE_MIN_Y, SHADOW_COLOR
+from game.constants import GROUND_Y, HEAVY_ITEM_IDS, HENRY_FLUTE_SEQUENCE_DURATION, LANE_MAX_Y, LANE_MIN_Y, SHADOW_COLOR
 from game.systems.animation import AnimationPlayer
 from game.systems.assets import load_character_sheet
 
@@ -26,6 +28,24 @@ HENRY_FLOAT_DURATION = HENRY_FLUTE_SEQUENCE_DURATION
 HENRY_FLOAT_HEIGHT = 72.0
 HENRY_FLOAT_BOB_AMPLITUDE = 12.0
 HENRY_FLOAT_BOB_PERIOD = 0.4
+
+
+def _natural_sort_key(path: Path) -> list[str | int]:
+    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", path.name)]
+
+
+def _heavy_carry_files(carry_root: Path, folder_names: tuple[str, ...]) -> list[Path]:
+    for folder_name in folder_names:
+        folder = carry_root / folder_name
+        if not folder.is_dir():
+            continue
+        files = sorted(
+            (path for path in folder.iterdir() if path.is_file() and path.suffix.lower() in {".bmp", ".png"}),
+            key=_natural_sort_key,
+        )
+        if files:
+            return files
+    return []
 
 
 @dataclass
@@ -60,6 +80,7 @@ class FighterInput:
     ice_knock_just_pressed: bool = False
     hurt_just_pressed: bool = False
     spawn_milk_just_pressed: bool = False
+    spawn_heavy_item_just_pressed: bool = False
 
 
 @dataclass
@@ -245,7 +266,7 @@ class Fighter:
         self.ice_launch_freeze_break_pending = False
         self.fire_knock_sfx_pending = False
         self.hunter_projectile_style = "basic"
-        self.animations = load_character_sheet(self.definition)
+        self.animations = self._load_animations()
         self.block_dodge_cycle = [name for name in ("block_dodge", "block_dodge_alt", "block_dodge_alt_2") if name in self.animations]
         if not self.block_dodge_cycle:
             self.block_dodge_cycle = ["block_dodge"]
@@ -273,6 +294,49 @@ class Fighter:
     def _has_animation(self, name: str) -> bool:
         return name in self.animations
 
+    def _load_animations(self) -> dict[str, dict]:
+        animations = load_character_sheet(self.definition)
+        heavy_carry_definition = self.definition["animations"].get("lift_heavy", {})
+        heavy_carry_source = heavy_carry_definition.get("files", [])
+        heavy_carry_files: list[Path] = []
+        heavy_carry_sprint_files: list[Path] = []
+        if heavy_carry_source:
+            heavy_carry_root = Path(heavy_carry_source[0]).parent.parent
+            heavy_carry_files = _heavy_carry_files(heavy_carry_root, ("walking", "walk"))
+            heavy_carry_sprint_files = _heavy_carry_files(heavy_carry_root, ("sprinting", "sprint"))
+
+        if not heavy_carry_files:
+            heavy_carry_files = [Path(path) for path in heavy_carry_source]
+        if heavy_carry_files:
+            frame_duration = heavy_carry_definition["frame_duration"]
+            carry_animations = {
+                "heavy_carry_idle": {
+                    "files": heavy_carry_files[:1],
+                    "frame_duration": frame_duration,
+                    "loop": True,
+                },
+                "heavy_carry_walk": {
+                    "files": heavy_carry_files,
+                    "frame_duration": frame_duration,
+                    "loop": True,
+                },
+            }
+            if heavy_carry_sprint_files:
+                carry_animations["heavy_carry_sprint"] = {
+                    "files": heavy_carry_sprint_files,
+                    "frame_duration": heavy_carry_definition["frame_duration"],
+                    "loop": True,
+                }
+            animations.update(
+                load_character_sheet(
+                    {
+                        "scale": self.definition["scale"],
+                        "animations": carry_animations,
+                    }
+                )
+            )
+        return animations
+
     def transform_to(self, config: FighterConfig) -> None:
         health = self.health
         mana = self.mana
@@ -289,7 +353,7 @@ class Fighter:
         self.touch_damage = int(self.stats.get("touch_damage", 1))
         hitbox_width, hitbox_height = self.stats.get("hitbox", (92, 160))
         self.hitbox_size = (int(hitbox_width), int(hitbox_height))
-        self.animations = load_character_sheet(self.definition)
+        self.animations = self._load_animations()
         self.animation_player = AnimationPlayer(self.animations, "idle")
         self.block_dodge_cycle = [
             name for name in ("block_dodge", "block_dodge_alt", "block_dodge_alt_2") if name in self.animations
@@ -954,9 +1018,10 @@ class Fighter:
         return True
 
     def update(self, dt: float, inputs: FighterInput, target: Fighter | None = None, controlled: bool = True) -> None:
-        attack_pressed = controlled and inputs.attack_pressed
+        can_attack = self.held_item is None
+        attack_pressed = controlled and inputs.attack_pressed and can_attack
         block_pressed = controlled and inputs.block_pressed
-        attack_just_pressed = controlled and inputs.attack_just_pressed
+        attack_just_pressed = controlled and inputs.attack_just_pressed and can_attack
         block_just_pressed = controlled and inputs.block_just_pressed
         knock_just_pressed = controlled and inputs.knock_just_pressed
         lift_just_pressed = controlled and inputs.lift_just_pressed
@@ -1478,10 +1543,14 @@ class Fighter:
             animation_name = "spawn"
         elif self.state == "throw_heavy":
             animation_name = "throw_heavy"
-        elif self.state == "run":
-            animation_name = "run"
-        elif self.state == "walk":
-            animation_name = "walk"
+        elif self.state in {"run", "walk"}:
+            if self.held_item in HEAVY_ITEM_IDS:
+                if self.state == "run" and "heavy_carry_sprint" in self.animations:
+                    animation_name = "heavy_carry_sprint"
+                else:
+                    animation_name = "heavy_carry_walk" if "heavy_carry_walk" in self.animations else self.state
+            else:
+                animation_name = self.state
         elif self.state == "sprint_punch":
             animation_name = (
                 "sprint_basic_attack"
@@ -1493,7 +1562,11 @@ class Fighter:
         elif self.state == "jump_throw":
             animation_name = self.current_jump_animation if self.current_jump_animation in self.animations else "jump_normal"
         else:
-            animation_name = "idle"
+            animation_name = (
+                "heavy_carry_idle"
+                if self.state == "idle" and self.held_item in HEAVY_ITEM_IDS and "heavy_carry_idle" in self.animations
+                else "idle"
+            )
         if self.animation_player.current_name != animation_name:
             self.animation_player.play(animation_name)
         if self.state == "knocked_freeze" and self.freeze_timer > 0.0:

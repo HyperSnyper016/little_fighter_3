@@ -33,6 +33,7 @@ class Game:
             dt = self.clock.tick(FPS) / 1000.0
             pressed_actions = set()
             mouse_click = None
+            mouse_wheel_y = 0
             left_pressed = False
             right_pressed = False
             for event in pygame.event.get():
@@ -41,6 +42,8 @@ class Game:
                     sys.exit()
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     mouse_click = event.pos
+                if event.type == pygame.MOUSEWHEEL:
+                    mouse_wheel_y += event.y
                 if event.type == pygame.KEYDOWN:
                     pressed_actions.add(event.key)
                     if event.key == pygame.K_F9:
@@ -89,6 +92,7 @@ class Game:
                 ice_knock_just_pressed=pygame.K_i in pressed_actions,
                 hurt_just_pressed=pygame.K_h in pressed_actions,
                 spawn_milk_just_pressed=pygame.K_p in pressed_actions,
+                spawn_heavy_item_just_pressed=pygame.K_o in pressed_actions,
             )
 
             if isinstance(self.scene, BattleScene):
@@ -108,7 +112,7 @@ class Game:
             if isinstance(self.scene, BattleScene):
                 self.scene.update(dt, self.input_state)
             elif isinstance(self.scene, MainMenuScene):
-                self.scene.update(dt, pygame.mouse.get_pos(), mouse_click)
+                self.scene.update(dt, pygame.mouse.get_pos(), mouse_click, mouse_wheel_y)
             elif isinstance(self.scene, CharacterSelectScene):
                 self.scene.update(dt, pygame.mouse.get_pos(), mouse_click)
             else:
@@ -119,10 +123,18 @@ class Game:
             if isinstance(self.scene, MainMenuScene) and self.scene.start_requested:
                 self.scene = CharacterSelectScene(
                     self.sprites_root,
-                    confirm_already_pressed=keys[pygame.K_j],
+                    confirm_already_pressed=(
+                        keys[pygame.K_j]
+                        or keys[pygame.K_RETURN]
+                        or keys[pygame.K_KP_ENTER]
+                        or keys[pygame.K_SPACE]
+                    ),
+                    stage_mode=self.scene.stage_mode_requested,
                 )
             elif isinstance(self.scene, CharacterSelectScene) and self.scene.selection_confirmed and self.scene.selected_character:
-                self.scene = BattleScene(self.scene.selected_character)
+                self.scene = BattleScene(self.scene.selected_character, stage_mode=self.scene.stage_mode)
+            elif isinstance(self.scene, BattleScene) and self.scene.return_to_menu_requested:
+                self.scene = MainMenuScene()
             self.screen.fill(BG_COLOR)
             self.scene.draw(self.screen)
             if isinstance(self.scene, BattleScene):
