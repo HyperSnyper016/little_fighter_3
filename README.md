@@ -20,7 +20,7 @@ PyCharm-friendly Python prototype for a Little Fighter 2-inspired side-scrolling
 - Put source sprite sheets under `assets/sprites/characters/`.
 - Character definitions live in `game/data/characters.py`.
 - Item sprites are discovered under `assets/sprites/item_sprites/<category>/<item>/<action>/`. Put held idle frames in `holding/idle`; action frames go directly in their action folder, with variants allowed in nested subfolders. Directories beginning with `_` are ignored, so `_blank_consumable` and `_blank_throwable` can hold reusable templates without being treated as items.
-- `python tools/preview_item_anchor.py` calibrates both milk and heavy-carry anchors; use `--item heavy-carry` to calibrate only the heavy-carry idle, get-up, walking, sprinting, and throw poses.
+- `python tools/preview_item_anchor.py` calibrates milk, heavy-carry walk/sprint/throw, and the canonical Ice Sword weapon hand-anchor template. Weapon calibration previews the selected sprite over the character; the mouse wheel selects the exact reference for each character pose frame, including normal/second jumps, ground/jump throws, and a separate get-up pose. At runtime, held weapons use matching filename stems from their `holding/swing` or `throw` folders, so standardized names let weapons share the frame mapping while keeping anchors weapon-specific.
 - Milk break effects use `broken/dust`, `broken/large`, and `broken/small` frame folders.
 - Held item IDs are category-relative paths such as `consumables/milk`. Use `BattleScene.start_item_overlay` to play other item actions over a fighter.
 - The included prototype uses the provided `sprite example/bandit_0.bmp` as the initial source asset path reference.

@@ -16,6 +16,8 @@ CHARACTER_ROOT = PROJECT_ROOT / "assets" / "sprites" / "characters"
 ITEM_ROOT = PROJECT_ROOT / "assets" / "sprites" / "item_sprites"
 MILK_ROOT = ITEM_ROOT / "consumables" / "milk"
 HEAVY_CARRY_ITEM_ROOT = ITEM_ROOT / "throwables" / "heavy_box"
+WEAPON_ROOT = ITEM_ROOT / "weapons"
+WEAPON_ANCHOR_REFERENCE = "ice_sword"
 ANCHOR_FILE = ITEM_ROOT / "hand_anchors.json"
 IMAGE_EXTENSIONS = {".bmp", ".png"}
 ANIMATION_FOLDERS = {
@@ -26,56 +28,71 @@ ANIMATION_FOLDERS = {
     "spawn": ("hold_item", "throw_item", "ground_throw"),
     "jump_throw": ("hold_item", "throw_item", "jump_throw"),
     "get_up": ("fall", "get_up"),
-    "heavy_carry_idle": ("hold_item", "heavy_carry", "walking"),
-    "heavy_carry_get_up": ("fall", "get_up"),
-    "heavy_carry_walk": ("hold_item", "heavy_carry", "walking"),
-    "heavy_carry_sprint": ("hold_item", "heavy_carry", "sprinting"),
+    "heavy_carry_walk": ("hold_item", "heavy_carry", "walk"),
+    "heavy_carry_sprint": ("hold_item", "heavy_carry", "sprint"),
     "heavy_carry_throw": ("hold_item", "heavy_carry", "throw"),
-    "heavy_carry_jump_throw": ("hold_item", "throw_item", "jump_throw"),
+    "weapon_idle": ("idle",),
+    "weapon_jump_normal": ("movement", "jump_actions", "basic_jump"),
+    "weapon_jump_second": ("movement", "jump_actions", "second_jump"),
+    "weapon_ground_throw": ("hold_item", "throw_item", "ground_throw"),
+    "weapon_jump_throw": ("hold_item", "throw_item", "jump_throw"),
+    "weapon_basic_attack": ("hold_item", "weapon_carry", "basic_attack"),
+    "weapon_jump_attack": ("hold_item", "weapon_carry", "jump_attack"),
+    "weapon_sprint_basic_attack": ("hold_item", "weapon_carry", "sprint_basic_attack"),
+    "weapon_sprint_jump_basic_attack": ("hold_item", "weapon_carry", "sprint_jump_basic_attack"),
+    "weapon_get_up": ("fall", "get_up"),
 }
 MILK_ANIMATIONS = ("idle", "walk", "run", "drink", "spawn", "jump_throw", "get_up")
 HEAVY_CARRY_ANIMATIONS = (
-    "heavy_carry_idle",
-    "heavy_carry_get_up",
     "heavy_carry_walk",
     "heavy_carry_sprint",
     "heavy_carry_throw",
-    "heavy_carry_jump_throw",
+)
+WEAPON_ANIMATIONS = (
+    "weapon_idle",
+    "weapon_jump_normal",
+    "weapon_jump_second",
+    "weapon_ground_throw",
+    "weapon_jump_throw",
+    "weapon_basic_attack",
+    "weapon_jump_attack",
+    "weapon_sprint_basic_attack",
+    "weapon_sprint_jump_basic_attack",
+    "weapon_get_up",
 )
 ITEM_ANIMATIONS = {
     "milk": MILK_ANIMATIONS,
     "heavy-carry": HEAVY_CARRY_ANIMATIONS,
+    "weapon": WEAPON_ANIMATIONS,
 }
 ANIMATION_ALIASES = {"ground_throw": "spawn"}
 FOLDER_ANIMATION_KEYS: dict[tuple[str, ...], str] = {}
 for animation, folder in ANIMATION_FOLDERS.items():
     FOLDER_ANIMATION_KEYS.setdefault(folder, animation)
-FOLDER_ANIMATION_KEYS[("hold_item", "heavy_carry", "walking")] = "heavy_carry_walk"
-FOLDER_ANIMATION_KEYS[("hold_item", "heavy_carry", "walk")] = "heavy_carry_walk"
-FOLDER_ANIMATION_KEYS[("hold_item", "heavy_carry", "sprinting")] = "heavy_carry_sprint"
-FOLDER_ANIMATION_KEYS[("hold_item", "heavy_carry", "sprint")] = "heavy_carry_sprint"
 HEAVY_CARRY_FOLDER_ANIMATION_KEYS = {
-    ("hold_item", "heavy_carry", "walking"): "heavy_carry_walk",
     ("hold_item", "heavy_carry", "walk"): "heavy_carry_walk",
-    ("hold_item", "heavy_carry", "sprinting"): "heavy_carry_sprint",
     ("hold_item", "heavy_carry", "sprint"): "heavy_carry_sprint",
-    ("fall", "get_up"): "heavy_carry_get_up",
     ("hold_item", "heavy_carry", "throw"): "heavy_carry_throw",
-    ("hold_item", "throw_item", "jump_throw"): "heavy_carry_jump_throw",
+}
+WEAPON_FOLDER_ANIMATION_KEYS = {
+    ("idle",): "weapon_idle",
+    ("movement", "jump_actions", "basic_jump"): "weapon_jump_normal",
+    ("movement", "jump_actions", "second_jump"): "weapon_jump_second",
+    ("hold_item", "throw_item", "ground_throw"): "weapon_ground_throw",
+    ("hold_item", "throw_item", "jump_throw"): "weapon_jump_throw",
+    ("fall", "get_up"): "weapon_get_up",
+    ("hold_item", "weapon_carry", "basic_attack"): "weapon_basic_attack",
+    ("hold_item", "weapon_carry", "jump_attack"): "weapon_jump_attack",
+    ("hold_item", "weapon_carry", "sprint_basic_attack"): "weapon_sprint_basic_attack",
+    ("hold_item", "weapon_carry", "sprint_jump_basic_attack"): "weapon_sprint_jump_basic_attack",
 }
 OPTIONAL_ANIMATIONS = {
     "spawn",
     "jump_throw",
-    "heavy_carry_idle",
     "heavy_carry_walk",
     "heavy_carry_sprint",
     "heavy_carry_throw",
-    "heavy_carry_jump_throw",
-}
-HEAVY_CARRY_FOLDER_CANDIDATES = {
-    "heavy_carry_idle": ("walking", "walk"),
-    "heavy_carry_walk": ("walking", "walk"),
-    "heavy_carry_sprint": ("sprinting", "sprint"),
+    *WEAPON_ANIMATIONS,
 }
 FALLBACK_ANCHOR = (0.30, 0.62)
 HEAVY_CARRY_FALLBACK_ANCHOR = (0.50, 0.18)
@@ -89,6 +106,8 @@ class SpriteTask:
     frame_count: int
     path: Path
     item_type: str = "milk"
+    weapon: str | None = None
+    reference_sprite: str | None = None
 
 
 def _natural_sort_key(path: Path) -> list[str | int]:
@@ -104,6 +123,21 @@ def _image_paths(folder: Path) -> list[Path]:
 
 def _character_names() -> list[str]:
     return sorted(path.name for path in CHARACTER_ROOT.iterdir() if path.is_dir() and not path.name.startswith("_"))
+
+
+def _weapon_names() -> list[str]:
+    if not WEAPON_ROOT.is_dir():
+        return []
+    return sorted(
+        path.name
+        for path in WEAPON_ROOT.iterdir()
+        if path.is_dir()
+        and not path.name.startswith("_")
+        and (path / "holding" / "idle").is_dir()
+        and (path / "holding" / "swing").is_dir()
+        and _image_paths(path / "holding" / "idle")
+        and _image_paths(path / "holding" / "swing")
+    )
 
 
 def _load_frame(path: Path, scale: float = 1.0) -> pygame.Surface:
@@ -147,6 +181,7 @@ def _tasks_for_folder(
     animation: str,
     folder: Path,
     item_type: str = "milk",
+    weapon: str | None = None,
 ) -> list[SpriteTask]:
     if not folder.is_dir():
         raise FileNotFoundError(f"{character} {animation} sprite folder not found: {folder}")
@@ -154,7 +189,7 @@ def _tasks_for_folder(
     if not paths:
         raise FileNotFoundError(f"No {character} {animation} frames found in {folder}")
     return [
-        SpriteTask(character, animation, frame_index, len(paths), path, item_type)
+        SpriteTask(character, animation, frame_index, len(paths), path, item_type, weapon)
         for frame_index, path in enumerate(paths)
     ]
 
@@ -182,12 +217,6 @@ def _specific_folder_task_group(
 
 def _animation_folder(character: str, animation: str) -> Path:
     folder = CHARACTER_ROOT / character
-    if animation in HEAVY_CARRY_FOLDER_CANDIDATES:
-        carry_root = folder / "hold_item" / "heavy_carry"
-        for folder_name in HEAVY_CARRY_FOLDER_CANDIDATES[animation]:
-            candidate = carry_root / folder_name
-            if candidate.is_dir() and _image_paths(candidate):
-                return candidate
     for part in ANIMATION_FOLDERS[animation]:
         folder /= part
     return folder
@@ -199,49 +228,117 @@ def _build_tasks(
     folders: list[str] | None = None,
     animation_key: str | None = None,
     item_type: str = "milk",
+    weapon_names: list[str] | None = None,
 ) -> list[SpriteTask]:
     tasks: list[SpriteTask] = []
     if folders:
         for selector in folders:
             character, animation, folder = _specific_folder_task_group(selector, animation_key)
-            if item_type == "heavy-carry" and animation_key is None:
+            if item_type == "heavy-carry":
                 relative_parts = folder.relative_to(CHARACTER_ROOT).parts[1:]
-                animation = HEAVY_CARRY_FOLDER_ANIMATION_KEYS.get(relative_parts, animation)
-            tasks.extend(_tasks_for_folder(character, animation, folder, item_type))
-        return tasks
+                if animation_key is not None:
+                    if animation_key not in HEAVY_CARRY_ANIMATIONS:
+                        raise ValueError(
+                            "Heavy-carry folders only support heavy_carry_walk, "
+                            "heavy_carry_sprint, and heavy_carry_throw."
+                        )
+                else:
+                    animation = HEAVY_CARRY_FOLDER_ANIMATION_KEYS.get(relative_parts, "")
+                    if not animation:
+                        raise ValueError(
+                            "Heavy-carry calibration only supports the character "
+                            "heavy_carry walk, sprint, and throw folders."
+                        )
+            if item_type == "weapon" and animation_key is None:
+                relative_parts = folder.relative_to(CHARACTER_ROOT).parts[1:]
+                animation = WEAPON_FOLDER_ANIMATION_KEYS.get(relative_parts, animation)
+            selected_weapons = (weapon_names or [WEAPON_ANCHOR_REFERENCE]) if item_type == "weapon" else [None]
+            for weapon in selected_weapons:
+                tasks.extend(_tasks_for_folder(character, animation, folder, item_type, weapon))
+        return _attach_weapon_reference_sprites(tasks)
 
     selected_animations = [
         ANIMATION_ALIASES.get(animation, animation)
         for animation in (animations or ITEM_ANIMATIONS[item_type])
     ]
-    for character in character_names:
-        for animation in selected_animations:
-            folder = _animation_folder(character, animation)
-            if animation in OPTIONAL_ANIMATIONS and not _image_paths(folder):
-                continue
-            animation_tasks = _tasks_for_folder(character, animation, folder, item_type)
-            if animation == "heavy_carry_idle":
-                tasks.append(replace(animation_tasks[0], frame_count=1))
-            else:
+    selected_weapons = (weapon_names or [WEAPON_ANCHOR_REFERENCE]) if item_type == "weapon" else [None]
+    for weapon in selected_weapons:
+        for character in character_names:
+            for animation in selected_animations:
+                folder = _animation_folder(character, animation)
+                if animation in OPTIONAL_ANIMATIONS and not _image_paths(folder):
+                    continue
+                animation_tasks = _tasks_for_folder(character, animation, folder, item_type, weapon)
                 tasks.extend(animation_tasks)
-    return tasks
+    return _attach_weapon_reference_sprites(tasks)
 
 
 def _empty_anchor_data() -> dict:
-    return {"version": 1, "characters": {}}
+    return {
+        "version": 3,
+        "characters": {},
+        "weapons": {},
+        "weapon_reference": WEAPON_ANCHOR_REFERENCE,
+        "weapon_reference_sprites": {},
+    }
 
 
-def _load_anchor_data(path: Path) -> dict:
-    if not path.exists():
-        return _empty_anchor_data()
+def _weapon_reference_sprite_choices(task: SpriteTask) -> list[str]:
+    if task.animation == "weapon_idle":
+        folder = WEAPON_ROOT / WEAPON_ANCHOR_REFERENCE / "holding" / "idle"
+    elif task.animation in {"weapon_ground_throw", "weapon_jump_throw"}:
+        folder = WEAPON_ROOT / WEAPON_ANCHOR_REFERENCE / "throw"
+    else:
+        folder = WEAPON_ROOT / WEAPON_ANCHOR_REFERENCE / "holding" / "swing"
+    paths = _image_paths(folder)
+    if not paths:
+        raise FileNotFoundError(f"No canonical weapon reference frames found in {folder}")
+    return [path.relative_to(ITEM_ROOT).as_posix() for path in paths]
 
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict) or data.get("version") != 1:
-        raise ValueError(f"Unsupported anchor file format: {path}")
-    characters = data.get("characters")
+
+def _load_weapon_preview_frame(task: SpriteTask, reference_sprite: str) -> pygame.Surface:
+    if task.weapon is None:
+        raise ValueError("Weapon preview task is missing its weapon name.")
+    reference_name = Path(reference_sprite).stem.casefold()
+    if task.animation == "weapon_idle":
+        weapon_folder = WEAPON_ROOT / task.weapon / "holding" / "idle"
+    elif task.animation in {"weapon_ground_throw", "weapon_jump_throw"}:
+        weapon_folder = WEAPON_ROOT / task.weapon / "throw"
+    else:
+        weapon_folder = WEAPON_ROOT / task.weapon / "holding" / "swing"
+    matching_paths = [
+        path for path in _image_paths(weapon_folder)
+        if path.stem.casefold() == reference_name
+    ]
+    if len(matching_paths) > 1:
+        raise ValueError(f"Duplicate weapon sprite name {reference_name} in {weapon_folder}")
+    if matching_paths:
+        return _load_frame(matching_paths[0], scale=1.2)
+    return _load_frame(ITEM_ROOT / reference_sprite, scale=1.2)
+
+
+def _weapon_reference_sprite(task: SpriteTask) -> str:
+    choices = _weapon_reference_sprite_choices(task)
+    reference_index = (
+        0
+        if task.animation == "weapon_idle" or task.frame_count <= 1
+        else round(task.frame_index * (len(choices) - 1) / (task.frame_count - 1))
+    )
+    return choices[reference_index]
+
+
+def _attach_weapon_reference_sprites(tasks: list[SpriteTask]) -> list[SpriteTask]:
+    return [
+        replace(task, reference_sprite=_weapon_reference_sprite(task))
+        if task.item_type == "weapon"
+        else task
+        for task in tasks
+    ]
+
+
+def _validate_character_anchors(characters: object, path: Path) -> None:
     if not isinstance(characters, dict):
         raise ValueError(f"Invalid characters object in anchor file: {path}")
-
     for character, animations in characters.items():
         if not isinstance(character, str) or not isinstance(animations, dict):
             raise ValueError(f"Invalid character entry in anchor file: {path}")
@@ -257,6 +354,48 @@ def _load_anchor_data(path: Path) -> dict:
                     or any(type(value) not in (int, float) or not math.isfinite(value) for value in point)
                 ):
                     raise ValueError(f"Invalid {character} {animation} anchor point in {path}")
+
+
+def _validate_weapon_reference_sprites(references: object, path: Path) -> None:
+    if not isinstance(references, dict):
+        raise ValueError(f"Invalid weapon reference sprites object in anchor file: {path}")
+    for weapon, characters in references.items():
+        if not isinstance(weapon, str) or not isinstance(characters, dict):
+            raise ValueError(f"Invalid weapon reference entry in anchor file: {path}")
+        for character, animations in characters.items():
+            if not isinstance(character, str) or not isinstance(animations, dict):
+                raise ValueError(f"Invalid {weapon} character reference entry in {path}")
+            for animation, sprites in animations.items():
+                if (
+                    not isinstance(animation, str)
+                    or not isinstance(sprites, list)
+                    or any(sprite is not None and not isinstance(sprite, str) for sprite in sprites)
+                ):
+                    raise ValueError(f"Invalid {weapon} {character} reference sprites in {path}")
+
+
+def _load_anchor_data(path: Path) -> dict:
+    if not path.exists():
+        return _empty_anchor_data()
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or data.get("version") not in {1, 2, 3}:
+        raise ValueError(f"Unsupported anchor file format: {path}")
+    data.setdefault("weapons", {})
+    data.setdefault("weapon_reference", WEAPON_ANCHOR_REFERENCE)
+    data.setdefault("weapon_reference_sprites", {})
+    _validate_character_anchors(data.get("characters"), path)
+    weapons = data.get("weapons")
+    if not isinstance(weapons, dict):
+        raise ValueError(f"Invalid weapons object in anchor file: {path}")
+    for weapon, characters in weapons.items():
+        if not isinstance(weapon, str):
+            raise ValueError(f"Invalid weapon entry in anchor file: {path}")
+        _validate_character_anchors(characters, path)
+    if not isinstance(data["weapon_reference"], str):
+        raise ValueError(f"Invalid weapon reference in anchor file: {path}")
+    _validate_weapon_reference_sprites(data["weapon_reference_sprites"], path)
+    data["version"] = 3
     return data
 
 
@@ -268,18 +407,25 @@ def _save_anchor_data(path: Path, data: dict) -> None:
 
 
 def _existing_anchor(data: dict, task: SpriteTask) -> tuple[float, float] | None:
-    point = (
-        data["characters"]
-        .get(task.character, {})
-        .get(task.animation, [])
-    )
+    if task.item_type == "weapon":
+        if task.weapon is None:
+            raise ValueError("Weapon anchor task is missing its weapon name.")
+        characters = data["weapons"].get(task.weapon, {})
+    else:
+        characters = data["characters"]
+    point = characters.get(task.character, {}).get(task.animation, [])
     if task.frame_index >= len(point) or point[task.frame_index] is None:
         return None
     return float(point[task.frame_index][0]), float(point[task.frame_index][1])
 
 
 def _ensure_anchor_slot(data: dict, task: SpriteTask) -> list:
-    characters = data["characters"]
+    if task.item_type == "weapon":
+        if task.weapon is None:
+            raise ValueError("Weapon anchor task is missing its weapon name.")
+        characters = data["weapons"].setdefault(task.weapon, {})
+    else:
+        characters = data["characters"]
     character = characters.setdefault(task.character, {})
     points = character.setdefault(task.animation, [None] * task.frame_count)
     if len(points) < task.frame_count:
@@ -287,6 +433,45 @@ def _ensure_anchor_slot(data: dict, task: SpriteTask) -> list:
     elif len(points) > task.frame_count:
         del points[task.frame_count:]
     return points
+
+
+def _ensure_reference_slot(
+    data: dict,
+    task: SpriteTask,
+    reference_sprite: str | None = None,
+) -> list:
+    selected_reference = reference_sprite or task.reference_sprite
+    if task.weapon is None or selected_reference is None:
+        raise ValueError("Weapon anchor task is missing its reference sprite.")
+    characters = data["weapon_reference_sprites"].setdefault(data["weapon_reference"], {})
+    character = characters.setdefault(task.character, {})
+    references = character.setdefault(task.animation, [None] * task.frame_count)
+    if len(references) < task.frame_count:
+        references.extend([None] * (task.frame_count - len(references)))
+    elif len(references) > task.frame_count:
+        del references[task.frame_count:]
+    references[task.frame_index] = selected_reference
+    return references
+
+
+def _fill_existing_weapon_references(data: dict, tasks: list[SpriteTask]) -> bool:
+    changed = False
+    for task in tasks:
+        if task.item_type != "weapon" or _existing_anchor(data, task) is None:
+            continue
+        if task.reference_sprite is None or task.weapon is None:
+            raise ValueError("Weapon anchor task is missing its reference sprite.")
+        characters = data["weapon_reference_sprites"].setdefault(data["weapon_reference"], {})
+        character = characters.setdefault(task.character, {})
+        references = character.setdefault(task.animation, [])
+        if len(references) <= task.frame_index:
+            references.extend([None] * (task.frame_index + 1 - len(references)))
+        if references[task.frame_index] is None:
+            references[task.frame_index] = (
+                _existing_reference_sprite(data, task) or task.reference_sprite
+            )
+            changed = True
+    return changed
 
 
 def _next_task_index(
@@ -316,16 +501,17 @@ def _draw_crosshair(surface: pygame.Surface, position: tuple[int, int]) -> None:
 def _draw_preview(
     surface: pygame.Surface,
     character: pygame.Surface,
-    item: pygame.Surface,
+    item: pygame.Surface | None,
     character_pos: tuple[int, int],
     item_center: tuple[int, int],
     facing: str,
 ) -> None:
     surface.fill((62, 66, 72))
     character_frame = character if facing == "right" else pygame.transform.flip(character, True, False)
-    item_frame = item if facing == "right" else pygame.transform.flip(item, True, False)
     surface.blit(character_frame, character_pos)
-    surface.blit(item_frame, item_frame.get_rect(center=item_center))
+    if item is not None:
+        item_frame = item if facing == "right" else pygame.transform.flip(item, True, False)
+        surface.blit(item_frame, item_frame.get_rect(center=item_center))
     _draw_crosshair(surface, item_center)
 
 
@@ -356,6 +542,7 @@ def _store_current_anchor(
     character_pos: tuple[int, int],
     item_center: tuple[int, int],
     facing: str,
+    reference_sprite: str | None = None,
 ) -> tuple[float, float]:
     width, height = character_size
     local_x = (item_center[0] - character_pos[0]) / width
@@ -364,21 +551,43 @@ def _store_current_anchor(
     point = [round(x, 6), round(y, 6)]
     points = _ensure_anchor_slot(data, task)
     points[task.frame_index] = point
+    if task.item_type == "weapon":
+        _ensure_reference_slot(data, task, reference_sprite)
     return point[0], point[1]
+
+
+def _existing_reference_sprite(data: dict, task: SpriteTask) -> str | None:
+    reference_weapons = dict.fromkeys((data["weapon_reference"], task.weapon))
+    for reference_weapon in reference_weapons:
+        if reference_weapon is None:
+            continue
+        references = data["weapon_reference_sprites"].get(reference_weapon, {})
+        points = references.get(task.character, {}).get(task.animation, [])
+        if task.frame_index < len(points) and points[task.frame_index] is not None:
+            return points[task.frame_index]
+    return None
 
 
 def main() -> int:
     names = _character_names()
+    weapons = _weapon_names()
     parser = argparse.ArgumentParser(
         description=(
-            "Calibrate per-frame item anchors for milk or heavy-carry items. Only characters with authored sprite frames are included."
+            "Calibrate per-frame anchors for milk, heavy-carry items, and weapons. "
+            "Only characters with authored sprite frames are included."
         )
     )
     parser.add_argument("--character", choices=names, help="Calibrate only this character (default: all characters)")
     parser.add_argument(
         "--item",
         choices=tuple(ITEM_ANIMATIONS),
-        help="Item to preview; by default, calibrates milk and heavy-carry items",
+        help="Item/anchor group to calibrate; by default, calibrates all supported groups",
+    )
+    parser.add_argument(
+        "--weapon",
+        choices=weapons,
+        action="append",
+        help="Calibrate only this weapon; repeat to select several (requires --item weapon)",
     )
     parser.add_argument(
         "--animation",
@@ -409,7 +618,9 @@ def main() -> int:
     if args.folder and (args.character or args.animation):
         parser.error("--folder cannot be combined with --character or --animation")
     if args.folder and args.item is None:
-        parser.error("--folder requires --item milk or --item heavy-carry")
+        parser.error("--folder requires --item milk, heavy-carry, or weapon")
+    if args.weapon and args.item != "weapon":
+        parser.error("--weapon requires --item weapon")
     if args.animation_key and (not args.folder or len(args.folder) != 1):
         parser.error("--animation-key requires exactly one --folder")
     item_types = tuple(ITEM_ANIMATIONS) if args.item is None else (args.item,)
@@ -446,11 +657,14 @@ def main() -> int:
                     args.folder,
                     args.animation_key,
                     item_type=item_type,
+                    weapon_names=args.weapon if item_type == "weapon" else None,
                 )
             )
         if not tasks:
             raise FileNotFoundError("No character sprite frames found for the selected animation folders")
         anchor_data = _load_anchor_data(args.anchors_path)
+        if _fill_existing_weapon_references(anchor_data, tasks):
+            _save_anchor_data(args.anchors_path, anchor_data)
     except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError) as error:
         print(error, file=sys.stderr)
         return 1
@@ -489,24 +703,49 @@ def main() -> int:
         character: pygame.Surface
         character_pos: tuple[int, int]
         item_center: list[int]
-        current_item_frame: pygame.Surface
+        current_item_frame: pygame.Surface | None
+        current_reference_choices: list[str] = []
+        current_reference_index = 0
+        current_reference_sprite: str | None = None
 
         def load_task() -> None:
             nonlocal screen, character, character_pos, item_center, current_item_frame
+            nonlocal current_reference_choices, current_reference_index, current_reference_sprite
             task = tasks[task_index]
             character = _load_frame(task.path, scale=args.scale)
-            current_item_frame = (
-                milk_drink_frames[task.frame_index]
-                if task.item_type == "milk" and task.animation == "drink"
-                else holding_frames[task.item_type]
-            )
+            if task.item_type == "weapon":
+                if task.weapon is None:
+                    raise RuntimeError("Weapon anchor task is missing its weapon name.")
+                current_item_frame = None
+                current_reference_choices = _weapon_reference_sprite_choices(task)
+                current_reference_sprite = (
+                    _existing_reference_sprite(anchor_data, task) or task.reference_sprite
+                )
+                if current_reference_sprite not in current_reference_choices:
+                    current_reference_sprite = task.reference_sprite or current_reference_choices[0]
+                current_reference_index = current_reference_choices.index(current_reference_sprite)
+                current_item_frame = _load_weapon_preview_frame(task, current_reference_sprite)
+            else:
+                current_reference_choices = []
+                current_reference_sprite = None
+                current_item_frame = (
+                    milk_drink_frames[task.frame_index]
+                    if task.item_type == "milk" and task.animation == "drink"
+                    else holding_frames[task.item_type]
+                )
             width, height = character.get_size()
-            canvas_size = (max(900, width + current_item_frame.get_width() * 2 + 180), max(700, height + 180))
+            item_width = current_item_frame.get_width() if current_item_frame else 0
+            item_height = current_item_frame.get_height() if current_item_frame else 0
+            canvas_size = (
+                max(900, width + item_width * 2 + 180),
+                max(700, height + item_height + 180),
+            )
             character_pos = ((canvas_size[0] - width) // 2, canvas_size[1] - height - 90)
             item_center = _current_item_center(anchor_data, task, character.get_size(), character_pos, args.facing)
             screen = pygame.display.set_mode(canvas_size)
+            anchor_kind = f"{task.weapon} weapon" if task.weapon else task.item_type
             pygame.display.set_caption(
-                f"Item anchor: {task.character} / {task.animation} "
+                f"{anchor_kind} anchor: {task.character} / {task.animation} "
                 f"{task.frame_index + 1}/{task.frame_count} ({task_index + 1}/{len(tasks)})"
             )
 
@@ -520,6 +759,18 @@ def main() -> int:
                     event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE
                 ):
                     running = False
+                elif (
+                    event.type == pygame.MOUSEWHEEL
+                    and task.item_type == "weapon"
+                    and task.animation != "weapon_idle"
+                    and current_reference_choices
+                    and event.y
+                ):
+                    current_reference_index = (
+                        current_reference_index - event.y
+                    ) % len(current_reference_choices)
+                    current_reference_sprite = current_reference_choices[current_reference_index]
+                    current_item_frame = _load_weapon_preview_frame(task, current_reference_sprite)
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     dragging = True
                     item_center[:] = event.pos
@@ -536,9 +787,14 @@ def main() -> int:
                             character_pos,
                             (item_center[0], item_center[1]),
                             args.facing,
+                            reference_sprite=current_reference_sprite,
                         )
                         _save_anchor_data(args.anchors_path, anchor_data)
-                        print(f"Saved {task.character} {task.animation} frame {task.frame_index + 1}: ({point[0]:.3f}, {point[1]:.3f})")
+                        print(
+                            f"Saved {task.weapon + ' ' if task.weapon else ''}{task.character} "
+                            f"{task.animation} frame {task.frame_index + 1}: "
+                            f"({point[0]:.3f}, {point[1]:.3f})"
+                        )
                         task_index = _next_task_index(tasks, anchor_data, task_index + 1, args.recalibrate)
                         if task_index >= len(tasks):
                             print(f"Reached the end of the calibration list. Saved anchors are in {args.anchors_path}.")
@@ -580,7 +836,15 @@ def main() -> int:
                     f"{task.character} | {task.animation} frame {task.frame_index + 1}/{task.frame_count} "
                     f"| {task_index + 1}/{len(tasks)} overall"
                 )
+                if task.weapon:
+                    progress += f" | {task.weapon}"
+                    if current_reference_sprite:
+                        progress += f" | ref: {Path(current_reference_sprite).name}"
                 controls = "Drag: place item | Arrows: nudge (Shift: 5 px) | Enter: save/next | N: skip | Backspace: previous | Esc: quit"
+                if task.item_type == "weapon":
+                    controls = "Drag: move item/reticule | Arrows: nudge (Shift: 5 px) | Enter: save/next | N: skip | Backspace: previous | Esc: quit"
+                    if task.animation != "weapon_idle":
+                        controls = "Drag: move item/reticule | Arrows: nudge (Shift: 5 px) | Scroll: select sprite | Enter: save/next | N: skip | Backspace: previous | Esc: quit"
                 screen.blit(font.render(progress, True, (255, 255, 255)), (16, 16))
                 screen.blit(font.render(controls, True, (255, 255, 255)), (16, 44))
                 pygame.display.flip()

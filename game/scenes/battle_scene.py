@@ -23,7 +23,14 @@ from game.constants import (
 from game.data.characters import CHARACTERS
 from game.entities.fighter import COMBAT_ATTACK_STATES, Fighter, FighterConfig, FighterInput, FighterSnapshot
 from game.systems.audio import AudioBank
-from game.systems.item_anchors import HandAnchor, load_hand_anchors
+from game.systems.item_anchors import (
+    DEFAULT_WEAPON_ANCHOR_REFERENCE,
+    HandAnchor,
+    load_hand_anchors,
+    load_weapon_anchor_reference,
+    load_weapon_hand_anchors,
+    load_weapon_reference_sprites,
+)
 from game.systems.stage import CityStage
 
 
@@ -45,6 +52,31 @@ STAGE_ENCOUNTERS = (
     (("axle", 3), ("jack", 2)),
     (("luis_liberated", 1), ("henry", 1)),
 )
+WEAPON_ANCHOR_POSES = {
+    "idle": "weapon_idle",
+    "weapon_idle": "weapon_idle",
+    "jump_normal": "weapon_jump_normal",
+    "jump_second": "weapon_jump_second",
+    "spawn": "weapon_ground_throw",
+    "jump_throw": "weapon_jump_throw",
+    "attack_1": "weapon_basic_attack",
+    "attack_2": "weapon_basic_attack",
+    "attack_3": "weapon_basic_attack",
+    "attack_punch": "weapon_basic_attack",
+    "attack_kick": "weapon_basic_attack",
+    "basic_attack": "weapon_basic_attack",
+    "weapon_basic_attack": "weapon_basic_attack",
+    "jump_attack": "weapon_jump_attack",
+    "weapon_jump_attack": "weapon_jump_attack",
+    "sprint_punch": "weapon_sprint_basic_attack",
+    "sprint_basic_attack": "weapon_sprint_basic_attack",
+    "sprint_attack": "weapon_sprint_basic_attack",
+    "weapon_sprint_basic_attack": "weapon_sprint_basic_attack",
+    "sprint_jump_basic_attack": "weapon_sprint_jump_basic_attack",
+    "sprint_jump_attack": "weapon_sprint_jump_basic_attack",
+    "weapon_sprint_jump_basic_attack": "weapon_sprint_jump_basic_attack",
+    "get_up": "weapon_get_up",
+}
 
 
 def _is_throwable_item(item_id: str) -> bool:
@@ -56,22 +88,67 @@ def _load_folder_frames(folder: Path) -> list[pygame.Surface]:
     if not folder.exists():
         return frames
 
-    def frame_sort_key(path: Path) -> tuple[str, int, str]:
-        match = re.search(r"(\d+)$", path.stem)
-        if match is None:
-            return path.stem.casefold(), -1, path.suffix.casefold()
-        return path.stem[:match.start()].casefold(), int(match.group(1)), path.suffix.casefold()
-
     frame_paths = (
         path
         for path in folder.iterdir()
         if path.is_file() and path.suffix.lower() in {".png", ".bmp"}
     )
-    for path in sorted(frame_paths, key=frame_sort_key):
+    for path in sorted(frame_paths, key=_sprite_frame_sort_key):
         frame = pygame.image.load(str(path)).convert()
         frame.set_colorkey((0, 0, 0))
         frames.append(frame)
     return frames
+
+
+def _sprite_frame_sort_key(path: Path) -> tuple[str, int, str]:
+    match = re.search(r"(\d+)$", path.stem)
+    if match is None:
+        return path.stem.casefold(), -1, path.suffix.casefold()
+    return path.stem[:match.start()].casefold(), int(match.group(1)), path.suffix.casefold()
+
+
+def _load_named_weapon_frames(root: Path, action_path: tuple[str, ...]) -> dict[str, dict[str, pygame.Surface]]:
+    weapon_frames: dict[str, dict[str, pygame.Surface]] = {}
+    weapons_root = root / "weapons"
+    if not weapons_root.is_dir():
+        return weapon_frames
+
+    for weapon_folder in sorted(weapons_root.iterdir()):
+        if not weapon_folder.is_dir() or weapon_folder.name.startswith("_"):
+            continue
+        frame_folder = weapon_folder.joinpath(*action_path)
+        if not frame_folder.is_dir():
+            continue
+
+        frames: dict[str, pygame.Surface] = {}
+        for path in sorted(
+            (
+                path
+                for path in frame_folder.iterdir()
+                if path.is_file() and path.suffix.lower() in {".png", ".bmp"}
+            ),
+            key=_sprite_frame_sort_key,
+        ):
+            frame_name = path.stem.casefold()
+            if frame_name in frames:
+                raise ValueError(f"Duplicate weapon frame name in {frame_folder}: {path.stem}")
+            frame = pygame.image.load(str(path)).convert()
+            frame.set_colorkey((0, 0, 0))
+            frames[frame_name] = pygame.transform.scale(
+                frame,
+                (round(frame.get_width() * 1.2), round(frame.get_height() * 1.2)),
+            )
+        if frames:
+            weapon_frames[f"weapons/{weapon_folder.name}"] = frames
+    return weapon_frames
+
+
+def _load_weapon_swing_frames(root: Path) -> dict[str, dict[str, pygame.Surface]]:
+    return _load_named_weapon_frames(root, ("holding", "swing"))
+
+
+def _load_weapon_throw_frames(root: Path) -> dict[str, dict[str, pygame.Surface]]:
+    return _load_named_weapon_frames(root, ("throw",))
 
 
 def _scale_frames(frames: list[pygame.Surface], scale: float) -> list[pygame.Surface]:
@@ -128,7 +205,12 @@ def _load_item_sprite_animations(root: Path) -> dict[str, dict[str, list[pygame.
                 if not frames and frame_folder != action_folder:
                     frames = _load_folder_frames(action_folder)
                 if frames:
-                    animations[action_folder.name] = _trim_item_frames(_scale_frames(frames, 1.2))
+                    scaled_frames = _scale_frames(frames, 1.2)
+                    animations[action_folder.name] = (
+                        scaled_frames
+                        if category_folder.name == "weapons" and action_folder.name == "holding"
+                        else _trim_item_frames(scaled_frames)
+                    )
                     continue
 
                 for variant_folder in sorted(path for path in action_folder.rglob("*") if path.is_dir()):
@@ -3419,7 +3501,14 @@ class BattleScene:
         self.stage = CityStage(stage_root)
         item_sprites_root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "item_sprites"
         self.item_sprite_animations = _load_item_sprite_animations(item_sprites_root)
+        self.weapon_swing_frames = _load_weapon_swing_frames(item_sprites_root)
+        self.weapon_throw_frames = _load_weapon_throw_frames(item_sprites_root)
         self.item_hand_anchors = load_hand_anchors(item_sprites_root / "hand_anchors.json")
+        self.weapon_hand_anchors = load_weapon_hand_anchors(item_sprites_root / "hand_anchors.json")
+        self.weapon_anchor_reference = load_weapon_anchor_reference(item_sprites_root / "hand_anchors.json")
+        self.weapon_reference_sprites = load_weapon_reference_sprites(item_sprites_root / "hand_anchors.json")
+        if not self.weapon_anchor_reference:
+            self.weapon_anchor_reference = DEFAULT_WEAPON_ANCHOR_REFERENCE
         milk_root = item_sprites_root / "consumables" / "milk"
         milk_animations = self.item_sprite_animations.get("consumables/milk", {})
         self.milk_throw_frames = milk_animations.get("throw", [])
@@ -3968,27 +4057,57 @@ class BattleScene:
         bubble_pos = bubble.get_rect(midbottom=(fighter.world_hitbox_rect().centerx - int(camera_x), fighter.world_hitbox_rect().top - 10))
         surface.blit(bubble, bubble_pos)
 
+    @staticmethod
+    def _weapon_anchor_pose(fighter: Fighter) -> str | None:
+        if fighter.item_throw_animation is not None:
+            return (
+                "weapon_jump_throw"
+                if fighter.item_throw_animation == "jump_throw"
+                else "weapon_ground_throw"
+            )
+        return WEAPON_ANCHOR_POSES.get(fighter.animation_player.current_name)
+
     def _character_hand_anchor(self, fighter: Fighter, fallback_to_idle: bool = True) -> HandAnchor | None:
+        animation_name = fighter.animation_player.current_name
+        if fighter.held_item and fighter.held_item.startswith("weapons/"):
+            weapon_name = fighter.held_item.partition("/")[2]
+            anchor_animation_name = self._weapon_anchor_pose(fighter)
+            source_names = dict.fromkeys((weapon_name, self.weapon_anchor_reference))
+            frame_index = fighter.animation_player.frame_index
+            for source_name in source_names:
+                weapon_anchors = self.weapon_hand_anchors.get(source_name, {}).get(fighter.name, {})
+                if anchor_animation_name is not None:
+                    pose_anchors = weapon_anchors.get(anchor_animation_name, [])
+                    if frame_index < len(pose_anchors) and pose_anchors[frame_index] is not None:
+                        return pose_anchors[frame_index]
+                if fallback_to_idle:
+                    idle_anchors = weapon_anchors.get("weapon_idle", [])
+                    if anchor_animation_name != "weapon_idle" and frame_index < len(idle_anchors):
+                        if idle_anchors[frame_index] is not None:
+                            return idle_anchors[frame_index]
+                    fallback_anchor = next((point for point in idle_anchors if point is not None), None)
+                    if fallback_anchor is not None:
+                        return fallback_anchor
+            if not fallback_to_idle:
+                return None
+
         character_anchors = self.item_hand_anchors.get(fighter.name)
         if character_anchors is None:
             return None
 
-        animation_name = fighter.animation_player.current_name
         is_heavy_item = fighter.held_item in HEAVY_ITEM_IDS
         anchor_animation_name = (
-            HEAVY_ITEM_ANCHOR_KEYS.get(animation_name, HEAVY_ITEM_ANCHOR_KEYS["idle"])
-            if is_heavy_item
-            else animation_name
+            HEAVY_ITEM_ANCHOR_KEYS.get(animation_name) if is_heavy_item else animation_name
         )
         frame_index = fighter.animation_player.frame_index
-        animation_anchors = character_anchors.get(anchor_animation_name, [])
-        if frame_index < len(animation_anchors) and animation_anchors[frame_index] is not None:
-            return animation_anchors[frame_index]
+        if anchor_animation_name is not None:
+            animation_anchors = character_anchors.get(anchor_animation_name, [])
+            if frame_index < len(animation_anchors) and animation_anchors[frame_index] is not None:
+                return animation_anchors[frame_index]
 
         if not fallback_to_idle:
             return None
-        idle_key = HEAVY_ITEM_ANCHOR_KEYS["idle"] if is_heavy_item else "idle"
-        idle_anchors = character_anchors.get(idle_key, [])
+        idle_anchors = character_anchors.get("idle", [])
         return next((anchor for anchor in idle_anchors if anchor is not None), None)
 
     def _draw_item_sprite(
@@ -4016,19 +4135,22 @@ class BattleScene:
     def _draw_held_item(self, surface: pygame.Surface, fighter: Fighter, camera_x: float) -> None:
         if fighter.held_item is None:
             return
-        frames = self.item_sprite_animations.get(fighter.held_item, {}).get("holding")
-        if not frames:
-            return
-        held_animation = self.held_item_animations.get(fighter)
-        if held_animation is None or held_animation[0] != fighter.held_item:
-            animation = ItemSpriteAnimation(frames, loop=True)
-            self.held_item_animations[fighter] = (fighter.held_item, animation)
-        else:
-            _, animation = held_animation
+        frame = self._weapon_pose_frame(fighter)
+        if frame is None:
+            frames = self.item_sprite_animations.get(fighter.held_item, {}).get("holding")
+            if not frames:
+                return
+            held_animation = self.held_item_animations.get(fighter)
+            if held_animation is None or held_animation[0] != fighter.held_item:
+                animation = ItemSpriteAnimation(frames, loop=True)
+                self.held_item_animations[fighter] = (fighter.held_item, animation)
+            else:
+                _, animation = held_animation
+            frame = animation.current_frame
         self._draw_item_sprite(
             surface,
             fighter,
-            animation.current_frame,
+            frame,
             camera_x,
             fallback_anchor=(
                 HEAVY_ITEM_FALLBACK_ANCHOR
@@ -4036,6 +4158,29 @@ class BattleScene:
                 else (0.30, 0.62)
             ),
         )
+
+    def _weapon_pose_frame(self, fighter: Fighter) -> pygame.Surface | None:
+        if not fighter.held_item or not fighter.held_item.startswith("weapons/"):
+            return None
+        pose = self._weapon_anchor_pose(fighter)
+        if pose is None or pose == "weapon_idle":
+            return None
+        references = self.weapon_reference_sprites.get(self.weapon_anchor_reference, {})
+        character_references = references.get(fighter.name, {})
+        pose_references = character_references.get(pose, [])
+        frame_index = fighter.animation_player.frame_index
+        if frame_index >= len(pose_references):
+            return None
+        reference_sprite = pose_references[frame_index]
+        if reference_sprite is None:
+            return None
+        frame_name = Path(reference_sprite).stem.casefold()
+        weapon_frames = (
+            self.weapon_throw_frames
+            if pose in {"weapon_ground_throw", "weapon_jump_throw"}
+            else self.weapon_swing_frames
+        )
+        return weapon_frames.get(fighter.held_item, {}).get(frame_name)
 
     def _draw_item_overlay(self, surface: pygame.Surface, fighter: Fighter, camera_x: float) -> None:
         active_overlay = self.active_item_overlays.get(fighter)
@@ -4065,13 +4210,11 @@ class BattleScene:
     def _resolve_freeze_column_obstruction(self, previous_x_by_fighter: dict[int, float]) -> None:
         columns = [projectile for projectile in self.projectiles if isinstance(projectile, FreezeColumnEffect) and not projectile.finished]
         for fighter in self._fighters():
-            if fighter.is_dead or fighter.z > 0:
+            if fighter.is_dead:
                 continue
             previous_x = previous_x_by_fighter.get(id(fighter), fighter.x)
             half_width = fighter.hitbox_size[0] / 2
             for column in columns:
-                if column.owner is fighter:
-                    continue
                 if abs(fighter.lane_y - column.lane_y) > 36:
                     continue
                 column_rect = column.rect()
@@ -4397,6 +4540,8 @@ class BattleScene:
             if fighter.deep_sword_swing_sfx_pending:
                 self.audio.play("sword_swing")
                 fighter.deep_sword_swing_sfx_pending = False
+            while fighter.firzen_sounds_pending:
+                self.audio.play(fighter.firzen_sounds_pending.pop(0))
             if fighter.armored_bandit_sword_swing_sfx_pending:
                 self.audio.play("sword_swing")
                 fighter.armored_bandit_sword_swing_sfx_pending = False
@@ -5138,6 +5283,29 @@ class BattleScene:
             projectile.hit_targets.clear()
         return True
 
+    def _shoot_firzen_target_orbs(self, projectile: object) -> None:
+        if (
+            not getattr(projectile, "can_damage", False)
+            or getattr(projectile, "phase", None) not in {"fly", "play"}
+        ):
+            return
+        owner = getattr(projectile, "owner", None)
+        rect_method = getattr(projectile, "rect", None)
+        if owner is None or not callable(rect_method):
+            return
+        projectile_rect = rect_method()
+        for orb in self.projectiles:
+            if (
+                not isinstance(orb, FirzenTargetOrbProjectile)
+                or orb.phase != "fly"
+                or orb.owner is owner
+                or not projectile_rect.colliderect(orb.rect())
+            ):
+                continue
+            orb._start_burst()
+            self.audio.play("firzen_fire_ice_orb_shoot")
+            break
+
     def _update_projectiles(self, dt: float) -> None:
         focus_x = self.fighter.x
         player_margin = SCREEN_WIDTH * 0.3
@@ -5151,9 +5319,11 @@ class BattleScene:
         visible_right = camera_x + SCREEN_WIDTH
         for projectile in list(self.projectiles):
             projectile.update(dt)
+            self._shoot_firzen_target_orbs(projectile)
             self._damage_heavy_box_with_projectile(projectile)
             if isinstance(projectile, FirzenFireIceOrb) and projectile.just_split:
                 projectile.just_split = False
+                self.audio.play("firzen_fire_ice_orb_burst")
                 self._spawn_firzen_ground_orbs(projectile)
             if isinstance(projectile, FirzenTargetOrbProjectile) and projectile.just_hit_ground:
                 projectile.just_hit_ground = False
@@ -5907,6 +6077,8 @@ class BattleScene:
             if item_event == "landed":
                 if item.item_id in HEAVY_ITEM_IDS:
                     self.audio.play_heavy_box_land()
+                elif item.item_id == "weapons/ice_sword":
+                    self.audio.play("ice_sword_land")
                 else:
                     sound = (
                         "armor_piece_land"
@@ -5971,7 +6143,8 @@ class BattleScene:
         self.stage.draw(surface, focus_x)
 
         for projectile in self.projectiles:
-            projectile.draw(surface, camera_x)
+            if not isinstance(projectile, FireExplosionEffect):
+                projectile.draw(surface, camera_x)
         for item in sorted(self.consumable_items, key=lambda consumable: consumable.lane_y):
             item.draw(surface, camera_x)
         for effect in self.consumable_break_effects:
@@ -5985,6 +6158,9 @@ class BattleScene:
             self._draw_held_item(surface, fighter, camera_x)
             self._draw_item_overlay(surface, fighter, camera_x)
             self._draw_speech_bubble(surface, fighter, camera_x)
+        for projectile in self.projectiles:
+            if isinstance(projectile, FireExplosionEffect):
+                projectile.draw(surface, camera_x)
 
         self._draw_marker(surface, self.fighter, camera_x, "P1")
         self._draw_hud(surface)

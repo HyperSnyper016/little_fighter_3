@@ -225,3 +225,12 @@ Append each new release at the bottom with its version and player-facing changes
 - Add baseballs with spawn, carry, throw, and landing animations; baseballs bounce once and play a break sound.
 - Smooth camera following and refine Davis, Bat, and Dark Bat move presentation.
 - Update the README with the revised modes and controls.
+
+## v0.16.0 - Add weapon combat and sprite calibration
+### Added
+- Add weapon-carry attacks using each character's authored basic, jump, sprint, and sprint-jump poses.
+- Add per-frame weapon sprite and anchor calibration for attacks, normal and second jumps, throws, and get-up.
+- Add independent weapon ground/jump throw mapping and Ice Sword landing audio.
+### Changed
+- Refine special-move animation availability, character effects and sounds, and freeze-column obstacle behavior.
+- Limit heavy-carry anchors to walk, sprint, and throw poses.

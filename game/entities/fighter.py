@@ -30,6 +30,18 @@ HENRY_FLOAT_BOB_AMPLITUDE = 12.0
 HENRY_FLOAT_BOB_PERIOD = 0.4
 SPECIAL_INPUT_BUFFER_DURATION = 0.18
 BAT_SP_VERT_ATTACK_1_SHADOW_STEP_FRAME = 2
+WEAPON_CARRY_ANIMATION_FOLDERS = {
+    "weapon_basic_attack": "basic_attack",
+    "weapon_jump_attack": "jump_attack",
+    "weapon_sprint_basic_attack": "sprint_basic_attack",
+    "weapon_sprint_jump_basic_attack": "sprint_jump_basic_attack",
+}
+WEAPON_CARRY_FRAME_DURATION_SOURCES = {
+    "weapon_basic_attack": ("attack_1", "attack_punch"),
+    "weapon_jump_attack": ("jump_attack",),
+    "weapon_sprint_basic_attack": ("sprint_punch", "sprint_basic_attack"),
+    "weapon_sprint_jump_basic_attack": ("jump_attack", "sprint_punch"),
+}
 
 
 def _natural_sort_key(path: Path) -> list[str | int]:
@@ -48,6 +60,16 @@ def _heavy_carry_files(carry_root: Path, folder_names: tuple[str, ...]) -> list[
         if files:
             return files
     return []
+
+
+def _weapon_carry_files(weapon_carry_root: Path, folder_name: str) -> list[Path]:
+    folder = weapon_carry_root / folder_name
+    if not folder.is_dir():
+        return []
+    return sorted(
+        (path for path in folder.iterdir() if path.is_file() and path.suffix.lower() in {".bmp", ".png"}),
+        key=_natural_sort_key,
+    )
 
 
 @dataclass
@@ -234,7 +256,6 @@ class Fighter:
         self.davis_ball_spawned_sp_1 = False
         self.davis_ball_spawned_sp_2 = False
         self.deep_sword_swing_sfx_pending = False
-        self.deep_sword_swing_loop_timer = 0.0
         self.firen_fireball_projectiles_pending = 0
         self.firen_fire_breath_projectiles_pending = 0
         self.firen_fire_trail_projectiles_pending = 0
@@ -253,6 +274,7 @@ class Fighter:
         self.firzen_fire_ice_orb_pending = False
         self.firzen_vert_attack_2_columns_pending = False
         self.firzen_vert_attack_2_orbs_pending = 0
+        self.firzen_sounds_pending: list[str] = []
         self.henry_wind_projectiles_pending = 0
         self.henry_wind_sfx_pending = False
         self.henry_sp_vert_attack_2_pending = False
@@ -302,7 +324,12 @@ class Fighter:
         self.denis_sp_move_attack_2_sound_pending: list[str] = []
 
     def _has_animation(self, name: str) -> bool:
-        return name in self.animations
+        animation = self.definition.get("animations", {}).get(name)
+        if animation is None:
+            return False
+        if "sheet" in animation and "frames" in animation:
+            return bool(animation["frames"]) and Path(animation["sheet"]).is_file()
+        return any(Path(path).is_file() for path in animation.get("files", ()))
 
     def _load_animations(self) -> dict[str, dict]:
         animations = load_character_sheet(self.definition)
@@ -345,7 +372,48 @@ class Fighter:
                     }
                 )
             )
+
+        weapon_carry_root = (
+            Path(__file__).resolve().parents[2]
+            / "assets"
+            / "sprites"
+            / "characters"
+            / self.name
+            / "hold_item"
+            / "weapon_carry"
+        )
+        weapon_carry_definitions: dict[str, dict] = {}
+        for animation_name, folder_name in WEAPON_CARRY_ANIMATION_FOLDERS.items():
+            files = _weapon_carry_files(weapon_carry_root, folder_name)
+            if not files:
+                continue
+            source_animations = self.definition.get("animations", {})
+            duration = next(
+                (
+                    source_animations[source_name]["frame_duration"]
+                    for source_name in WEAPON_CARRY_FRAME_DURATION_SOURCES[animation_name]
+                    if source_name in source_animations
+                ),
+                0.08,
+            )
+            weapon_carry_definitions[animation_name] = {
+                "files": files,
+                "frame_duration": duration,
+                "loop": False,
+            }
+        if weapon_carry_definitions:
+            animations.update(
+                load_character_sheet(
+                    {
+                        "scale": self.definition["scale"],
+                        "animations": weapon_carry_definitions,
+                    }
+                )
+            )
         return animations
+
+    def _is_holding_weapon(self) -> bool:
+        return self.held_item is not None and self.held_item.partition("/")[0] == "weapons"
 
     def transform_to(self, config: FighterConfig) -> None:
         health = self.health
@@ -470,6 +538,7 @@ class Fighter:
                 self.sorcerer_heal_orb_pending = False
         if self.name == "firzen" and state == "sp_move_attack_1":
             self.firzen_char_blast_pending = False
+            self.firzen_sounds_pending.append("firzen_yell")
         if self.name == "firzen" and state == "sp_move_attack_2":
             self.firzen_fire_shots_pending = 0
             self.firzen_fire_shot_timer = 0.0
@@ -501,16 +570,16 @@ class Fighter:
             self.julian_sp_vert_attack_2_pending = False
             if state == "sp_move_attack_1":
                 self.julian_sp_move_attack_1_stage = 1
-        if self.name in {"hunter", "henry"} and state in {"basic_attack", "jump_throw", "sp_move_attack_1", "sp_vert_attack_1"}:
+        if (
+            self.name in {"hunter", "henry"}
+            and not self._is_holding_weapon()
+            and state in {"basic_attack", "jump_throw", "sp_move_attack_1", "sp_vert_attack_1"}
+        ):
             self.hunter_draw_arrow_sfx_pending = True
         if self.name == "henry" and state == "sp_move_attack_1":
             self.hunter_projectile_style = "enchanted"
         if self.name == "henry" and state == "sp_vert_attack_2":
             self.henry_sp_vert_attack_2_pending = True
-        if self.name == "deep" and state in {"sp_vert_attack_1", "sp_vert_attack_2", "sp_move_attack_2"}:
-            self.deep_sword_swing_sfx_pending = True
-            if state == "sp_move_attack_2":
-                self.deep_sword_swing_loop_timer = 0.18
         if self.name == "armored_bandit" and state in COMBAT_ATTACK_STATES:
             self.armored_bandit_sword_swing_sfx_pending = True
         if self.name == "dark_bat" and state in {"sp_move_attack_1", "jump_attack"}:
@@ -585,12 +654,23 @@ class Fighter:
         self.has_applied_attack_damage = False
         self.jump_attack_active = False
         self.is_defending = False
-        if airborne and self.current_jump_animation in {"jump_attack", "second_jump_basic_attack"}:
+        if airborne and self.current_jump_animation in {
+            "jump_attack",
+            "second_jump_basic_attack",
+            "weapon_jump_attack",
+            "weapon_sprint_jump_basic_attack",
+        }:
             self.current_jump_animation = "jump_second" if self.jump_stage == 2 else "jump_normal"
         self.animation_player.play(animation_name)
         return True
 
     def _can_continue_special(self, state: str, hold_active: bool) -> bool:
+        if self.name == "denis":
+            return (
+                state == "sp_move_attack_1"
+                and self.special_move_followup_state == state
+                and hold_active
+            )
         if self.name == "mark":
             return (
                 state == "sp_move_attack_1"
@@ -676,7 +756,10 @@ class Fighter:
         return True
 
     def _restart_move_followup(self, state: str, hold_active: bool, start_frame_index: int = 0) -> bool:
-        if self.name not in {"deep", "template", "davis", "firen", "firzen", "henry", "axle", "julian", "mark", "woody"} or not hold_active:
+        repeatable_fighter = self.name in {
+            "deep", "template", "davis", "firen", "firzen", "henry", "axle", "julian", "mark", "woody",
+        } or (self.name == "denis" and state == "sp_move_attack_1")
+        if not repeatable_fighter or not hold_active:
             return False
         if not self._consume_mana_for_state(state):
             self.state = "idle"
@@ -692,6 +775,8 @@ class Fighter:
         self.special_move_followup_state = state
         if self.name == "axle" and state == "sp_move_attack_1":
             self.axle_shot_pending = False
+        if self.name == "denis" and state == "sp_move_attack_1":
+            self.denis_sp_move_attack_1_spawned_frames.clear()
         if self.name == "julian" and state == "sp_move_attack_1":
             self.julian_sp_move_attack_1_stage += 1
         if self.name == "henry" and state == "sp_vert_attack_1":
@@ -752,7 +837,7 @@ class Fighter:
         return [*range(previous_index + 1, frame_count), *range(0, current_index + 1)]
 
     def _queue_hunter_air_arrow(self) -> None:
-        if self.name != "hunter":
+        if self.name != "hunter" or self._is_holding_weapon():
             return
         self.attack_started = True
         self.attack_projectile_fired = False
@@ -1010,16 +1095,29 @@ class Fighter:
         self.velocity_z = 0.0
 
     def _start_jump_attack(self) -> None:
-        self.state = "jump_throw"
-        if self.jump_stage == 2 and "second_jump_basic_attack" in self.animations:
+        weapon_held = self._is_holding_weapon()
+        if weapon_held:
+            weapon_animation = (
+                "weapon_sprint_jump_basic_attack"
+                if self.jump_stage == 2
+                else "weapon_jump_attack"
+            )
+            if weapon_animation not in self.animations:
+                return
+            self.current_jump_animation = weapon_animation
+        elif self.jump_stage == 2 and "second_jump_basic_attack" in self.animations:
             self.current_jump_animation = "second_jump_basic_attack"
         else:
             self.current_jump_animation = "jump_attack" if "jump_attack" in self.animations else ("jump_second" if self.jump_stage == 2 else "jump_normal")
+
+        self.state = "jump_throw"
         self.jump_attack_active = True
         self.attack_timer = self.combat["attack_duration"]
         self.has_applied_attack_damage = False
         self.attack_started = True
         self.attack_projectile_fired = False
+        if weapon_held:
+            return
         if self.name == "knight":
             self.knight_sword_swing_sfx_pending = True
         if self.name == "luis_liberated":
@@ -1035,6 +1133,8 @@ class Fighter:
             self.hunter_draw_arrow_sfx_pending = True
 
     def try_start_grapple(self, target: Fighter | None, attack_pressed: bool) -> bool:
+        if self._is_holding_weapon():
+            return False
         if target is None:
             return False
         if not attack_pressed:
@@ -1053,7 +1153,11 @@ class Fighter:
         return True
 
     def update(self, dt: float, inputs: FighterInput, target: Fighter | None = None, controlled: bool = True) -> None:
-        can_attack = self.held_item is None
+        weapon_held = self._is_holding_weapon()
+        can_attack = self.held_item is None or (
+            weapon_held
+            and any(animation_name in self.animations for animation_name in WEAPON_CARRY_ANIMATION_FOLDERS)
+        )
         attack_pressed = controlled and inputs.attack_pressed and can_attack
         block_pressed = controlled and inputs.block_pressed
         attack_just_pressed = controlled and inputs.attack_just_pressed and can_attack
@@ -1091,7 +1195,7 @@ class Fighter:
 
         running = controlled and self.controls_enabled and inputs.run
         special_inputs = {
-            "attack": attack_pressed or attack_just_pressed,
+            "attack": (attack_pressed or attack_just_pressed) and not weapon_held,
             "block": block_pressed or block_just_pressed,
             "jump": jump_pressed or jump_just_pressed,
             "horizontal": move_x != 0 or inputs.left_just_pressed or inputs.right_just_pressed,
@@ -1099,6 +1203,8 @@ class Fighter:
         }
         if not self.controls_enabled or not controlled:
             special_inputs = {key: False for key in self.special_input_buffer}
+        if weapon_held:
+            self.special_input_buffer["attack"] = 0.0
         for key, active in special_inputs.items():
             self.special_input_buffer[key] = max(
                 0.0,
@@ -1107,7 +1213,7 @@ class Fighter:
             if active:
                 self.special_input_buffer[key] = SPECIAL_INPUT_BUFFER_DURATION
 
-        attack_chord = self.special_input_buffer["attack"] > 0.0
+        attack_chord = self.special_input_buffer["attack"] > 0.0 and not weapon_held
         block_chord = self.special_input_buffer["block"] > 0.0
         jump_chord = self.special_input_buffer["jump"] > 0.0
         horizontal_chord = self.special_input_buffer["horizontal"] > 0.0
@@ -1203,17 +1309,10 @@ class Fighter:
                 self.special_move_projectile_timer = max(0.0, self.special_move_projectile_timer - dt)
                 if self.name != "henry" and self.special_move_projectile_timer == 0.0 and self.attack_projectile_fired:
                     self.attack_projectile_fired = False
-                if self.name == "deep" and self.state == "sp_move_attack_2":
-                    self.deep_sword_swing_loop_timer = max(0.0, self.deep_sword_swing_loop_timer - dt)
-                    if self.deep_sword_swing_loop_timer == 0.0:
-                        self.deep_sword_swing_sfx_pending = True
-                        self.deep_sword_swing_loop_timer = 0.18
             else:
                 self.special_move_projectile_timer = 0.0
-                self.deep_sword_swing_loop_timer = 0.0
         else:
             self.special_move_projectile_timer = 0.0
-            self.deep_sword_swing_loop_timer = 0.0
 
         if self.speech_timer > 0.0:
             self.speech_timer = max(0.0, self.speech_timer - dt)
@@ -1243,8 +1342,13 @@ class Fighter:
                 self.attack_started = False
                 self.attack_projectile_fired = False
                 self.hunter_projectile_style = "basic"
-        if self.attack_timer == 0 and self.current_jump_animation in {"jump_attack", "second_jump_basic_attack"}:
-            if self.name == "hunter":
+        if self.attack_timer == 0 and self.current_jump_animation in {
+            "jump_attack",
+            "second_jump_basic_attack",
+            "weapon_jump_attack",
+            "weapon_sprint_jump_basic_attack",
+        }:
+            if self.name == "hunter" and not self._is_holding_weapon():
                 self.hunter_shoot_arrow_sfx_pending = True
             self.current_jump_animation = "jump_second" if self.jump_stage == 2 else "jump_normal"
             self.jump_attack_active = False
@@ -1341,10 +1445,10 @@ class Fighter:
             or special_from_basic_attack
         ) and self.z == 0 and self.velocity_z == 0:
             special_attack_started = False
-            can_move_special_1 = "sp_move_attack_1" in self.animations
-            can_move_special_2 = "sp_move_attack_2" in self.animations
-            can_vert_special_1 = "sp_vert_attack_1" in self.animations
-            can_vert_special_2 = "sp_vert_attack_2" in self.animations
+            can_move_special_1 = self._has_animation("sp_move_attack_1")
+            can_move_special_2 = self._has_animation("sp_move_attack_2")
+            can_vert_special_1 = self._has_animation("sp_vert_attack_1")
+            can_vert_special_2 = self._has_animation("sp_vert_attack_2")
             if attack_chord and self.z == 0 and move_special_1_chord and self.special_attack_lock is None and can_move_special_1:
                 if self._consume_mana_for_state("sp_move_attack_1"):
                     self.state = "sp_move_attack_1"
@@ -1363,7 +1467,7 @@ class Fighter:
                 if self._consume_mana_for_state("sp_vert_attack_2"):
                     self.state = "sp_vert_attack_2"
                     self._start_attack_state("sp_vert_attack_2")
-                    if self.name in {"deep", "firen"}:
+                    if self.name == "deep":
                         self.z = 1.0
                         self.velocity_z = self.movement["jump_velocity"] * 0.9
                         self.just_jumped = True
@@ -1397,7 +1501,7 @@ class Fighter:
                 else:
                     special_attack_started = True
             if special_attack_started and self.state == "sp_move_attack_1":
-                if self.name in {"deep", "template", "davis", "firen", "firzen", "axle", "julian", "mark"}:
+                if self.name in {"deep", "template", "davis", "firen", "firzen", "axle", "julian", "mark", "denis"}:
                     self.special_move_followup_state = "sp_move_attack_1"
                     self.special_attack_lock = "sp_move_attack_1"
                 else:
@@ -1442,16 +1546,33 @@ class Fighter:
                     self.state = "throw_heavy"
                     self._start_attack_state("throw_heavy")
                 elif attack_just_pressed and self.z == 0 and move_x != 0 and running and not block_pressed and self.state in {"run", "walk"}:
-                    self.state = "sprint_punch"
-                    self._start_attack_state("sprint_punch", push_velocity_x=self.facing * 160.0)
+                    if weapon_held:
+                        if "weapon_sprint_basic_attack" in self.animations:
+                            self.state = "sprint_punch"
+                            self._start_attack_state("sprint_punch", push_velocity_x=self.facing * 160.0)
+                    else:
+                        self.state = "sprint_punch"
+                        self._start_attack_state("sprint_punch", push_velocity_x=self.facing * 160.0)
                 elif attack_just_pressed and self.z == 0 and (move_x or move_y):
-                    self.state = "basic_attack"
-                    self.attack_animation = self._next_basic_attack_animation()
-                    self._start_attack_state("basic_attack")
+                    if weapon_held:
+                        if "weapon_basic_attack" in self.animations:
+                            self.state = "basic_attack"
+                            self.attack_animation = "weapon_basic_attack"
+                            self._start_attack_state("basic_attack")
+                    else:
+                        self.state = "basic_attack"
+                        self.attack_animation = self._next_basic_attack_animation()
+                        self._start_attack_state("basic_attack")
                 elif attack_just_pressed and self.z == 0:
-                    self.state = "basic_attack"
-                    self.attack_animation = self._next_basic_attack_animation()
-                    self._start_attack_state("basic_attack")
+                    if weapon_held:
+                        if "weapon_basic_attack" in self.animations:
+                            self.state = "basic_attack"
+                            self.attack_animation = "weapon_basic_attack"
+                            self._start_attack_state("basic_attack")
+                    else:
+                        self.state = "basic_attack"
+                        self.attack_animation = self._next_basic_attack_animation()
+                        self._start_attack_state("basic_attack")
                 elif jump_just_pressed and self.z == 0:
                     if running:
                         self._start_second_jump()
@@ -1465,7 +1586,8 @@ class Fighter:
                     self.state = "idle"
         elif self.state == "jump_throw" and self.item_throw_animation is None and attack_just_pressed and self.attack_timer == 0:
             self._start_jump_attack()
-            self._queue_hunter_air_arrow()
+            if not weapon_held:
+                self._queue_hunter_air_arrow()
 
         if jump_just_pressed and was_airborne and self.state == "jump_throw" and self.jump_stage == 1:
             self._start_second_jump()
@@ -1630,11 +1752,14 @@ class Fighter:
             else:
                 animation_name = self.state
         elif self.state == "sprint_punch":
-            animation_name = (
-                "sprint_basic_attack"
-                if self.name == "luis_liberated" and "sprint_basic_attack" in self.animations
-                else "sprint_punch"
-            )
+            if self._is_holding_weapon():
+                animation_name = "weapon_sprint_basic_attack"
+            else:
+                animation_name = (
+                    "sprint_basic_attack"
+                    if self.name == "luis_liberated" and "sprint_basic_attack" in self.animations
+                    else "sprint_punch"
+                )
         elif self.state == "hurt":
             animation_name = "hurt"
         elif self.state == "jump_throw":
@@ -1653,6 +1778,20 @@ class Fighter:
         previous_frame_index = self.animation_player.frame_index
         self.animation_previous_frame_index = previous_frame_index
         self.animation_player.update(dt, facing=self.facing)
+        if self.name == "deep" and self.state == "sp_move_attack_2":
+            current_animation_name = self.animation_player.current_name
+            frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
+            crossed_frames = self._crossed_frame_indices(
+                previous_frame_index,
+                self.animation_player.frame_index,
+                frame_count,
+            )
+            if (
+                current_animation_name == "sp_move_attack_2" and 2 in crossed_frames
+            ) or (
+                current_animation_name == "sp_move_attack_2_follow" and 1 in crossed_frames
+            ):
+                self.deep_sword_swing_sfx_pending = True
         if (
             self.name == "bat"
             and self.state == "sp_vert_attack_1"
@@ -1908,12 +2047,20 @@ class Fighter:
             current_animation_name = self.animation_player.current_name
             frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
             crossed_frames = self._crossed_frame_indices(previous_frame_index, self.animation_player.frame_index, frame_count)
-            if self.state == "sp_move_attack_1" and current_animation_name == "sp_move_attack_1" and 2 in crossed_frames:
-                self.firzen_char_blast_pending = True
+            if self.state == "sp_move_attack_1" and current_animation_name == "sp_move_attack_1":
+                for frame_index in (1, 3):
+                    if frame_index in crossed_frames:
+                        self.firzen_sounds_pending.append("firzen_blast")
+                if 2 in crossed_frames:
+                    self.firzen_char_blast_pending = True
             if self.state == "sp_move_attack_2" and current_animation_name == "sp_move_attack_2" and 2 in crossed_frames:
                 self.firzen_fire_shots_pending = 3
+            if self.state == "sp_move_attack_2" and current_animation_name == "sp_move_attack_2" and 3 in crossed_frames:
+                self.firzen_sounds_pending.append("firzen_fire_blast")
             if self.state == "sp_vert_attack_1" and current_animation_name == "sp_vert_attack_1" and 2 in crossed_frames:
                 self.firzen_fire_ice_orb_pending = True
+            if self.state == "sp_vert_attack_1" and current_animation_name == "sp_vert_attack_1" and 3 in crossed_frames:
+                self.firzen_sounds_pending.append("firzen_fire_ice_orb_create")
             if self.state == "sp_vert_attack_2" and current_animation_name == "sp_vert_attack_2" and 5 in crossed_frames:
                 self.firzen_vert_attack_2_columns_pending = True
                 self.firzen_vert_attack_2_orbs_pending = 3
