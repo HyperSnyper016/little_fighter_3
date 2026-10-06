@@ -7,7 +7,17 @@ from pathlib import Path
 
 import pygame
 
-from game.constants import GROUND_Y, HEAVY_ITEM_IDS, HENRY_FLUTE_SEQUENCE_DURATION, LANE_MAX_Y, LANE_MIN_Y, SHADOW_COLOR
+from game.constants import (
+    GROUND_Y,
+    HEAVY_ITEM_IDS,
+    HENRY_FLUTE_SEQUENCE_DURATION,
+    JUMP_GRAVITY_MULTIPLIER,
+    JUMP_LAUNCH_SPEED_MULTIPLIER,
+    JUMP_LANDING_RECOVERY_DURATION,
+    LANE_MAX_Y,
+    LANE_MIN_Y,
+    SHADOW_COLOR,
+)
 from game.systems.animation import AnimationPlayer
 from game.systems.assets import load_character_sheet
 
@@ -70,6 +80,22 @@ def _weapon_carry_files(weapon_carry_root: Path, folder_name: str) -> list[Path]
         (path for path in folder.iterdir() if path.is_file() and path.suffix.lower() in {".bmp", ".png"}),
         key=_natural_sort_key,
     )
+
+
+def _weapon_basic_attack_groups(weapon_carry_root: Path) -> list[list[Path]]:
+    files = _weapon_carry_files(weapon_carry_root, "basic_attack")
+    grouped_files: dict[int, list[Path]] = {}
+    for path in files:
+        match = re.fullmatch(r"(?:attack_)?(\d+)_(\d+)", path.stem, flags=re.IGNORECASE)
+        if match is None:
+            continue
+        grouped_files.setdefault(int(match.group(1)), []).append(path)
+    if not grouped_files:
+        return [files] if files else []
+    return [
+        sorted(group, key=_natural_sort_key)
+        for _, group in sorted(grouped_files.items())
+    ]
 
 
 @dataclass
@@ -303,6 +329,8 @@ class Fighter:
         if not self.block_dodge_cycle:
             self.block_dodge_cycle = ["block_dodge"]
         self.animation_player = AnimationPlayer(self.animations, "idle")
+        self.weapon_basic_attack_cycle = self._weapon_basic_attack_animations()
+        self.weapon_basic_attack_index = 0
         self.basic_attack_cycle = [name for name in self.definition.get("basic_attack_cycle", ["attack_punch", "attack_kick"]) if name in self.animations]
         if not self.basic_attack_cycle:
             self.basic_attack_cycle = ["attack_punch"]
@@ -382,12 +410,27 @@ class Fighter:
             / "hold_item"
             / "weapon_carry"
         )
+        source_animations = self.definition.get("animations", {})
         weapon_carry_definitions: dict[str, dict] = {}
         for animation_name, folder_name in WEAPON_CARRY_ANIMATION_FOLDERS.items():
+            if animation_name == "weapon_basic_attack":
+                for index, files in enumerate(_weapon_basic_attack_groups(weapon_carry_root), start=1):
+                    weapon_carry_definitions[f"weapon_basic_attack_{index}"] = {
+                        "files": files,
+                        "frame_duration": next(
+                            (
+                                source_animations[source_name]["frame_duration"]
+                                for source_name in WEAPON_CARRY_FRAME_DURATION_SOURCES[animation_name]
+                                if source_name in source_animations
+                            ),
+                            0.08,
+                        ),
+                        "loop": False,
+                    }
+                continue
             files = _weapon_carry_files(weapon_carry_root, folder_name)
             if not files:
                 continue
-            source_animations = self.definition.get("animations", {})
             duration = next(
                 (
                     source_animations[source_name]["frame_duration"]
@@ -436,6 +479,8 @@ class Fighter:
         self.block_dodge_cycle = [
             name for name in ("block_dodge", "block_dodge_alt", "block_dodge_alt_2") if name in self.animations
         ] or ["block_dodge"]
+        self.weapon_basic_attack_cycle = self._weapon_basic_attack_animations()
+        self.weapon_basic_attack_index = 0
         self.basic_attack_cycle = [
             name for name in self.definition.get("basic_attack_cycle", ["attack_punch", "attack_kick"])
             if name in self.animations
@@ -461,6 +506,21 @@ class Fighter:
     def _next_basic_attack_animation(self) -> str:
         animation = self.basic_attack_cycle[self.basic_attack_index]
         self.basic_attack_index = (self.basic_attack_index + 1) % len(self.basic_attack_cycle)
+        return animation
+
+    def _weapon_basic_attack_animations(self) -> list[str]:
+        return sorted(
+            (name for name in self.animations if name.startswith("weapon_basic_attack_")),
+            key=lambda name: int(name.rpartition("_")[2]),
+        )
+
+    def _next_weapon_basic_attack_animation(self) -> str:
+        if not self.weapon_basic_attack_cycle:
+            return "weapon_basic_attack"
+        animation = self.weapon_basic_attack_cycle[self.weapon_basic_attack_index]
+        self.weapon_basic_attack_index = (
+            self.weapon_basic_attack_index + 1
+        ) % len(self.weapon_basic_attack_cycle)
         return animation
 
     def _queue_rudolf_blade_sound(self) -> None:
@@ -1072,6 +1132,7 @@ class Fighter:
         self.jump_horizontal_velocity = 0.0
         self.jump_attack_active = False
         self.velocity_z = self.movement["jump_velocity"]
+        self.velocity_z *= JUMP_LAUNCH_SPEED_MULTIPLIER
         self.z = 1
 
     def _start_second_jump(self) -> None:
@@ -1081,6 +1142,7 @@ class Fighter:
         self.jump_horizontal_velocity = self.facing * self.movement["run_speed"] * 1.8
         self.jump_attack_active = False
         self.velocity_z = self.movement["jump_velocity"]
+        self.velocity_z *= JUMP_LAUNCH_SPEED_MULTIPLIER
         if self.name == "dark_bat":
             self.dark_bat_flight_timer = 7.0
             self.z = max(self.z, 96.0)
@@ -1156,7 +1218,10 @@ class Fighter:
         weapon_held = self._is_holding_weapon()
         can_attack = self.held_item is None or (
             weapon_held
-            and any(animation_name in self.animations for animation_name in WEAPON_CARRY_ANIMATION_FOLDERS)
+            and (
+                self.weapon_basic_attack_cycle
+                or any(animation_name in self.animations for animation_name in WEAPON_CARRY_ANIMATION_FOLDERS)
+            )
         )
         attack_pressed = controlled and inputs.attack_pressed and can_attack
         block_pressed = controlled and inputs.block_pressed
@@ -1387,14 +1452,17 @@ class Fighter:
         if dark_bat_flying:
             self.velocity_z = 0.0
         elif self.henry_float_timer <= 0.0 and (self.z > 0 or self.velocity_z != 0):
-            self.velocity_z += self.movement["gravity"] * dt
+            jump_gravity_multiplier = (
+                JUMP_GRAVITY_MULTIPLIER if self.state == "jump_throw" else 1.0
+            )
+            self.velocity_z += self.movement["gravity"] * jump_gravity_multiplier * dt
             self.z -= self.velocity_z * dt
             if self.z <= 0:
                 self.z = 0
                 self.velocity_z = 0
                 if self.state == "jump_throw":
                     self.state = "get_up"
-                    self.state_timer = 0.36
+                    self.state_timer = JUMP_LANDING_RECOVERY_DURATION
                     self.jump_stage = 0
                     self.jump_horizontal_velocity = 0.0
                     self.jump_attack_active = False
@@ -1555,9 +1623,9 @@ class Fighter:
                         self._start_attack_state("sprint_punch", push_velocity_x=self.facing * 160.0)
                 elif attack_just_pressed and self.z == 0 and (move_x or move_y):
                     if weapon_held:
-                        if "weapon_basic_attack" in self.animations:
+                        if self.weapon_basic_attack_cycle or "weapon_basic_attack" in self.animations:
                             self.state = "basic_attack"
-                            self.attack_animation = "weapon_basic_attack"
+                            self.attack_animation = self._next_weapon_basic_attack_animation()
                             self._start_attack_state("basic_attack")
                     else:
                         self.state = "basic_attack"
@@ -1565,9 +1633,9 @@ class Fighter:
                         self._start_attack_state("basic_attack")
                 elif attack_just_pressed and self.z == 0:
                     if weapon_held:
-                        if "weapon_basic_attack" in self.animations:
+                        if self.weapon_basic_attack_cycle or "weapon_basic_attack" in self.animations:
                             self.state = "basic_attack"
-                            self.attack_animation = "weapon_basic_attack"
+                            self.attack_animation = self._next_weapon_basic_attack_animation()
                             self._start_attack_state("basic_attack")
                     else:
                         self.state = "basic_attack"
@@ -1730,7 +1798,7 @@ class Fighter:
         elif self.state == "get_up":
             animation_name = "get_up"
         elif self.state == "lift_heavy":
-            animation_name = "lift_heavy"
+            animation_name = "lift_heavy" if self.held_item in HEAVY_ITEM_IDS else "idle"
         elif self.state == "block":
             animation_name = "block"
         elif self.state == "block_break":
@@ -1742,7 +1810,7 @@ class Fighter:
         elif self.state == "spawn":
             animation_name = "spawn"
         elif self.state == "throw_heavy":
-            animation_name = "throw_heavy"
+            animation_name = "throw_heavy" if self.held_item in HEAVY_ITEM_IDS else "idle"
         elif self.state in {"run", "walk"}:
             if self.held_item in HEAVY_ITEM_IDS:
                 if self.state == "run" and "heavy_carry_sprint" in self.animations:

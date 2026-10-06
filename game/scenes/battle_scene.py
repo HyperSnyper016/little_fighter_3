@@ -3823,9 +3823,7 @@ class BattleScene:
         ):
             return False
         for item in self.consumable_items:
-            pickup_range = 56.0
-            if item.item_id in HEAVY_ITEM_IDS:
-                pickup_range = max(pickup_range, item.world_rect().width / 2 + fighter.hitbox_size[0] / 2)
+            pickup_range = self._item_pickup_range(fighter, item)
             if item.pickupable and abs(fighter.x - item.x) <= pickup_range and abs(fighter.lane_y - item.lane_y) <= 24.0:
                 self.consumable_items.remove(item)
                 fighter.state = "get_up"
@@ -3834,6 +3832,67 @@ class BattleScene:
                 fighter.held_item_landings = item.landing_count
                 return True
         return False
+
+    @staticmethod
+    def _item_pickup_range(fighter: Fighter, item: SpawnedConsumable | ThrownItem) -> float:
+        pickup_range = 56.0
+        if item.item_id in HEAVY_ITEM_IDS:
+            pickup_range = max(pickup_range, item.world_rect().width / 2 + fighter.hitbox_size[0] / 2)
+        return pickup_range
+
+    def _npc_item_input(
+        self,
+        fighter: Fighter,
+        target: Fighter | None,
+        inputs: FighterInput,
+    ) -> FighterInput:
+        if not fighter.controls_enabled or fighter.state not in {"idle", "walk", "run"} or fighter.z != 0:
+            return inputs
+
+        if fighter.held_item is not None:
+            item_animations = self.item_sprite_animations.get(fighter.held_item, {})
+            if "drink" in item_animations and fighter.health < fighter.max_health:
+                return FighterInput(drink_just_pressed=True)
+            if (
+                target is not None
+                and _is_throwable_item(fighter.held_item)
+                and abs(fighter.x - target.x) <= 360.0
+                and abs(fighter.lane_y - target.lane_y) <= 48.0
+            ):
+                return FighterInput(
+                    attack_pressed=True,
+                    attack_just_pressed=True,
+                    block_pressed=True,
+                    block_just_pressed=True,
+                )
+            return inputs
+
+        nearby_items = [
+            item
+            for item in self.consumable_items
+            if item.pickupable
+            and abs(fighter.x - item.x) <= 300.0
+            and abs(fighter.lane_y - item.lane_y) <= 112.0
+        ]
+        if not nearby_items:
+            return inputs
+
+        item = min(
+            nearby_items,
+            key=lambda candidate: (fighter.x - candidate.x) ** 2 + (fighter.lane_y - candidate.lane_y) ** 2,
+        )
+        dx = item.x - fighter.x
+        dy = item.lane_y - fighter.lane_y
+        if abs(dx) <= self._item_pickup_range(fighter, item) and abs(dy) <= 24.0:
+            return FighterInput(attack_just_pressed=True) if fighter.state == "idle" else FighterInput()
+
+        return FighterInput(
+            left=dx < -8.0,
+            right=dx > 8.0,
+            up=dy < -12.0,
+            down=dy > 12.0,
+            run=True,
+        )
 
     def _item_to_drink(self, fighter: Fighter, inputs: FighterInput) -> str | None:
         if (
@@ -4065,7 +4124,10 @@ class BattleScene:
                 if fighter.item_throw_animation == "jump_throw"
                 else "weapon_ground_throw"
             )
-        return WEAPON_ANCHOR_POSES.get(fighter.animation_player.current_name)
+        animation_name = fighter.animation_player.current_name
+        if animation_name.startswith("weapon_basic_attack_"):
+            return "weapon_basic_attack"
+        return WEAPON_ANCHOR_POSES.get(animation_name)
 
     def _character_hand_anchor(self, fighter: Fighter, fallback_to_idle: bool = True) -> HandAnchor | None:
         animation_name = fighter.animation_player.current_name
@@ -5974,7 +6036,11 @@ class BattleScene:
 
             brain = self.enemy_brains[enemy]
             brain.update(dt)
-            enemy_input = brain.build_input(enemy.snapshot, self.fighter.snapshot)
+            enemy_input = self._npc_item_input(
+                enemy,
+                self.fighter,
+                brain.build_input(enemy.snapshot, self.fighter.snapshot),
+            )
             enemy_throw_was_active = enemy.item_throw_animation is not None
             enemy_throw_handled = self._handle_held_item_throw_input(enemy, enemy_input)
             if enemy_throw_was_active or enemy_throw_handled:
@@ -6000,18 +6066,39 @@ class BattleScene:
                 continue
             clone.brain.update(dt)
             clone_target = self.enemy
-            clone_input = (
+            clone_input = self._npc_item_input(
+                clone.fighter,
+                clone_target if clone_target is not None and not clone_target.is_dead else None,
                 clone.brain.build_input(clone.fighter.snapshot, clone_target.snapshot)
                 if clone_target is not None and not clone_target.is_dead
-                else FighterInput()
+                else FighterInput(),
             )
+            was_drinking[clone.fighter] = clone.fighter.state == "drink"
+            clone_throw_was_active = clone.fighter.item_throw_animation is not None
+            clone_throw_handled = self._handle_held_item_throw_input(clone.fighter, clone_input)
+            if clone_throw_was_active or clone_throw_handled:
+                clone_input = self._suppress_item_throw_inputs(clone_input)
+                clone_item = None
+            else:
+                clone_item = self._item_to_drink(clone.fighter, clone_input)
+                if clone_item is not None:
+                    clone_input = replace(
+                        clone_input,
+                        attack_pressed=False,
+                        attack_just_pressed=False,
+                        drink_just_pressed=True,
+                    )
+                elif self._try_pick_up_consumable(clone.fighter, clone_input):
+                    clone_input = replace(clone_input, attack_just_pressed=False)
+            if clone.fighter.held_item is not None and _is_throwable_item(clone.fighter.held_item):
+                clone_input = replace(clone_input, drink_just_pressed=False)
             clone.fighter.update(dt, clone_input, target=clone_target, controlled=True)
+            items_to_drink[clone.fighter] = clone_item
         for fighter in self._fighters():
             if fighter.luis_transform_pending:
                 fighter.transform_to(FighterConfig("luis_liberated", CHARACTERS["luis_liberated"]))
-        self._finish_held_item_throw(self.fighter)
-        for enemy in self.enemies:
-            self._finish_held_item_throw(enemy)
+        for fighter in self._fighters():
+            self._finish_held_item_throw(fighter)
         for fighter, previously_drinking in was_drinking.items():
             item_id = items_to_drink.get(fighter)
             if fighter.state == "drink" and not previously_drinking:

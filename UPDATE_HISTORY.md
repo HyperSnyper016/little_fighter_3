@@ -234,3 +234,11 @@ Append each new release at the bottom with its version and player-facing changes
 ### Changed
 - Refine special-move animation availability, character effects and sounds, and freeze-column obstacle behavior.
 - Limit heavy-carry anchors to walk, sprint, and throw poses.
+
+## v0.18.0 - Improve item use, jumps, and weapon attacks
+### Added
+- Allow NPCs and Rudolf clones to seek and pick up items, use healing consumables, and throw eligible items at opponents.
+- Split weapon-carry basic attacks into separate animation sets and alternate between them.
+### Changed
+- Tune jump arcs for faster, less floaty movement and shorten landing recovery.
+- Prevent heavy-carry sprites from playing unless the fighter is holding a heavy item.
