@@ -242,3 +242,11 @@ Append each new release at the bottom with its version and player-facing changes
 ### Changed
 - Tune jump arcs for faster, less floaty movement and shorten landing recovery.
 - Prevent heavy-carry sprites from playing unless the fighter is holding a heavy item.
+
+## v0.19.0 - Add selectable Harbor and Spooky Palace maps
+### Added
+- Add Harbor and Spooky Palace as selectable maps with rendered previews.
+- Add layered parallax scenery and ground textures for both maps.
+### Changed
+- Prompt for map selection after fighter selection in Play and Test modes.
+- Add brief invulnerability to jump dodges and improve second-jump horizontal movement.

@@ -31,7 +31,7 @@ from game.systems.item_anchors import (
     load_weapon_hand_anchors,
     load_weapon_reference_sprites,
 )
-from game.systems.stage import CityStage
+from game.systems.stage import STAGE_CONFIGS
 
 
 THROWN_ITEM_MAX_DISTANCE = 330.0
@@ -3478,6 +3478,7 @@ class BattleScene:
         stage_mode: bool = False,
         test_mode: bool = False,
         enemy_names: tuple[str, ...] | None = None,
+        map_name: str = "City",
     ) -> None:
         if not stage_mode and not test_mode and enemy_names is not None and not enemy_names:
             raise ValueError("Play mode requires at least one opponent.")
@@ -3496,9 +3497,13 @@ class BattleScene:
         self.stage_mode_complete = False
         self.stage_mode_failed = False
         self.return_to_menu_requested = False
-        stage_root = Path(__file__).resolve().parents[2] / "assets" / "maps" / "The City"
+        stage_config = STAGE_CONFIGS.get(map_name)
+        if stage_config is None:
+            raise ValueError(f"Unknown map: {map_name}")
+        stage_directory, stage_type = stage_config
+        stage_root = Path(__file__).resolve().parents[2] / "assets" / "maps" / stage_directory
         sounds_root = Path(__file__).resolve().parents[2] / "assets" / "sounds"
-        self.stage = CityStage(stage_root)
+        self.stage = stage_type(stage_root)
         item_sprites_root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "item_sprites"
         self.item_sprite_animations = _load_item_sprite_animations(item_sprites_root)
         self.weapon_swing_frames = _load_weapon_swing_frames(item_sprites_root)

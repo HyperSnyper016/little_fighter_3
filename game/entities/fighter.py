@@ -11,9 +11,11 @@ from game.constants import (
     GROUND_Y,
     HEAVY_ITEM_IDS,
     HENRY_FLUTE_SEQUENCE_DURATION,
+    JUMP_DODGE_INVULNERABILITY_DURATION,
     JUMP_GRAVITY_MULTIPLIER,
     JUMP_LAUNCH_SPEED_MULTIPLIER,
     JUMP_LANDING_RECOVERY_DURATION,
+    JUMP_SECOND_STAGE_HORIZONTAL_MULTIPLIER,
     LANE_MAX_Y,
     LANE_MIN_Y,
     SHADOW_COLOR,
@@ -186,6 +188,7 @@ class Fighter:
         self.current_jump_animation = "jump_normal"
         self.jump_stage = 0
         self.jump_horizontal_velocity = 0.0
+        self.jump_dodge_timer = 0.0
         self.jump_attack_active = False
         self.dark_bat_flight_timer = 0.0
         self.movement = self.definition["movement"]
@@ -956,7 +959,11 @@ class Fighter:
 
     @property
     def is_invulnerable(self) -> bool:
-        return self.state in {"fall", "henry_float", "knocked_fire", "knocked_freeze", "get_up", "grappled"} or self.dodge_invulnerable
+        return (
+            self.state in {"fall", "henry_float", "knocked_fire", "knocked_freeze", "get_up", "grappled"}
+            or self.dodge_invulnerable
+            or self.jump_dodge_timer > 0.0
+        )
 
     def hitbox_rect(self, camera_x: float = 0.0) -> pygame.Rect:
         width, height = self.hitbox_size
@@ -1130,6 +1137,7 @@ class Fighter:
         self.current_jump_animation = "jump_normal"
         self.jump_stage = 1
         self.jump_horizontal_velocity = 0.0
+        self.jump_dodge_timer = JUMP_DODGE_INVULNERABILITY_DURATION
         self.jump_attack_active = False
         self.velocity_z = self.movement["jump_velocity"]
         self.velocity_z *= JUMP_LAUNCH_SPEED_MULTIPLIER
@@ -1139,7 +1147,10 @@ class Fighter:
         self.state = "jump_throw"
         self.current_jump_animation = "jump_second"
         self.jump_stage = 2
-        self.jump_horizontal_velocity = self.facing * self.movement["run_speed"] * 1.8
+        self.jump_horizontal_velocity = (
+            self.facing * self.movement["run_speed"] * JUMP_SECOND_STAGE_HORIZONTAL_MULTIPLIER
+        )
+        self.jump_dodge_timer = JUMP_DODGE_INVULNERABILITY_DURATION
         self.jump_attack_active = False
         self.velocity_z = self.movement["jump_velocity"]
         self.velocity_z *= JUMP_LAUNCH_SPEED_MULTIPLIER
@@ -1312,6 +1323,8 @@ class Fighter:
             self.attack_timer = max(0.0, self.attack_timer - dt)
         if self.damage_cooldown > 0:
             self.damage_cooldown = max(0.0, self.damage_cooldown - dt)
+        if self.jump_dodge_timer > 0:
+            self.jump_dodge_timer = max(0.0, self.jump_dodge_timer - dt)
         if self.block_hold_timer > 0:
             self.block_hold_timer = max(0.0, self.block_hold_timer - dt)
         if self.defense_cooldown > 0:
@@ -1699,11 +1712,16 @@ class Fighter:
         elif self.name == "denis" and self.state == "sp_move_attack_2":
             self.x += self.facing * self.movement["run_speed"] * 1.25 * dt
         elif self.state == "jump_throw":
-            air_horizontal_speed = self.movement["run_speed"] if self.jump_stage == 2 else self.movement["walk_speed"]
+            air_horizontal_speed = (
+                self.movement["run_speed"] * JUMP_SECOND_STAGE_HORIZONTAL_MULTIPLIER
+                if self.jump_stage == 2
+                else self.movement["walk_speed"]
+            )
             if move_x != 0:
                 self.jump_horizontal_velocity = move_x * air_horizontal_speed
             else:
-                self.jump_horizontal_velocity *= max(0.0, 1.0 - (4.5 * dt))
+                horizontal_drag = 1.5 if self.jump_stage == 2 else 4.5
+                self.jump_horizontal_velocity *= max(0.0, 1.0 - (horizontal_drag * dt))
 
             self.x += self.jump_horizontal_velocity * dt
             self.lane_y += move_y * self.movement["lane_speed"] * dt

@@ -226,3 +226,50 @@ class CityStage:
         platform_offset = int(camera_x)
         visible = pygame.Rect(platform_offset, 0, SCREEN_WIDTH, self.platform_surface.get_height())
         surface.blit(self.platform_surface, (0, self.floor_top), visible)
+
+
+class HarborStage(CityStage):
+    def _build_layers(self) -> list[StageLayer]:
+        max_camera = self.world_width - SCREEN_WIDTH
+        layer_specs = [("midground_layer.png", 0.06)]
+        if (self.root / "near_scenery_layer.png").exists():
+            layer_specs.append(("near_scenery_layer.png", 0.14))
+
+        backdrop_parallax = 0.015
+        backdrop_width = SCREEN_WIDTH + round(max_camera * backdrop_parallax)
+        backdrop = pygame.transform.smoothscale(
+            _load_city_image(self.root / "distant_backdrop.jpg"),
+            (backdrop_width, self.floor_top),
+        )
+        layers = [StageLayer(backdrop, 0, backdrop_parallax, False)]
+
+        for file_name, parallax in layer_specs:
+            image = _load_city_image(self.root / file_name)
+            layer_width = SCREEN_WIDTH + round(max_camera * parallax)
+            layer_height = max(1, round(image.get_height() * layer_width / image.get_width()))
+            image = pygame.transform.smoothscale(image, (layer_width, layer_height))
+            content_bottom = image.get_bounding_rect(min_alpha=8).bottom
+            y = self.floor_top - content_bottom
+            layers.append(StageLayer(image, y, parallax, False))
+
+        return layers
+
+    def _build_platform(self) -> pygame.Surface:
+        ground = _load_city_image(self.root / "ground_texture.png")
+        content = ground.get_bounding_rect(min_alpha=8)
+        ground = ground.subsurface(content).copy()
+        floor_height = max(1, SCREEN_HEIGHT - self.floor_top)
+        tile_width = max(1, round(floor_height * ground.get_width() / ground.get_height()))
+        tile = pygame.transform.smoothscale(ground, (tile_width, floor_height))
+        platform = pygame.Surface((self.world_width, floor_height), pygame.SRCALPHA)
+        platform.fill((*BG_COLOR, 255))
+        for x in range(0, self.world_width, tile_width):
+            platform.blit(tile, (x, 0))
+        return platform
+
+
+STAGE_CONFIGS: dict[str, tuple[str, type[CityStage]]] = {
+    "City": ("The City", CityStage),
+    "Harbor": ("Harbor", HarborStage),
+    "Spooky Palace": ("Spooky Palace", HarborStage),
+}

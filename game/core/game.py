@@ -10,6 +10,7 @@ from game.entities.fighter import FighterInput
 from game.scenes.battle_scene import BattleScene
 from game.scenes.character_select_scene import CharacterSelectScene
 from game.scenes.main_menu_scene import MainMenuScene
+from game.scenes.map_select_scene import MapSelectScene
 from game.systems.audio import AudioBank
 
 
@@ -116,6 +117,8 @@ class Game:
                 self.scene.update(dt, pygame.mouse.get_pos(), mouse_click, mouse_wheel_y)
             elif isinstance(self.scene, CharacterSelectScene):
                 self.scene.update(dt, pygame.mouse.get_pos(), mouse_click)
+            elif isinstance(self.scene, MapSelectScene):
+                self.scene.update(dt, pygame.mouse.get_pos(), mouse_click)
             else:
                 self.scene.update(dt)
             if isinstance(self.scene, MainMenuScene) and self.scene.quit_requested:
@@ -135,28 +138,63 @@ class Game:
                 )
             elif isinstance(self.scene, CharacterSelectScene) and self.scene.selection_confirmed and self.scene.selected_character:
                 if self.scene.stage_mode:
-                    self.scene = BattleScene(self.scene.selected_character, stage_mode=True)
+                    self.scene = BattleScene(
+                        self.scene.selected_character,
+                        stage_mode=True,
+                    )
                 elif self.scene.test_mode:
-                    self.scene = BattleScene(self.scene.selected_character, test_mode=True)
+                    self.scene = MapSelectScene(
+                        self.scene.selected_character,
+                        test_mode=True,
+                        confirm_already_pressed=(
+                            keys[pygame.K_j]
+                            or keys[pygame.K_RETURN]
+                            or keys[pygame.K_KP_ENTER]
+                        ),
+                    )
                 elif self.scene.opponent_selection:
                     if self.scene.player_character is None:
                         raise RuntimeError("Opponent selection is missing the chosen player character.")
                     self.scene = BattleScene(
                         self.scene.player_character,
                         enemy_names=tuple(sorted(self.scene.selected_opponents)),
+                        map_name=self.scene.map_name,
                     )
                 else:
-                    self.scene = CharacterSelectScene(
-                        self.sprites_root,
-                        opponent_selection=True,
-                        player_character=self.scene.selected_character,
+                    self.scene = MapSelectScene(
+                        self.scene.selected_character,
                         confirm_already_pressed=(
                             keys[pygame.K_j]
                             or keys[pygame.K_RETURN]
                             or keys[pygame.K_KP_ENTER]
                         ),
-                        toggle_already_pressed=keys[pygame.K_SPACE],
                     )
+            elif isinstance(self.scene, MapSelectScene):
+                if self.scene.back_requested:
+                    self.scene = CharacterSelectScene(
+                        self.sprites_root,
+                        test_mode=self.scene.test_mode,
+                        initial_character=self.scene.player_character,
+                    )
+                elif self.scene.selection_confirmed:
+                    if self.scene.test_mode:
+                        self.scene = BattleScene(
+                            self.scene.player_character,
+                            test_mode=True,
+                            map_name=self.scene.selected_map,
+                        )
+                    else:
+                        self.scene = CharacterSelectScene(
+                            self.sprites_root,
+                            opponent_selection=True,
+                            player_character=self.scene.player_character,
+                            confirm_already_pressed=(
+                                keys[pygame.K_j]
+                                or keys[pygame.K_RETURN]
+                                or keys[pygame.K_KP_ENTER]
+                            ),
+                            map_name=self.scene.selected_map,
+                        )
             elif isinstance(self.scene, BattleScene) and self.scene.return_to_menu_requested:
                 self.scene = MainMenuScene()
             self.screen.fill(BG_COLOR)

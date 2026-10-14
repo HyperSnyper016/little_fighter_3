@@ -33,6 +33,8 @@ class CharacterSelectScene:
         opponent_selection: bool = False,
         player_character: str | None = None,
         toggle_already_pressed: bool = False,
+        map_name: str = "City",
+        initial_character: str | None = None,
     ) -> None:
         self.title_font = pygame.font.Font(None, 58)
         self.name_font = pygame.font.Font(None, 48)
@@ -43,13 +45,22 @@ class CharacterSelectScene:
         self.sprites_root = sprites_root
         self.stage_mode = stage_mode
         self.test_mode = test_mode
+        self.map_name = map_name
         self.opponent_selection = opponent_selection
         self.player_character = player_character
         self.characters = self._discover_characters()
         self.selected_index = 0
+        if initial_character is not None:
+            self.selected_index = next(
+                (index for index, character in enumerate(self.characters) if character["key"] == initial_character),
+                -1,
+            )
+            if self.selected_index == -1:
+                raise ValueError(f"Selected character is unavailable: {initial_character}")
         self.scroll_row = 0
         self.selection_confirmed = False
-        self.selected_character = self.characters[0]["key"] if self.characters else None
+        self.selected_character = self.characters[self.selected_index]["key"] if self.characters else None
+        self._ensure_selected_visible()
         self.selected_opponents: set[str] = set()
         self._up_pressed = False
         self._down_pressed = False
