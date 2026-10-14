@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass
 from pathlib import Path
 
 import pygame
 
 from game.constants import SCREEN_HEIGHT, SCREEN_WIDTH, TEXT_COLOR
+from game.data.archetypes import resolve_character_profile
 from game.data.characters import (
     CHARACTER_CATEGORIES,
     CHARACTER_GROUPS,
@@ -38,6 +41,385 @@ SPECIAL_MOVE_LABELS = {
 }
 
 
+@dataclass(frozen=True)
+class PreviewProjectileSpec:
+    trigger_frames: tuple[int, ...]
+    travel_frames: tuple[str, ...]
+    impact_frames: tuple[str, ...] | None = None
+    travel_duration: float = 0.55
+    travel_distance: float = 340.0
+    count: int = 1
+    vertical_spread: float = 0.0
+    scale: float = 1.0
+    origin_x: float = 0.19
+    origin_y: float = 0.34
+
+
+@dataclass(frozen=True)
+class PreviewCompanionSpec:
+    trigger_frame: int
+    create_frames: tuple[str, ...]
+    fly_frames: tuple[str, ...]
+    offsets: tuple[tuple[float, float], ...]
+    lifetime: float = 1.35
+
+
+def _projectile(
+    trigger_frames: tuple[int, ...],
+    travel_frames: tuple[str, ...],
+    impact_frames: tuple[str, ...] | None = None,
+    *,
+    travel_duration: float = 0.55,
+    travel_distance: float = 340.0,
+    count: int = 1,
+    vertical_spread: float = 0.0,
+    scale: float = 1.0,
+    origin_x: float = 0.19,
+    origin_y: float = 0.34,
+) -> PreviewProjectileSpec:
+    return PreviewProjectileSpec(
+        trigger_frames=trigger_frames,
+        travel_frames=travel_frames,
+        impact_frames=impact_frames,
+        travel_duration=travel_duration,
+        travel_distance=travel_distance,
+        count=count,
+        vertical_spread=vertical_spread,
+        scale=scale,
+        origin_x=origin_x,
+        origin_y=origin_y,
+    )
+
+
+PREVIEW_PROJECTILES: dict[tuple[str, str], tuple[PreviewProjectileSpec, ...]] = {
+    ("hunter", "attack_punch"): (
+        _projectile((1,), ("arrow", "arrow_fly"), ("arrow", "arrow_break"), travel_duration=0.7),
+    ),
+    ("henry", "attack_1"): (
+        _projectile((1,), ("arrow", "arrow_fly"), ("arrow", "arrow_break"), travel_duration=0.7),
+    ),
+    ("henry", "sp_move_attack_1"): (
+        _projectile((4,), ("arrow", "arrow_fly"), ("arrow", "arrow_break"), travel_duration=0.7),
+    ),
+    ("henry", "sp_move_attack_2"): (
+        _projectile(
+            (7,),
+            ("wind",),
+            travel_duration=0.65,
+            scale=2.0,
+        ),
+    ),
+    ("henry", "sp_vert_attack_1"): (
+        _projectile(
+            (1,),
+            ("arrow", "arrow_fly"),
+            ("arrow", "arrow_break"),
+            count=5,
+            vertical_spread=34.0,
+            travel_duration=0.7,
+        ),
+    ),
+    ("rudolf", "sp_move_attack_1"): (
+        _projectile(
+            (1,),
+            ("rudolf_shuriken",),
+            travel_duration=0.65,
+            count=3,
+            vertical_spread=28.0,
+        ),
+    ),
+    ("rudolf", "attack_1"): (
+        _projectile((1,), ("rudolf_shuriken",), travel_duration=0.65),
+    ),
+    ("rudolf", "attack_2"): (
+        _projectile((1,), ("rudolf_shuriken",), travel_duration=0.65),
+    ),
+    ("jack", "sp_move_attack_1"): (
+        _projectile((2,), ("jack_blast", "fly"), ("jack_blast", "burst"), travel_duration=0.7),
+    ),
+    ("axle", "sp_move_attack_1"): (
+        _projectile((2,), ("axle_shot", "fly"), ("axle_shot", "burst"), travel_duration=0.65),
+    ),
+    ("julian", "sp_move_attack_1"): (
+        _projectile(
+            (1,),
+            ("julian_skull", "slow"),
+            ("julian_skull", "burst"),
+            travel_duration=0.8,
+        ),
+    ),
+    ("julian", "sp_move_attack_2"): (
+        _projectile((3,), ("julian_ball", "fly"), ("julian_ball", "burst"), travel_duration=0.8),
+    ),
+    ("julian", "sp_vert_attack_1"): (
+        _projectile((2,), ("julian_explode",), travel_duration=0.5, travel_distance=0.0, scale=1.5, origin_x=0.0),
+    ),
+    ("julian", "sp_vert_attack_2"): (
+        _projectile((4,), ("julian_explode",), travel_duration=0.5, travel_distance=0.0, scale=1.5, origin_x=0.0),
+    ),
+    ("john", "sp_move_attack_1"): (
+        _projectile((5,), ("john_blast", "fly"), ("john_blast", "burst"), travel_duration=0.7),
+    ),
+    ("john", "sp_move_attack_2"): (
+        _projectile((5,), ("john_magical_barrier", "barrier"), travel_duration=1.1, travel_distance=0.0, origin_x=0.0, origin_y=0.5),
+    ),
+    ("john", "sp_vert_attack_1"): (
+        _projectile((1,), ("john_follow_disk", "fly"), ("john_follow_disk", "burst"), travel_duration=0.85),
+    ),
+    ("john", "sp_vert_attack_2"): (
+        _projectile((3,), ("john_heal_orb", "idle"), ("john_heal_orb", "burst"), travel_duration=0.75, travel_distance=170.0),
+    ),
+    ("jan", "sp_vert_attack_2"): (
+        _projectile((3,), ("jan_follow_orb", "fly"), ("jan_follow_orb", "burst"), travel_duration=0.8),
+    ),
+    ("bat", "sp_move_attack_2"): (
+        _projectile((1,), ("laser", "lazer_point"), ("laser", "lazer_hit"), travel_duration=0.45, travel_distance=320.0),
+    ),
+    ("dark_bat", "sp_move_attack_2"): (
+        _projectile((1,), ("laser", "lazer_point"), ("laser", "lazer_hit"), travel_duration=0.45, travel_distance=320.0),
+    ),
+    ("freeze", "sp_move_attack_1"): (
+        _projectile((2,), ("freeze_ball", "freeze_ball_projectile"), ("freeze_ball", "freeze_ball_burst"), travel_duration=0.75),
+    ),
+    ("freeze", "sp_move_attack_2"): (
+        _projectile((3,), ("freeze_colum", "freeze_colum_1"), travel_duration=0.75, travel_distance=0.0, count=4, vertical_spread=62.0, origin_x=0.0, origin_y=0.5),
+    ),
+    ("freeze", "sp_vert_attack_1"): (
+        _projectile((3,), ("freeze_tornado",), travel_duration=1.0, travel_distance=120.0, scale=1.4),
+    ),
+    ("sorcerer", "sp_move_attack_1"): (
+        _projectile((4,), ("fireball", "fireball_travel"), ("fireball", "fireball_hit"), travel_duration=0.7),
+    ),
+    ("sorcerer", "sp_move_attack_2"): (
+        _projectile((3,), ("freeze_ball", "freeze_ball_projectile"), ("freeze_ball", "freeze_ball_burst"), travel_duration=0.75),
+    ),
+    ("sorcerer", "sp_vert_attack_2"): (
+        _projectile((2,), ("john_heal_orb", "idle"), ("john_heal_orb", "burst"), travel_duration=0.75, travel_distance=170.0),
+    ),
+    ("template", "sp_move_attack_1"): (
+        _projectile((1,), ("blue_ball", "ball_1", "slow"), ("blue_ball", "ball_burst"), travel_duration=0.75),
+    ),
+    ("davis", "sp_move_attack_1"): (
+        _projectile((3,), ("davis_ball", "davis_ball_medium"), ("davis_ball", "davis_ball_burst"), travel_duration=0.75),
+    ),
+    ("denis", "sp_move_attack_1"): (
+        _projectile((2, 7, 13, 16, 17), ("denis_orb", "1"), ("denis_orb", "burst"), travel_duration=0.75),
+    ),
+    ("denis", "sp_vert_attack_2"): (
+        _projectile((2,), ("denis_follow_orb", "medium"), ("denis_follow_orb", "burst"), travel_duration=0.85),
+    ),
+    ("deep", "sp_move_attack_1"): (
+        _projectile((1,), ("blade_swipe",), travel_duration=0.38, travel_distance=90.0, scale=1.5),
+    ),
+    ("firen", "sp_move_attack_1"): (
+        _projectile((2,), ("fireball", "fireball_travel"), ("fireball", "fireball_hit")),
+    ),
+    ("firen", "sp_move_attack_2"): (
+        _projectile((2,), ("fire_breath",), travel_duration=0.55, travel_distance=210.0, scale=1.6),
+    ),
+    ("firen", "sp_vert_attack_1"): (
+        _projectile((1, 3, 5), ("fire_trail",), travel_duration=0.45, travel_distance=0.0, origin_x=0.0, origin_y=0.65),
+    ),
+    ("firen", "sp_vert_attack_2"): (
+        _projectile((4,), ("explode",), travel_duration=0.5, travel_distance=0.0, origin_x=0.0),
+    ),
+    ("firzen", "sp_move_attack_1"): (
+        _projectile((2,), ("firzen_char_blast", "body"), travel_duration=0.75, travel_distance=0.0, scale=1.25, origin_x=0.0),
+        _projectile((2,), ("firzen_char_blast", "front"), ("firzen_char_blast", "burst"), travel_duration=0.75, scale=1.25),
+    ),
+    ("firzen", "sp_move_attack_2"): (
+        _projectile((2,), ("firzen_fire", "fly"), ("firzen_fire", "burst"), travel_duration=0.55, count=3, vertical_spread=36.0),
+    ),
+    ("firzen", "sp_vert_attack_1"): (
+        _projectile((2,), ("firzen_fire_ice_orb", "fire_orb", "fly"), ("firzen_fire_ice_orb", "fire_orb", "burst"), travel_duration=0.8),
+    ),
+    ("firzen", "sp_vert_attack_2"): (
+        _projectile((5,), ("freeze_colum", "freeze_colum_1"), travel_duration=0.75, travel_distance=0.0, count=4, vertical_spread=62.0, origin_x=0.0, origin_y=0.5),
+        _projectile((5,), ("firzen_fire_ice_orb", "ice_orb", "fly"), ("firzen_fire_ice_orb", "ice_orb", "burst"), travel_duration=0.8, count=3, vertical_spread=34.0),
+    ),
+    ("woody", "sp_move_attack_1"): (
+        _projectile((4, 7), ("woody_shot", "1"), ("woody_shot", "burst"), travel_duration=0.7, count=3, vertical_spread=25.0),
+    ),
+    ("luis", "sp_move_attack_2"): (
+        _projectile((3,), ("wind",), travel_duration=0.65, scale=2.0),
+    ),
+    ("luis_liberated", "sp_move_attack_2"): (
+        _projectile((2,), ("wind",), travel_duration=0.65, scale=2.0),
+    ),
+    ("monk", "sp_move_attack_1"): (
+        _projectile((3,), ("wind",), travel_duration=0.65, scale=2.0),
+    ),
+}
+
+PREVIEW_COMPANIONS = {
+    ("jan", "sp_vert_attack_1"): PreviewCompanionSpec(
+        trigger_frame=3,
+        create_frames=("summons", "healing_birds", "create"),
+        fly_frames=("summons", "healing_birds", "fly"),
+        offsets=((-100.0, -65.0), (0.0, -100.0), (100.0, -65.0)),
+    ),
+    ("bat", "sp_vert_attack_2"): PreviewCompanionSpec(
+        trigger_frame=1,
+        create_frames=("shared_sprites", "summons", "bats", "bats_flying"),
+        fly_frames=("shared_sprites", "summons", "bats", "bats_flying"),
+        offsets=((-90.0, -45.0), (0.0, -75.0), (90.0, -45.0)),
+        lifetime=1.0,
+    ),
+    ("dark_bat", "sp_vert_attack_1"): PreviewCompanionSpec(
+        trigger_frame=1,
+        create_frames=("shared_sprites", "summons", "bats", "bats_flying"),
+        fly_frames=("shared_sprites", "summons", "bats", "bats_flying"),
+        offsets=((-120.0, -65.0), (-72.0, -90.0), (-24.0, -110.0), (24.0, -110.0), (72.0, -90.0), (120.0, -65.0)),
+        lifetime=1.0,
+    ),
+}
+
+PREVIEW_CLONE_MOVES = {
+    ("rudolf", "sp_vert_attack_2"): (4, 2),
+}
+
+
+class PreviewProjectile:
+    TRAVEL_FRAME_DURATION = 0.08
+    IMPACT_FRAME_DURATION = 0.05
+
+    def __init__(
+        self,
+        travel_frames: list[pygame.Surface],
+        impact_frames: list[pygame.Surface] | None,
+        start: tuple[float, float],
+        end_x: float,
+        travel_duration: float,
+    ) -> None:
+        self.travel_frames = travel_frames
+        self.x, self.y = start
+        self.start_x = self.x
+        self.end_x = end_x
+        self.travel_duration = travel_duration
+        self.impact_frames = impact_frames or []
+        self.elapsed = 0.0
+        self.frame_index = 0
+        self.impacting = False
+        self.finished = False
+
+    def update(self, dt: float) -> None:
+        self.elapsed += dt
+        if not self.impacting:
+            progress = min(1.0, self.elapsed / self.travel_duration)
+            self.x = self.start_x + (self.end_x - self.start_x) * progress
+            self.frame_index = int(self.elapsed / self.TRAVEL_FRAME_DURATION) % len(self.travel_frames)
+            if progress >= 1.0:
+                if self.impact_frames:
+                    self.impacting = True
+                    self.elapsed = 0.0
+                    self.frame_index = 0
+                else:
+                    self.finished = True
+            return
+
+        self.frame_index = int(self.elapsed / self.IMPACT_FRAME_DURATION)
+        if self.frame_index >= len(self.impact_frames):
+            self.finished = True
+            self.frame_index = len(self.impact_frames) - 1
+
+    def draw(self, surface: pygame.Surface) -> None:
+        frames = self.impact_frames if self.impacting else self.travel_frames
+        if not frames:
+            return
+        frame = frames[self.frame_index]
+        surface.blit(frame, frame.get_rect(center=(round(self.x), round(self.y))))
+
+
+class PreviewCompanion:
+    FRAME_DURATION = 0.08
+    CREATE_DURATION = 0.16
+
+    def __init__(
+        self,
+        create_frames: list[pygame.Surface],
+        fly_frames: list[pygame.Surface],
+        origin: tuple[float, float],
+        offset: tuple[float, float],
+        lifetime: float,
+        phase: float,
+    ) -> None:
+        self.create_frames = create_frames
+        self.fly_frames = fly_frames
+        self.origin_x, self.origin_y = origin
+        self.offset_x, self.offset_y = offset
+        self.x, self.y = origin
+        self.lifetime = lifetime
+        self.phase = phase
+        self.elapsed = 0.0
+        self.frame_index = 0
+        self.finished = False
+
+    def update(self, dt: float) -> None:
+        self.elapsed += dt
+        if self.elapsed < self.CREATE_DURATION:
+            self.frame_index = min(
+                int(self.elapsed / self.FRAME_DURATION),
+                len(self.create_frames) - 1,
+            )
+            return
+
+        fly_elapsed = self.elapsed - self.CREATE_DURATION
+        if self.elapsed >= self.lifetime:
+            self.finished = True
+            return
+
+        spread = min(1.0, fly_elapsed / 0.3)
+        self.x = (
+            self.origin_x
+            + self.offset_x * spread
+            + 14.0 * math.sin(fly_elapsed * 4 + self.phase)
+        )
+        self.y = (
+            self.origin_y
+            + self.offset_y * spread
+            + 10.0 * math.cos(fly_elapsed * 4 + self.phase)
+        )
+        self.frame_index = int(fly_elapsed / self.FRAME_DURATION) % len(self.fly_frames)
+
+    def draw(self, surface: pygame.Surface) -> None:
+        frames = self.create_frames if self.elapsed < self.CREATE_DURATION else self.fly_frames
+        frame = frames[self.frame_index]
+        surface.blit(frame, frame.get_rect(center=(round(self.x), round(self.y))))
+
+
+class PreviewClone:
+    FRAME_DURATION = 0.08
+
+    def __init__(
+        self,
+        frames: list[pygame.Surface],
+        center: tuple[int, int],
+        offset_x: float,
+        lifetime: float,
+        mirrored: bool,
+    ) -> None:
+        self.frames = frames
+        self.center = center
+        self.offset_x = offset_x
+        self.lifetime = lifetime
+        self.mirrored = mirrored
+        self.elapsed = 0.0
+        self.finished = False
+
+    def update(self, dt: float) -> None:
+        self.elapsed += dt
+        self.finished = self.elapsed >= self.lifetime
+
+    def draw(self, surface: pygame.Surface) -> None:
+        frame = self.frames[int(self.elapsed / self.FRAME_DURATION) % len(self.frames)]
+        if self.mirrored:
+            frame = pygame.transform.flip(frame, True, False)
+        frame = frame.copy()
+        frame.set_alpha(150)
+        rect = frame.get_rect(midbottom=(round(self.center[0] + self.offset_x), self.center[1]))
+        surface.blit(frame, rect)
+
+
 class CharacterSelectScene:
     def __init__(
         self,
@@ -52,6 +434,7 @@ class CharacterSelectScene:
         initial_character: str | None = None,
     ) -> None:
         self.sprites_root = sprites_root
+        self.map_name = map_name
         self.stage_mode = stage_mode
         self.test_mode = test_mode
         self.opponent_selection = opponent_selection
@@ -118,6 +501,19 @@ class CharacterSelectScene:
         self.preview_pending_key: str | None = None
         self.preview_pending_elapsed = 0.0
         self.preview_label = "IDLE"
+        self.preview_character_key: str | None = None
+        self.preview_display_scales: dict[str, float] = {}
+        self.preview_projectiles: list[PreviewProjectile] = []
+        self.preview_companions: list[PreviewCompanion] = []
+        self.preview_clones: list[PreviewClone] = []
+        self.preview_projectile_frames: dict[
+            PreviewProjectileSpec,
+            tuple[list[pygame.Surface], list[pygame.Surface]],
+        ] = {}
+        self.preview_companion_frames: dict[
+            tuple[str, str],
+            tuple[list[pygame.Surface], list[pygame.Surface]],
+        ] = {}
         self.preview_glow = pygame.Surface((720, 190), pygame.SRCALPHA)
         pygame.draw.ellipse(self.preview_glow, (244, 180, 75, 42), self.preview_glow.get_rect())
 
@@ -152,6 +548,10 @@ class CharacterSelectScene:
                     "key": character_key,
                     "display_name": CHARACTERS[character_key]["display_name"].title(),
                     "category": CHARACTER_CATEGORIES[character_key],
+                    "archetype": resolve_character_profile(
+                        character_key,
+                        CHARACTERS[character_key],
+                    )[0].label,
                     "profile": profile,
                 }
             )
@@ -274,8 +674,14 @@ class CharacterSelectScene:
         sequence = self._available_preview_animations(character_key)
         animation_names = {name for name, _ in sequence}
         animations = load_character_animations(definition, animation_names)
-        for animation in animations.values():
+        self.preview_display_scales = {}
+        for name, animation in animations.items():
             scaled_frames = []
+            first_frame = animation["surfaces"][0]
+            self.preview_display_scales[name] = min(
+                PREVIEW_MAX_SIZE[0] / first_frame.get_width(),
+                PREVIEW_MAX_SIZE[1] / first_frame.get_height(),
+            )
             for frame in animation["surfaces"]:
                 scale = min(
                     PREVIEW_MAX_SIZE[0] / frame.get_width(),
@@ -304,8 +710,192 @@ class CharacterSelectScene:
         self.preview_elapsed = 0.0
         self.preview_label = self.preview_sequence[0][1]
         self.preview_player = AnimationPlayer(animations, self.preview_sequence[0][0])
+        self.preview_character_key = character_key
         self.preview_pending_key = None
         self.preview_pending_elapsed = 0.0
+        self.preview_projectiles.clear()
+        self.preview_companions.clear()
+        self.preview_clones.clear()
+
+    @staticmethod
+    def _load_preview_sprite_frames(
+        folder: Path,
+        frame_duration: float,
+        loop: bool,
+    ) -> list[pygame.Surface]:
+        files = sorted(
+            (
+                path
+                for path in folder.iterdir()
+                if path.is_file() and path.suffix.lower() in {".png", ".bmp"}
+            ),
+            key=lambda path: path.name.casefold(),
+        )
+        if not files:
+            raise FileNotFoundError(f"No preview sprite frames found in {folder}")
+        return load_character_animations(
+            {
+                "scale": 1,
+                "animations": {
+                    "preview": {
+                        "files": files,
+                        "frame_duration": frame_duration,
+                        "loop": loop,
+                    }
+                },
+            },
+            {"preview"},
+        )["preview"]["surfaces"]
+
+    def _get_preview_projectile_frames(
+        self,
+        animation_name: str,
+        spec: PreviewProjectileSpec,
+    ) -> tuple[list[pygame.Surface], list[pygame.Surface]]:
+        frames = self.preview_projectile_frames.get(spec)
+        if frames is None:
+            asset_root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites"
+            frames = (
+                self._load_preview_sprite_frames(
+                    asset_root.joinpath(*spec.travel_frames),
+                    PreviewProjectile.TRAVEL_FRAME_DURATION,
+                    True,
+                ),
+                self._load_preview_sprite_frames(
+                    asset_root.joinpath(*spec.impact_frames),
+                    PreviewProjectile.IMPACT_FRAME_DURATION,
+                    False,
+                )
+                if spec.impact_frames is not None
+                else [],
+            )
+            self.preview_projectile_frames[spec] = frames
+
+        scale = self.preview_display_scales[animation_name] * spec.scale
+        scaled_frames = tuple(
+            [
+                pygame.transform.smoothscale(
+                    frame,
+                    (
+                        max(1, round(frame.get_width() * scale)),
+                        max(1, round(frame.get_height() * scale)),
+                    ),
+                )
+                for frame in animation_frames
+            ]
+            for animation_frames in frames
+        )
+        return scaled_frames[0], scaled_frames[1]
+
+    def _get_preview_companion_frames(
+        self,
+        character_key: str,
+        animation_name: str,
+    ) -> tuple[list[pygame.Surface], list[pygame.Surface]]:
+        cache_key = (character_key, animation_name)
+        frames = self.preview_companion_frames.get(cache_key)
+        if frames is None:
+            spec = PREVIEW_COMPANIONS[cache_key]
+            asset_root = Path(__file__).resolve().parents[2] / "assets" / "sprites"
+            frames = (
+                self._load_preview_sprite_frames(
+                    asset_root.joinpath(*spec.create_frames),
+                    PreviewCompanion.FRAME_DURATION,
+                    False,
+                ),
+                self._load_preview_sprite_frames(
+                    asset_root.joinpath(*spec.fly_frames),
+                    PreviewCompanion.FRAME_DURATION,
+                    True,
+                ),
+            )
+            self.preview_companion_frames[cache_key] = frames
+
+        scale = self.preview_display_scales[animation_name]
+        scaled_frames = []
+        for animation_frames in frames:
+            scaled_frames.append(
+                [
+                    pygame.transform.smoothscale(
+                        frame,
+                        (
+                            max(1, round(frame.get_width() * scale)),
+                            max(1, round(frame.get_height() * scale)),
+                        ),
+                    )
+                    for frame in animation_frames
+                ]
+            )
+        return scaled_frames[0], scaled_frames[1]
+
+    def _spawn_preview_projectile(
+        self,
+        character_key: str,
+        animation_name: str,
+        spec: PreviewProjectileSpec,
+    ) -> None:
+        frame = self.preview_player.current_frame
+        fighter_rect = frame.get_rect(midbottom=PREVIEW_CENTER)
+        start_x = fighter_rect.centerx + fighter_rect.width * spec.origin_x
+        start_y = fighter_rect.bottom - fighter_rect.height * spec.origin_y
+        travel_frames, impact_frames = self._get_preview_projectile_frames(
+            animation_name,
+            spec,
+        )
+        for index in range(spec.count):
+            offset_y = (
+                (index - (spec.count - 1) / 2) * spec.vertical_spread
+                if spec.count > 1
+                else 0.0
+            )
+            self.preview_projectiles.append(
+                PreviewProjectile(
+                    travel_frames,
+                    impact_frames,
+                    (start_x, start_y + offset_y),
+                    min(RIGHT_INFO_PANEL.left - 32, start_x + spec.travel_distance),
+                    spec.travel_duration,
+                )
+            )
+
+    def _spawn_preview_companions(
+        self,
+        character_key: str,
+        animation_name: str,
+        spec: PreviewCompanionSpec,
+    ) -> None:
+        frame = self.preview_player.current_frame
+        fighter_rect = frame.get_rect(midbottom=PREVIEW_CENTER)
+        origin = (fighter_rect.centerx, fighter_rect.top + fighter_rect.height * 0.48)
+        create_frames, fly_frames = self._get_preview_companion_frames(
+            character_key,
+            animation_name,
+        )
+        self.preview_companions.extend(
+            PreviewCompanion(
+                create_frames,
+                fly_frames,
+                origin,
+                offset,
+                spec.lifetime,
+                index * math.tau / len(spec.offsets),
+            )
+            for index, offset in enumerate(spec.offsets)
+        )
+
+    def _spawn_preview_clones(self, animation_name: str, count: int) -> None:
+        if self.preview_player is None:
+            return
+        frames = self.preview_player.animations[animation_name]["surfaces"]
+        center = (PREVIEW_CENTER[0], PREVIEW_CENTER[1])
+        offsets = tuple(
+            (index - (count - 1) / 2) * 180.0
+            for index in range(count)
+        )
+        self.preview_clones.extend(
+            PreviewClone(frames, center, offset, 1.0, offset < 0)
+            for offset in offsets
+        )
 
     def _update_preview(self, dt: float) -> None:
         if self.preview_pending_key is not None:
@@ -315,7 +905,27 @@ class CharacterSelectScene:
         if self.preview_player is None or not self.preview_sequence:
             return
 
+        animation_name = self.preview_player.current_name
+        previous_frame_index = self.preview_player.frame_index
         self.preview_player.update(dt, 1)
+        character_key = self.preview_character_key
+        if character_key is not None:
+            for projectile_spec in PREVIEW_PROJECTILES.get((character_key, animation_name), ()):
+                for trigger_frame in projectile_spec.trigger_frames:
+                    if previous_frame_index < trigger_frame <= self.preview_player.frame_index:
+                        self._spawn_preview_projectile(character_key, animation_name, projectile_spec)
+            companion_spec = PREVIEW_COMPANIONS.get((character_key, animation_name))
+            if (
+                companion_spec is not None
+                and previous_frame_index < companion_spec.trigger_frame <= self.preview_player.frame_index
+            ):
+                self._spawn_preview_companions(character_key, animation_name, companion_spec)
+            clone_move = PREVIEW_CLONE_MOVES.get((character_key, animation_name))
+            if (
+                clone_move is not None
+                and previous_frame_index < clone_move[0] <= self.preview_player.frame_index
+            ):
+                self._spawn_preview_clones(animation_name, clone_move[1])
         self.preview_elapsed += dt
         _, _, duration = self.preview_sequence[self.preview_sequence_index]
         if self.preview_player.finished or self.preview_elapsed >= duration:
@@ -323,6 +933,19 @@ class CharacterSelectScene:
             animation_name, self.preview_label, _ = self.preview_sequence[self.preview_sequence_index]
             self.preview_player.play(animation_name)
             self.preview_elapsed = 0.0
+        for projectile in self.preview_projectiles:
+            projectile.update(dt)
+        self.preview_projectiles = [
+            projectile for projectile in self.preview_projectiles if not projectile.finished
+        ]
+        for companion in self.preview_companions:
+            companion.update(dt)
+        self.preview_companions = [
+            companion for companion in self.preview_companions if not companion.finished
+        ]
+        for clone in self.preview_clones:
+            clone.update(dt)
+        self.preview_clones = [clone for clone in self.preview_clones if not clone.finished]
 
     def update(
         self,
@@ -543,7 +1166,11 @@ class CharacterSelectScene:
 
     def _draw_character_details(self, surface: pygame.Surface, character: dict) -> None:
         self._draw_panel(surface, LEFT_INFO_PANEL, (9, 17, 29, 225))
-        category_surface = self.badge_font.render(character["category"].upper(), True, (255, 209, 129))
+        category_surface = self.badge_font.render(
+            f"{character['category'].upper()}  |  {character['archetype'].upper()}",
+            True,
+            (255, 209, 129),
+        )
         surface.blit(category_surface, (LEFT_INFO_PANEL.x + 26, LEFT_INFO_PANEL.y + 24))
         name = character["display_name"].upper()
         name_font = self.name_font
@@ -560,7 +1187,7 @@ class CharacterSelectScene:
         )
 
         definition = CHARACTERS[character["key"]]
-        stats = definition["stats"]
+        _, stats, movement = resolve_character_profile(character["key"], definition)
         max_health = int(stats.get("max_health", 0))
         max_mana = int(stats.get("max_mana", 0))
         self._draw_stat_bar(
@@ -580,7 +1207,6 @@ class CharacterSelectScene:
             (77, 147, 229),
         )
 
-        movement = definition.get("movement", {})
         walk_speed = round(movement.get("walk_speed", 0))
         run_speed = round(movement.get("run_speed", 0))
         speed_y = LEFT_INFO_PANEL.y + 276
@@ -629,6 +1255,12 @@ class CharacterSelectScene:
         surface.blit(label, label.get_rect(center=(PREVIEW_CENTER[0], 234)))
         if self.preview_player is None:
             return
+        for projectile in self.preview_projectiles:
+            projectile.draw(surface)
+        for companion in self.preview_companions:
+            companion.draw(surface)
+        for clone in self.preview_clones:
+            clone.draw(surface)
         frame = self.preview_player.current_frame
         surface.blit(frame, frame.get_rect(midbottom=PREVIEW_CENTER))
 

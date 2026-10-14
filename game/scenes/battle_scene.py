@@ -21,6 +21,8 @@ from game.constants import (
     TEXT_COLOR,
 )
 from game.data.characters import CHARACTERS
+from game.data.campaign import CAMPAIGN_ENCOUNTERS, RECOVERY_STAGES
+from game.data.difficulty import DEFAULT_DIFFICULTY, DifficultyProfile, get_difficulty_profile
 from game.entities.fighter import (
     COMBAT_ATTACK_STATES,
     HENRY_FLOAT_DURATION,
@@ -49,19 +51,8 @@ HEAVY_ITEM_DISTANCE_MULTIPLIER = THROWABLE_DISTANCE_MULTIPLIER / 2
 DARK_BAT_SP_MOVE_ATTACK_REACH = 270
 STAGE_CARD_DURATION = 2.4
 CAMERA_FOLLOW_SPEED = 10.0
+QUICK_PLAY_OPPONENT_HEALTH = 5
 STAGE_ROMAN_NUMERALS = ("I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X")
-STAGE_ENCOUNTERS = (
-    (("bandit", 1),),
-    (("bandit", 1), ("hunter", 1)),
-    (("jack", 1), ("bandit", 2), ("hunter", 1)),
-    (("knight", 2), ("monk", 1)),
-    (("bat", 1),),
-    (("bandit", 3), ("armored_bandit", 1)),
-    (("mark", 3), ("sorcerer", 1)),
-    (("sorcerer", 1), ("monk", 1), ("mark", 1), ("hunter", 2)),
-    (("axle", 3), ("jack", 2)),
-    (("luis_liberated", 1), ("henry", 1)),
-)
 WEAPON_ANCHOR_POSES = {
     "idle": "weapon_idle",
     "weapon_idle": "weapon_idle",
@@ -701,7 +692,8 @@ class ItemSpriteAnimation:
 
 
 class BanditBrain:
-    def __init__(self) -> None:
+    def __init__(self, difficulty: DifficultyProfile | None = None) -> None:
+        self.difficulty = difficulty or get_difficulty_profile(DEFAULT_DIFFICULTY)
         self.throw_prep = False
         self.block_hold = False
         self.jump_cooldown = 0.0
@@ -776,8 +768,8 @@ class BanditBrain:
             result.attack_pressed = True
             result.attack_just_pressed = True
             self.throw_prep = False
-            self.throw_cooldown = 2.0
-            self.attack_cooldown = 0.9
+            self.throw_cooldown = 2.0 * self.difficulty.enemy_attack_cooldown_multiplier
+            self.attack_cooldown = 0.9 * self.difficulty.enemy_attack_cooldown_multiplier
             return result
 
         if self_snapshot.state == "lift_heavy":
@@ -785,7 +777,12 @@ class BanditBrain:
             result.attack_just_pressed = True
             return result
 
-        if target_attacking and same_lane and abs_dx < 95.0 and random.random() < 0.18:
+        if (
+            target_attacking
+            and same_lane
+            and abs_dx < 95.0
+            and random.random() < 0.18 * self.difficulty.enemy_block_chance_multiplier
+        ):
             result.block_pressed = True
             result.block_just_pressed = not self.block_hold
             self.block_hold = True
@@ -851,7 +848,12 @@ class BanditBrain:
             self.jump_cooldown = 1.2
             return result
 
-        if target_attacking and same_lane and abs_dx < 115.0 and random.random() < 0.4:
+        if (
+            target_attacking
+            and same_lane
+            and abs_dx < 115.0
+            and random.random() < 0.4 * self.difficulty.enemy_block_chance_multiplier
+        ):
             result.block_pressed = True
             result.block_just_pressed = not self.block_hold
             self.block_hold = True
@@ -865,7 +867,7 @@ class BanditBrain:
 
         if self.attack_cooldown == 0.0 and same_lane and abs_dx < 185.0 and self_snapshot.state not in {"basic_attack", "heavy_attack", "sprint_punch", "spawn", "throw_heavy", "lift_heavy"}:
             result.attack_just_pressed = True
-            self.attack_cooldown = 0.85
+            self.attack_cooldown = 0.85 * self.difficulty.enemy_attack_cooldown_multiplier
 
         return result
 
@@ -3573,20 +3575,30 @@ class BattleScene:
         test_mode: bool = False,
         enemy_names: tuple[str, ...] | None = None,
         map_name: str = "City",
+        difficulty: str = DEFAULT_DIFFICULTY,
     ) -> None:
         if not stage_mode and not test_mode and enemy_names is not None and not enemy_names:
             raise ValueError("Play mode requires at least one opponent.")
         self.font = pygame.font.Font(None, 32)
         self.small_font = pygame.font.Font(None, 24)
         self.pause_font = pygame.font.Font(None, 54)
-        self.stage_title_font = pygame.font.Font(None, 82)
-        self.stage_subtitle_font = pygame.font.Font(None, 32)
+        self.stage_title_font = pygame.font.Font(None, 76)
+        self.stage_name_font = pygame.font.Font(None, 42)
+        self.stage_act_font = pygame.font.Font(None, 28)
+        self.stage_subtitle_font = pygame.font.Font(None, 26)
+        self.stage_choice_font = pygame.font.Font(None, 30)
         self.projectiles: list[object] = []
         self.consumable_items: list[SpawnedConsumable | ThrownItem] = []
         self.paused = False
         self.stage_mode = stage_mode
         self.test_mode = test_mode
+        self.difficulty = get_difficulty_profile(difficulty)
         self.stage_index = 0
+        self.stage_wave_index = 0
+        self.campaign_score = 0
+        self.stage_intermission = False
+        self.stage_intermission_choice = 0
+        self.stage_card_mode = "stage"
         self.stage_card_timer = STAGE_CARD_DURATION if stage_mode else 0.0
         self.stage_mode_complete = False
         self.stage_mode_failed = False
@@ -3681,8 +3693,8 @@ class BattleScene:
 
     def _spawn_encounter(self, x_bounds: tuple[float, float], start_x: float) -> None:
         if self.stage_mode:
-            encounter = STAGE_ENCOUNTERS[self.stage_index]
-            character_names = [name for name, count in encounter for _ in range(count)]
+            wave = CAMPAIGN_ENCOUNTERS[self.stage_index].waves[self.stage_wave_index]
+            character_names = [name for name, count in wave.enemies for _ in range(count)]
         elif self.test_mode:
             character_names = []
         else:
@@ -3700,11 +3712,12 @@ class BattleScene:
                 x_bounds=x_bounds,
             )
             if not self.stage_mode:
-                enemy.max_health = 8
-                enemy.health = 8
+                enemy.max_health = QUICK_PLAY_OPPONENT_HEALTH
+            enemy.max_health = self.difficulty.scale_enemy_health(enemy.max_health)
+            enemy.health = enemy.max_health
             enemy.controls_enabled = True
             self.enemies.append(enemy)
-            self.enemy_brains[enemy] = BanditBrain()
+            self.enemy_brains[enemy] = BanditBrain(self.difficulty)
 
     @property
     def enemy(self) -> Fighter | None:
@@ -3725,15 +3738,52 @@ class BattleScene:
         return [enemy for enemy in self.enemies if not enemy.is_dead]
 
     def _advance_stage_mode(self) -> None:
-        if self.stage_index + 1 >= len(STAGE_ENCOUNTERS):
+        self.campaign_score += 100 * len(self.enemies)
+        encounter = CAMPAIGN_ENCOUNTERS[self.stage_index]
+        if self.stage_wave_index + 1 < len(encounter.waves):
+            self.stage_wave_index += 1
+            x_bounds = (self.stage.play_min_x, self.stage.play_max_x)
+            self._spawn_encounter(x_bounds, self.fighter.x)
+            self.stage_card_mode = "wave"
+            self.stage_card_timer = STAGE_CARD_DURATION
+            self.victory_played = False
+            return
+
+        if self.stage_index + 1 >= len(CAMPAIGN_ENCOUNTERS):
             self.stage_mode_complete = True
             return
 
+        if self.stage_index + 1 in RECOVERY_STAGES:
+            self.stage_intermission = True
+            self.stage_intermission_choice = 0
+            return
+
+        self._start_next_campaign_stage()
+
+    def _start_next_campaign_stage(self) -> None:
         self.stage_index += 1
+        self.stage_wave_index = 0
         x_bounds = (self.stage.play_min_x, self.stage.play_max_x)
         self._spawn_encounter(x_bounds, self.fighter.x)
+        self.stage_card_mode = "stage"
         self.stage_card_timer = STAGE_CARD_DURATION
         self.victory_played = False
+
+    def _confirm_recovery_choice(self) -> None:
+        if self.stage_intermission_choice == 0:
+            recovery = min(
+                max(0, self.fighter.max_health - self.fighter.health),
+                max(1, self.fighter.max_health // 4),
+            )
+            self.fighter.health += recovery
+        else:
+            recovery = min(
+                max(0, self.fighter.max_mana - self.fighter.mana),
+                max(1, self.fighter.max_mana // 4),
+            )
+            self.fighter.mana += recovery
+        self.stage_intermission = False
+        self._start_next_campaign_stage()
 
     def _spawn_rudolf_clones(self, fighter: Fighter) -> None:
         if not fighter.rudolf_clones_pending:
@@ -5015,7 +5065,7 @@ class BattleScene:
         if fighter.name != "sorcerer" or fighter.state != "sp_vert_attack_2" or not fighter.sorcerer_heal_orb_pending:
             return
         fighter.sorcerer_heal_orb_pending = False
-        fighter.health = min(fighter.max_health, fighter.health + 5)
+        fighter.health = min(fighter.max_health, fighter.health + 3)
         origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.72)
         origin_y = fighter.world_hitbox_rect().centery
         self.projectiles.append(JohnHealOrbProjectile(fighter, origin_x, origin_y, fighter.facing))
@@ -5692,7 +5742,7 @@ class BattleScene:
                     for target in allies:
                         if target is None or target.is_dead or not projectile.contact_rect().colliderect(target.world_hitbox_rect()):
                             continue
-                        target.health = min(target.max_health, target.health + 5)
+                        target.health = min(target.max_health, target.health + 3)
                         projectile._start_burst()
                         projectile.just_heal_sound = False
                         self.audio.play("john_heal_orb_heal")
@@ -5839,7 +5889,7 @@ class BattleScene:
                     and not target.is_dead
                     and projectile.rect().colliderect(target.world_hitbox_rect())
                 ):
-                    target.health = min(target.max_health, target.health + 2)
+                    target.health = min(target.max_health, target.health + 1)
                     projectile._start_heal()
                     self.audio.play("healed_target")
                 continue
@@ -6189,6 +6239,14 @@ class BattleScene:
             label = self.small_font.render("TEST MODE - NO ENEMIES", True, TEXT_COLOR)
             surface.blit(label, label.get_rect(topright=(SCREEN_WIDTH - 20, 24)))
         elif self.stage_mode:
+            encounter = CAMPAIGN_ENCOUNTERS[self.stage_index]
+            progress = self.small_font.render(
+                f"STAGE {self.stage_index + 1}/10 - {encounter.title.upper()} - "
+                f"WAVE {self.stage_wave_index + 1}/{len(encounter.waves)} - SCORE {self.campaign_score}",
+                True,
+                TEXT_COLOR,
+            )
+            surface.blit(progress, progress.get_rect(midtop=(SCREEN_WIDTH // 2, 24)))
             for index, enemy in enumerate(enemy for enemy in self.enemies if not enemy.is_dead):
                 self._draw_hud_bar(
                     surface,
@@ -6225,32 +6283,106 @@ class BattleScene:
             return
 
         show_title = self.stage_card_timer > 0.0
-        if not (show_title or self.stage_mode_complete or self.stage_mode_failed):
+        if not (
+            show_title
+            or self.stage_intermission
+            or self.stage_mode_complete
+            or self.stage_mode_failed
+        ):
             return
 
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
         overlay.fill((8, 12, 20, 175))
         surface.blit(overlay, (0, 0))
-        card = pygame.Rect(460, 350, 1000, 330)
+        card = pygame.Rect(460, 330, 1000, 420)
         pygame.draw.rect(surface, (24, 32, 44), card, border_radius=18)
         pygame.draw.rect(surface, (220, 169, 91), card, width=3, border_radius=18)
 
-        if self.stage_mode_complete:
-            heading_text = "CAMPAIGN COMPLETE"
-            subtitle_text = (
-                f"All ten stages cleared - press {KEY_BINDINGS.label('menu_confirm')} to return to the menu"
+        if self.stage_intermission:
+            health_recovery = min(
+                max(0, self.fighter.max_health - self.fighter.health),
+                max(1, self.fighter.max_health // 4),
             )
-        elif self.stage_mode_failed:
-            heading_text = "STAGE FAILED"
-            subtitle_text = f"Press {KEY_BINDINGS.label('menu_confirm')} to return to the menu"
-        else:
-            heading_text = f"STAGE {STAGE_ROMAN_NUMERALS[self.stage_index]}"
-            subtitle_text = "Prepare for battle"
+            mana_recovery = min(
+                max(0, self.fighter.max_mana - self.fighter.mana),
+                max(1, self.fighter.max_mana // 4),
+            )
+            act = self.stage_act_font.render(
+                f"SUPPLY BREAK - AFTER STAGE {STAGE_ROMAN_NUMERALS[self.stage_index]}",
+                True,
+                (255, 214, 139),
+            )
+            heading = self.stage_title_font.render("FIELD SUPPLIES", True, TEXT_COLOR)
+            surface.blit(act, act.get_rect(center=(card.centerx, 385)))
+            surface.blit(heading, heading.get_rect(center=(card.centerx, 458)))
 
+            options = (
+                f"HEAL +{health_recovery} HP" if health_recovery else "HEALTH FULL",
+                f"RESTORE +{mana_recovery} MP" if mana_recovery else "MANA FULL",
+            )
+            option_rects = (
+                pygame.Rect(card.x + 74, 512, 400, 94),
+                pygame.Rect(card.right - 474, 512, 400, 94),
+            )
+            for index, (option, rect) in enumerate(zip(options, option_rects)):
+                selected = index == self.stage_intermission_choice
+                fill = (79, 76, 53) if selected else (34, 43, 56)
+                border = (255, 214, 139) if selected else (104, 121, 139)
+                pygame.draw.rect(surface, fill, rect, border_radius=12)
+                pygame.draw.rect(surface, border, rect, width=3 if selected else 1, border_radius=12)
+                label = self.stage_choice_font.render(option, True, TEXT_COLOR)
+                surface.blit(label, label.get_rect(center=rect.center))
+            prompt = self.stage_subtitle_font.render(
+                f"{KEY_BINDINGS.label('move_left')} / {KEY_BINDINGS.label('move_right')} to choose  -  "
+                f"{KEY_BINDINGS.label('attack')} to continue",
+                True,
+                (195, 205, 218),
+            )
+            surface.blit(prompt, prompt.get_rect(center=(card.centerx, 660)))
+            return
+
+        if self.stage_mode_complete:
+            act_text = "CAMPAIGN CLEAR"
+            heading_text = "CAMPAIGN COMPLETE"
+            detail_text = (
+                f"SCORE {self.campaign_score}  -  FINAL HP "
+                f"{self.fighter.health}/{self.fighter.max_health}"
+            )
+            secondary_text = "All ten stages cleared."
+            prompt_text = f"Press {KEY_BINDINGS.label('attack')} to return to the menu"
+        elif self.stage_mode_failed:
+            act_text = "RUN ENDED"
+            heading_text = "STAGE FAILED"
+            detail_text = f"STAGE {STAGE_ROMAN_NUMERALS[self.stage_index]}"
+            secondary_text = CAMPAIGN_ENCOUNTERS[self.stage_index].title
+            prompt_text = f"Press {KEY_BINDINGS.label('attack')} to return to the menu"
+        elif self.stage_card_mode == "wave":
+            encounter = CAMPAIGN_ENCOUNTERS[self.stage_index]
+            wave = encounter.waves[self.stage_wave_index]
+            act_text = encounter.act
+            heading_text = "REINFORCEMENTS"
+            detail_text = encounter.title
+            secondary_text = wave.banner
+            prompt_text = ""
+        else:
+            encounter = CAMPAIGN_ENCOUNTERS[self.stage_index]
+            act_text = encounter.act
+            heading_text = f"STAGE {STAGE_ROMAN_NUMERALS[self.stage_index]}"
+            detail_text = encounter.title
+            secondary_text = encounter.description
+            prompt_text = "Clear all waves to continue."
+
+        act = self.stage_act_font.render(act_text, True, (255, 214, 139))
         heading = self.stage_title_font.render(heading_text, True, TEXT_COLOR)
-        subtitle = self.stage_subtitle_font.render(subtitle_text, True, (195, 205, 218))
-        surface.blit(heading, heading.get_rect(center=(card.centerx, card.centery - 42)))
-        surface.blit(subtitle, subtitle.get_rect(center=(card.centerx, card.centery + 42)))
+        detail = self.stage_name_font.render(detail_text, True, (220, 228, 237))
+        surface.blit(act, act.get_rect(center=(card.centerx, 390)))
+        surface.blit(heading, heading.get_rect(center=(card.centerx, 465)))
+        surface.blit(detail, detail.get_rect(center=(card.centerx, 535)))
+        secondary = self.stage_subtitle_font.render(secondary_text, True, (195, 205, 218))
+        surface.blit(secondary, secondary.get_rect(center=(card.centerx, 590)))
+        if prompt_text:
+            prompt = self.small_font.render(prompt_text, True, (170, 183, 198))
+            surface.blit(prompt, prompt.get_rect(center=(card.centerx, 650)))
 
     def _draw_marker(self, surface: pygame.Surface, fighter: Fighter, camera_x: float, text: str) -> None:
         marker = self.small_font.render(text, True, (255, 240, 120))
@@ -6264,6 +6396,14 @@ class BattleScene:
         if self.stage_mode and (self.stage_mode_complete or self.stage_mode_failed):
             if inputs.attack_just_pressed:
                 self.return_to_menu_requested = True
+            return
+        if self.stage_mode and self.stage_intermission:
+            if inputs.left_just_pressed:
+                self.stage_intermission_choice = (self.stage_intermission_choice - 1) % 2
+            elif inputs.right_just_pressed:
+                self.stage_intermission_choice = (self.stage_intermission_choice + 1) % 2
+            if inputs.attack_just_pressed:
+                self._confirm_recovery_choice()
             return
         if self.stage_mode and self.stage_card_timer > 0.0:
             self.stage_card_timer = max(0.0, self.stage_card_timer - dt)
@@ -6379,7 +6519,7 @@ class BattleScene:
                 self.audio.play("drink_drink")
                 if item_id is not None:
                     if item_id == "consumables/milk":
-                        fighter.health = min(fighter.max_health, fighter.health + 10)
+                        fighter.health = min(fighter.max_health, fighter.health + 5)
                     self.start_item_overlay(fighter, item_id, "drink", active_state="drink")
 
         for fighter in self._fighters():

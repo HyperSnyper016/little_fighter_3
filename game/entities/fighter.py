@@ -20,6 +20,7 @@ from game.constants import (
     LANE_MIN_Y,
     SHADOW_COLOR,
 )
+from game.data.archetypes import resolve_character_profile
 from game.systems.animation import AnimationPlayer
 from game.systems.assets import load_character_sheet
 
@@ -196,11 +197,13 @@ class Fighter:
         self.jump_dodge_timer = 0.0
         self.jump_attack_active = False
         self.dark_bat_flight_timer = 0.0
-        self.movement = self.definition["movement"]
+        self.archetype, self.stats, self.movement = resolve_character_profile(
+            self.name,
+            self.definition,
+        )
         self.combat = self.definition["combat"]
-        self.stats = self.definition.get("stats", {})
         self.shadow_size = self.definition["shadow_size"]
-        self.max_health = int(self.stats.get("max_health", 20))
+        self.max_health = int(self.stats.get("max_health", 10))
         self.health = self.max_health
         self.max_mana = int(self.stats.get("max_mana", 100))
         self.mana = self.max_mana
@@ -493,12 +496,14 @@ class Fighter:
         mana = self.mana
         self.name = config.name
         self.definition = config.definition
-        self.movement = self.definition["movement"]
+        self.archetype, self.stats, self.movement = resolve_character_profile(
+            self.name,
+            self.definition,
+        )
         self.combat = self.definition["combat"]
-        self.stats = self.definition.get("stats", {})
         self.shadow_size = self.definition["shadow_size"]
-        self.max_health = int(self.stats.get("max_health", 20))
-        self.health = health
+        self.max_health = int(self.stats.get("max_health", 10))
+        self.health = min(health, self.max_health)
         self.max_mana = int(self.stats.get("max_mana", 100))
         self.mana = mana
         self.touch_damage = int(self.stats.get("touch_damage", 1))

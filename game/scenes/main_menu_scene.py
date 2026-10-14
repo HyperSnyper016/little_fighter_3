@@ -8,6 +8,7 @@ from pathlib import Path
 import pygame
 
 from game.constants import SCREEN_HEIGHT, SCREEN_WIDTH, TEXT_COLOR
+from game.data.difficulty import DEFAULT_DIFFICULTY, DIFFICULTY_PROFILES, get_difficulty_profile
 from game.systems.audio import AudioBank
 from game.systems.keybindings import KEY_BINDINGS, KEYBINDING_ROWS
 
@@ -28,7 +29,7 @@ class MainMenuScene:
     KEYBINDINGS_BACK = pygame.Rect(SCREEN_WIDTH // 2 - 150, 930, 300, 54)
     KEYBINDING_ROW_HEIGHT = 42
 
-    def __init__(self) -> None:
+    def __init__(self, difficulty: str = DEFAULT_DIFFICULTY) -> None:
         self.title_font = pygame.font.Font(None, 72)
         self.option_font = pygame.font.Font(None, 40)
         self.credit_font = pygame.font.Font(None, 24)
@@ -40,6 +41,7 @@ class MainMenuScene:
         self.start_requested = False
         self.test_mode_requested = False
         self.stage_mode_requested = False
+        self.difficulty = get_difficulty_profile(difficulty).name
         self.quit_requested = False
         self.settings_open = False
         self.keybindings_open = False
@@ -248,8 +250,13 @@ class MainMenuScene:
     def _menu_options(self) -> tuple[str, ...]:
         if self.settings_open:
             sound_state = "Off" if AudioBank.muted else "On"
-            return (f"Sound: {sound_state}", "Volume", "Key Bindings", "Back")
+            return (f"Sound: {sound_state}", "Volume", "Difficulty", "Key Bindings", "Back")
         return self.MAIN_OPTIONS
+
+    def _cycle_difficulty(self, step: int) -> None:
+        difficulties = tuple(DIFFICULTY_PROFILES)
+        current_index = difficulties.index(self.difficulty)
+        self.difficulty = difficulties[(current_index + step) % len(difficulties)]
 
     def _option_rects(self) -> list[pygame.Rect]:
         options = self._menu_options()
@@ -269,6 +276,8 @@ class MainMenuScene:
             elif self.selected_index == 1:
                 AudioBank.set_master_volume(AudioBank.master_volume + 0.1)
             elif self.selected_index == 2:
+                self._cycle_difficulty(1)
+            elif self.selected_index == 3:
                 self.keybindings_open = True
                 self.keybinding_selected_index = 0
                 self.keybinding_scroll = 0
@@ -392,11 +401,17 @@ class MainMenuScene:
                 self.selected_index = (self.selected_index - 1) % len(options)
             elif down_pressed and not self._down_pressed:
                 self.selected_index = (self.selected_index + 1) % len(options)
-            if self.settings_open and self.selected_index == 1:
-                if left_pressed and not self._left_pressed:
-                    AudioBank.set_master_volume(AudioBank.master_volume - 0.1)
-                elif right_pressed and not self._right_pressed:
-                    AudioBank.set_master_volume(AudioBank.master_volume + 0.1)
+            if self.settings_open:
+                if self.selected_index == 1:
+                    if left_pressed and not self._left_pressed:
+                        AudioBank.set_master_volume(AudioBank.master_volume - 0.1)
+                    elif right_pressed and not self._right_pressed:
+                        AudioBank.set_master_volume(AudioBank.master_volume + 0.1)
+                elif self.selected_index == 2:
+                    if left_pressed and not self._left_pressed:
+                        self._cycle_difficulty(-1)
+                    elif right_pressed and not self._right_pressed:
+                        self._cycle_difficulty(1)
 
             if mouse_click is not None:
                 for index, rect in enumerate(rects):
@@ -703,6 +718,19 @@ class MainMenuScene:
                     pygame.draw.rect(surface, (100, 190, 120), fill_rect, border_radius=6)
                 volume_text = self.credit_font.render(f"{round(AudioBank.master_volume * 100)}%", True, TEXT_COLOR)
                 surface.blit(volume_text, volume_text.get_rect(midright=(rect.right - 12, rect.centery)))
+                continue
+            if self.settings_open and index == 2:
+                label_text = self.option_font.render(label, True, TEXT_COLOR)
+                surface.blit(label_text, label_text.get_rect(midleft=(rect.x + 14, rect.centery)))
+                difficulty_text = self.credit_font.render(
+                    f"< {self.difficulty.upper()} >",
+                    True,
+                    TEXT_COLOR,
+                )
+                surface.blit(
+                    difficulty_text,
+                    difficulty_text.get_rect(midright=(rect.right - 12, rect.centery)),
+                )
                 continue
             text = self.option_font.render(label, True, TEXT_COLOR)
             surface.blit(text, text.get_rect(center=rect.center))

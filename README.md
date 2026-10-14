@@ -29,18 +29,20 @@ PyCharm-friendly Python prototype for a Little Fighter 2-inspired side-scrolling
 
 - Title screen prompt
 - Play mode lets you choose a playable fighter and one or more opponents from the character roster
+- Fighter HP and mana use gameplay-archetype baselines; difficulty scales NPC health and combat pacing. Quick-play opponents have 4/5/6 HP on Easy/Medium/Hard. Set `stat_overrides` in a character definition for exceptions. Character select shows each fighter's archetype separately from its roster group.
+- Character showcases include move-timed projectile volleys, area effects, and summoned sprites for the roster's implemented projectile moves.
 - Test Mode lets you choose a fighter and practice in the arena without enemies
 - 2.5D arena movement
 - Idle, walk, run, jump, attack, defend states
 - Spawned items stay on the ground until picked up; after pickup, they can be thrown and land twice before breaking
-- A random consumable or throwable spawns every 18 seconds; milk restores 10 HP when consumed, armor-piece throwables cannot be consumed, and thrown items damage enemies before dropping where they hit
+- A random consumable or throwable spawns every 18 seconds; milk restores 5 HP when consumed, armor-piece throwables cannot be consumed, and thrown items damage enemies before dropping where they hit
 - Heavy boxes use their spawn, carry, throw, and landing animations; fighters lift them with the get-up animation, use the first heavy-carry walking frame while idle, and switch between carry-walking and carry-sprinting sprites when moving. Landed boxes block movement and break into jumping fragments when hit; box landings alternate between two impact sounds
 - Armor-piece throwables travel twice as far as consumables when thrown
 - Baseballs bounce once on landing and play `baseball_break.wav` when they break
 - Jan's healing-bird summon and homing orb, John's blast, projectile-reflecting barrier, homing disk, and healing orb, Axle's ranged shot and knockdown/launching attacks, Julian's height-guided skulls, piercing ball, and area attacks, Luis's advancing knockdown, bidirectional wind attack, and held sprinting attack, Liberated Luis's sword combos, wind knockdown, and forward dash, Mark's mana-powered charge through the first enemy until a second enemy is hurt, Monk's wind strike, and Freeze's ice-ball, ice-column, and moving tornado special attacks
 - Rudolf's four-lane shuriken volley and air-launching sword strikes
 - The City battle stage, with a parallax sunset-city backdrop, ground-aligned scenery, and a tiled fighting floor
-- Stage Mode campaign with ten increasingly varied enemy encounters
+- Stage Mode campaign with three acts, named encounters, reinforcement waves, three health-or-mana supply breaks, and a campaign score
 - Data-driven animation timing and frame layout
 
 ## Controls
@@ -48,10 +50,11 @@ PyCharm-friendly Python prototype for a Little Fighter 2-inspired side-scrolling
 ### Menus and character selection
 
 - Main menu: use Up / Down or click an option; press J, Enter, or Space to select it. Choose Test Mode to practice without enemies. Click Update History to open the release notes, then scroll with the mouse wheel or Up / Down / Page Up / Page Down; press Escape or click outside the panel to close it.
-- Settings: select Sound or Volume; use Left / Right to adjust volume, or click the volume bar. Open Key Bindings to see all menu, gameplay, and Test Mode controls. Select an action and press the key you want to assign; changes are saved automatically and special-attack chords use the updated movement, attack, jump, and defend bindings. Press Escape to return to the main menu. F9 toggles mute during play by default.
+- Settings: select Sound or Volume; use Left / Right to adjust volume, or click the volume bar. Select Difficulty and use Left / Right or confirm to choose Easy, Medium, or Hard; it carries into Play and Stage Mode. Open Key Bindings to see all menu, gameplay, and Test Mode controls. Select an action and press the key you want to assign; changes are saved automatically and special-attack chords use the updated movement, attack, jump, and defend bindings. Press Escape to return to the main menu. F9 toggles mute during play by default.
 - Character selection: choose your fighter with the arrow keys or by clicking a portrait, then press J, Enter, or numpad Enter, click Confirm, or double-click the portrait.
 - Opponent selection: choose one or more enemies with the arrow keys and Space, or click portraits to toggle them; press J or Enter, or click Start Battle, to begin.
 - Stage Mode runs through ten encounters. After winning or losing the campaign, press J to return to the main menu.
+- At supply breaks after stages III, VI, and IX, use Left / Right to choose health or mana recovery, then press J to continue.
 
 ### Battle
 

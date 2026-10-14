@@ -6,6 +6,7 @@ from pathlib import Path
 import pygame
 
 from game.constants import BG_COLOR, FPS, SCREEN_HEIGHT, SCREEN_WIDTH, TEXT_COLOR, VERSION
+from game.data.difficulty import DEFAULT_DIFFICULTY
 from game.entities.fighter import FighterInput
 from game.scenes.battle_scene import BattleScene
 from game.scenes.character_select_scene import CharacterSelectScene
@@ -22,7 +23,8 @@ class Game:
         pygame.display.set_caption(f"little_fighter_3 {VERSION}")
         self.clock = pygame.time.Clock()
         self.font = pygame.font.Font(None, 28)
-        self.scene = MainMenuScene()
+        self.difficulty = DEFAULT_DIFFICULTY
+        self.scene = MainMenuScene(self.difficulty)
         self.sprites_root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "characters"
         self.input_state = FighterInput()
         self.left_tap_time = 0.0
@@ -126,6 +128,7 @@ class Game:
                     pygame.mouse.get_pressed()[0],
                     pressed_key_events,
                 )
+                self.difficulty = self.scene.difficulty
             elif isinstance(self.scene, CharacterSelectScene):
                 self.scene.update(dt, pygame.mouse.get_pos(), mouse_click, mouse_wheel_y)
             elif isinstance(self.scene, MapSelectScene):
@@ -147,6 +150,7 @@ class Game:
                     self.scene = BattleScene(
                         self.scene.selected_character,
                         stage_mode=True,
+                        difficulty=self.difficulty,
                     )
                 elif self.scene.test_mode:
                     self.scene = MapSelectScene(
@@ -161,6 +165,7 @@ class Game:
                         self.scene.player_character,
                         enemy_names=tuple(sorted(self.scene.selected_opponents)),
                         map_name=self.scene.map_name,
+                        difficulty=self.difficulty,
                     )
                 else:
                     self.scene = MapSelectScene(
@@ -192,34 +197,24 @@ class Game:
                             map_name=self.scene.selected_map,
                         )
             elif isinstance(self.scene, BattleScene) and self.scene.return_to_menu_requested:
-                self.scene = MainMenuScene()
+                self.scene = MainMenuScene(self.difficulty)
             self.screen.fill(BG_COLOR)
             self.scene.draw(self.screen)
-            if isinstance(self.scene, BattleScene):
+            if isinstance(self.scene, BattleScene) and self.scene.test_mode:
                 mute_state = "Muted" if AudioBank.muted else "Sound on"
-                if self.scene.test_mode:
-                    hint_text = (
-                        "TEST: "
-                        f"{KEY_BINDINGS.label('knock_down')} knockdown, "
-                        f"{KEY_BINDINGS.label('lift')} lift, "
-                        f"{KEY_BINDINGS.label('break_block')} break, "
-                        f"{KEY_BINDINGS.label('die')} die, "
-                        f"{KEY_BINDINGS.label('revive')} revive, "
-                        f"{KEY_BINDINGS.label('drink')} drink, "
-                        f"{KEY_BINDINGS.label('fire_knockdown')}/{KEY_BINDINGS.label('ice_knockdown')} fire/ice, "
-                        f"{KEY_BINDINGS.label('hurt')} hurt, "
-                        f"{KEY_BINDINGS.label('spawn_item')}/{KEY_BINDINGS.label('spawn_heavy_box')} spawn, "
-                        f"{KEY_BINDINGS.label('defeat_enemy')} defeat enemy"
-                    )
-                else:
-                    hint_text = (
-                        f"{KEY_BINDINGS.label('move_up')}/{KEY_BINDINGS.label('move_down')}/"
-                        f"{KEY_BINDINGS.label('move_left')}/{KEY_BINDINGS.label('move_right')} move, "
-                        f"{KEY_BINDINGS.label('sprint')} sprint, "
-                        f"{KEY_BINDINGS.label('attack')} attack/pick up/drink, "
-                        f"{KEY_BINDINGS.label('jump')} jump, "
-                        f"{KEY_BINDINGS.label('defend')} defend"
-                    )
+                hint_text = (
+                    "TEST: "
+                    f"{KEY_BINDINGS.label('knock_down')} knockdown, "
+                    f"{KEY_BINDINGS.label('lift')} lift, "
+                    f"{KEY_BINDINGS.label('break_block')} break, "
+                    f"{KEY_BINDINGS.label('die')} die, "
+                    f"{KEY_BINDINGS.label('revive')} revive, "
+                    f"{KEY_BINDINGS.label('drink')} drink, "
+                    f"{KEY_BINDINGS.label('fire_knockdown')}/{KEY_BINDINGS.label('ice_knockdown')} fire/ice, "
+                    f"{KEY_BINDINGS.label('hurt')} hurt, "
+                    f"{KEY_BINDINGS.label('spawn_item')}/{KEY_BINDINGS.label('spawn_heavy_box')} spawn, "
+                    f"{KEY_BINDINGS.label('defeat_enemy')} defeat enemy"
+                )
                 hint = self.font.render(
                     f"{hint_text} | {KEY_BINDINGS.label('mute')} {mute_state}",
                     True,

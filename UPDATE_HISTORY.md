@@ -268,3 +268,16 @@ Append each new release at the bottom with its version and player-facing changes
 ### Changed
 - Remove Dummy from playable selection and limit debug controls to Test Mode.
 - Refresh menu control hints to reflect configured keybindings.
+
+## v0.22.0 - Expand Stage Mode and add difficulty options
+### Added
+- Add Easy, Medium, and Hard settings that scale NPC health, attack pacing, and defense.
+- Expand Stage Mode into ten named encounters across three acts, with reinforcement waves, supply breaks, campaign scoring, and clear/failure screens.
+- Show timed projectile, summon, and clone effects in character-selection previews.
+- Add gameplay archetypes with distinct health, mana, and movement baselines.
+### Changed
+- Reduce fighter health and healing values to make battles faster.
+- Hide gameplay keyboard hints outside Test Mode.
+### Fixed
+- Preserve the selected map when entering battle from opponent selection.
+- Clamp current health to the new maximum when Luis transforms.
