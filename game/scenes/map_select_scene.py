@@ -6,6 +6,7 @@ import pygame
 
 from game.constants import SCREEN_HEIGHT, SCREEN_WIDTH, TEXT_COLOR
 from game.systems.stage import STAGE_CONFIGS
+from game.systems.keybindings import KEY_BINDINGS
 
 
 class MapSelectScene:
@@ -73,10 +74,10 @@ class MapSelectScene:
         mouse_click: tuple[int, int] | None = None,
     ) -> None:
         keys = pygame.key.get_pressed()
-        left_pressed = keys[pygame.K_LEFT]
-        right_pressed = keys[pygame.K_RIGHT]
-        confirm_pressed = keys[pygame.K_j] or keys[pygame.K_RETURN] or keys[pygame.K_KP_ENTER]
-        escape_pressed = keys[pygame.K_ESCAPE]
+        left_pressed = KEY_BINDINGS.is_pressed("move_left", keys)
+        right_pressed = KEY_BINDINGS.is_pressed("move_right", keys)
+        confirm_pressed = KEY_BINDINGS.is_pressed("menu_confirm", keys)
+        escape_pressed = KEY_BINDINGS.is_pressed("back_pause", keys)
 
         if left_pressed and not self._left_pressed:
             self._select_map(self.selected_index - 1)
@@ -148,7 +149,8 @@ class MapSelectScene:
         surface.blit(confirm, confirm.get_rect(center=self.CONFIRM_BUTTON.center))
 
         controls = self.prompt_font.render(
-            "Left/Right: choose map   Enter/J: continue   Esc: back",
+            f"{KEY_BINDINGS.label('move_left')}/{KEY_BINDINGS.label('move_right')}: choose map   "
+            f"{KEY_BINDINGS.label('menu_confirm')}: continue   {KEY_BINDINGS.label('back_pause')}: back",
             True,
             (174, 188, 204),
         )

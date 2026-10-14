@@ -12,6 +12,7 @@ from game.scenes.character_select_scene import CharacterSelectScene
 from game.scenes.main_menu_scene import MainMenuScene
 from game.scenes.map_select_scene import MapSelectScene
 from game.systems.audio import AudioBank
+from game.systems.keybindings import KEY_BINDINGS
 
 
 class Game:
@@ -33,6 +34,7 @@ class Game:
         while True:
             dt = self.clock.tick(FPS) / 1000.0
             pressed_actions = set()
+            pressed_key_events: list[int] = []
             mouse_click = None
             mouse_wheel_y = 0
             left_pressed = False
@@ -47,65 +49,67 @@ class Game:
                     mouse_wheel_y += event.y
                 if event.type == pygame.KEYDOWN:
                     pressed_actions.add(event.key)
-                    if event.key == pygame.K_F9:
+                    pressed_key_events.append(event.key)
+                    if KEY_BINDINGS.matches("mute", event.key):
                         AudioBank.toggle_mute()
-                    if event.key == pygame.K_LEFT:
+                    if KEY_BINDINGS.matches("move_left", event.key):
                         if self.left_tap_time <= self.double_tap_window:
                             self.sprint_direction = -1
                         self.left_tap_time = 0.0
-                    elif event.key == pygame.K_RIGHT:
+                    elif KEY_BINDINGS.matches("move_right", event.key):
                         if self.right_tap_time <= self.double_tap_window:
                             self.sprint_direction = 1
                         self.right_tap_time = 0.0
                 if event.type == pygame.KEYUP:
-                    if event.key == pygame.K_LEFT and self.sprint_direction == -1:
+                    if KEY_BINDINGS.matches("move_left", event.key) and self.sprint_direction == -1:
                         self.sprint_direction = 0
-                    elif event.key == pygame.K_RIGHT and self.sprint_direction == 1:
+                    elif KEY_BINDINGS.matches("move_right", event.key) and self.sprint_direction == 1:
                         self.sprint_direction = 0
 
             keys = pygame.key.get_pressed()
-            left_pressed = keys[pygame.K_LEFT]
-            right_pressed = keys[pygame.K_RIGHT]
+            left_pressed = KEY_BINDINGS.is_pressed("move_left", keys)
+            right_pressed = KEY_BINDINGS.is_pressed("move_right", keys)
             self.left_tap_time += dt
             self.right_tap_time += dt
+            test_mode = isinstance(self.scene, BattleScene) and self.scene.test_mode
             self.input_state = FighterInput(
                 left=left_pressed,
                 right=right_pressed,
-                up=keys[pygame.K_UP],
-                up_just_pressed=pygame.K_UP in pressed_actions,
-                down=keys[pygame.K_DOWN],
-                run=keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT] or (self.sprint_direction == -1 and left_pressed) or (self.sprint_direction == 1 and right_pressed),
+                up=KEY_BINDINGS.is_pressed("move_up", keys),
+                up_just_pressed=KEY_BINDINGS.was_pressed("move_up", pressed_actions),
+                down=KEY_BINDINGS.is_pressed("move_down", keys),
+                run=KEY_BINDINGS.is_pressed("sprint", keys) or (self.sprint_direction == -1 and left_pressed) or (self.sprint_direction == 1 and right_pressed),
                 horizontal_move_active=left_pressed or right_pressed,
-                attack_pressed=keys[pygame.K_j],
-                attack_just_pressed=pygame.K_j in pressed_actions,
-                block_pressed=keys[pygame.K_l],
-                block_just_pressed=pygame.K_l in pressed_actions,
-                jump_pressed=keys[pygame.K_k],
-                jump_just_pressed=pygame.K_k in pressed_actions,
-                left_just_pressed=pygame.K_LEFT in pressed_actions,
-                right_just_pressed=pygame.K_RIGHT in pressed_actions,
-                knock_just_pressed=pygame.K_v in pressed_actions,
-                lift_just_pressed=pygame.K_b in pressed_actions,
-                die_just_pressed=pygame.K_n in pressed_actions,
-                revive_just_pressed=pygame.K_m in pressed_actions,
-                break_block_just_pressed=pygame.K_g in pressed_actions,
-                drink_just_pressed=pygame.K_q in pressed_actions,
-                fire_knock_just_pressed=pygame.K_f in pressed_actions,
-                ice_knock_just_pressed=pygame.K_i in pressed_actions,
-                hurt_just_pressed=pygame.K_h in pressed_actions,
-                spawn_random_item_just_pressed=pygame.K_p in pressed_actions,
-                spawn_heavy_item_just_pressed=pygame.K_o in pressed_actions,
+                attack_pressed=KEY_BINDINGS.is_pressed("attack", keys),
+                attack_just_pressed=KEY_BINDINGS.was_pressed("attack", pressed_actions),
+                block_pressed=KEY_BINDINGS.is_pressed("defend", keys),
+                block_just_pressed=KEY_BINDINGS.was_pressed("defend", pressed_actions),
+                jump_pressed=KEY_BINDINGS.is_pressed("jump", keys),
+                jump_just_pressed=KEY_BINDINGS.was_pressed("jump", pressed_actions),
+                left_just_pressed=KEY_BINDINGS.was_pressed("move_left", pressed_actions),
+                right_just_pressed=KEY_BINDINGS.was_pressed("move_right", pressed_actions),
+                knock_just_pressed=test_mode and KEY_BINDINGS.was_pressed("knock_down", pressed_actions),
+                lift_just_pressed=test_mode and KEY_BINDINGS.was_pressed("lift", pressed_actions),
+                die_just_pressed=test_mode and KEY_BINDINGS.was_pressed("die", pressed_actions),
+                revive_just_pressed=test_mode and KEY_BINDINGS.was_pressed("revive", pressed_actions),
+                break_block_just_pressed=test_mode and KEY_BINDINGS.was_pressed("break_block", pressed_actions),
+                drink_just_pressed=test_mode and KEY_BINDINGS.was_pressed("drink", pressed_actions),
+                fire_knock_just_pressed=test_mode and KEY_BINDINGS.was_pressed("fire_knockdown", pressed_actions),
+                ice_knock_just_pressed=test_mode and KEY_BINDINGS.was_pressed("ice_knockdown", pressed_actions),
+                hurt_just_pressed=test_mode and KEY_BINDINGS.was_pressed("hurt", pressed_actions),
+                spawn_random_item_just_pressed=test_mode and KEY_BINDINGS.was_pressed("spawn_item", pressed_actions),
+                spawn_heavy_item_just_pressed=test_mode and KEY_BINDINGS.was_pressed("spawn_heavy_box", pressed_actions),
             )
 
             if isinstance(self.scene, BattleScene):
-                if pygame.K_ESCAPE in pressed_actions:
+                if KEY_BINDINGS.was_pressed("back_pause", pressed_actions):
                     if self.scene.paused:
                         self.scene.paused = False
                     else:
                         self.scene.paused = True
-                if self.scene.paused and pygame.K_m in pressed_actions:
+                if self.scene.paused and KEY_BINDINGS.was_pressed("return_to_menu", pressed_actions):
                     self.scene = MainMenuScene()
-                if pygame.K_F10 in pressed_actions:
+                elif self.scene.test_mode and KEY_BINDINGS.was_pressed("defeat_enemy", pressed_actions):
                     for fighter in (self.scene.enemy,):
                         if fighter is not None and not fighter.is_dead:
                             fighter.health = 0
@@ -114,9 +118,16 @@ class Game:
             if isinstance(self.scene, BattleScene):
                 self.scene.update(dt, self.input_state)
             elif isinstance(self.scene, MainMenuScene):
-                self.scene.update(dt, pygame.mouse.get_pos(), mouse_click, mouse_wheel_y)
+                self.scene.update(
+                    dt,
+                    pygame.mouse.get_pos(),
+                    mouse_click,
+                    mouse_wheel_y,
+                    pygame.mouse.get_pressed()[0],
+                    pressed_key_events,
+                )
             elif isinstance(self.scene, CharacterSelectScene):
-                self.scene.update(dt, pygame.mouse.get_pos(), mouse_click)
+                self.scene.update(dt, pygame.mouse.get_pos(), mouse_click, mouse_wheel_y)
             elif isinstance(self.scene, MapSelectScene):
                 self.scene.update(dt, pygame.mouse.get_pos(), mouse_click)
             else:
@@ -127,12 +138,7 @@ class Game:
             if isinstance(self.scene, MainMenuScene) and self.scene.start_requested:
                 self.scene = CharacterSelectScene(
                     self.sprites_root,
-                    confirm_already_pressed=(
-                        keys[pygame.K_j]
-                        or keys[pygame.K_RETURN]
-                        or keys[pygame.K_KP_ENTER]
-                        or keys[pygame.K_SPACE]
-                    ),
+                    confirm_already_pressed=KEY_BINDINGS.is_pressed("menu_confirm", keys),
                     stage_mode=self.scene.stage_mode_requested,
                     test_mode=self.scene.test_mode_requested,
                 )
@@ -146,11 +152,7 @@ class Game:
                     self.scene = MapSelectScene(
                         self.scene.selected_character,
                         test_mode=True,
-                        confirm_already_pressed=(
-                            keys[pygame.K_j]
-                            or keys[pygame.K_RETURN]
-                            or keys[pygame.K_KP_ENTER]
-                        ),
+                        confirm_already_pressed=KEY_BINDINGS.is_pressed("menu_confirm", keys),
                     )
                 elif self.scene.opponent_selection:
                     if self.scene.player_character is None:
@@ -164,9 +166,7 @@ class Game:
                     self.scene = MapSelectScene(
                         self.scene.selected_character,
                         confirm_already_pressed=(
-                            keys[pygame.K_j]
-                            or keys[pygame.K_RETURN]
-                            or keys[pygame.K_KP_ENTER]
+                            KEY_BINDINGS.is_pressed("menu_confirm", keys)
                         ),
                     )
             elif isinstance(self.scene, MapSelectScene):
@@ -188,11 +188,7 @@ class Game:
                             self.sprites_root,
                             opponent_selection=True,
                             player_character=self.scene.player_character,
-                            confirm_already_pressed=(
-                                keys[pygame.K_j]
-                                or keys[pygame.K_RETURN]
-                                or keys[pygame.K_KP_ENTER]
-                            ),
+                            confirm_already_pressed=KEY_BINDINGS.is_pressed("menu_confirm", keys),
                             map_name=self.scene.selected_map,
                         )
             elif isinstance(self.scene, BattleScene) and self.scene.return_to_menu_requested:
@@ -201,6 +197,33 @@ class Game:
             self.scene.draw(self.screen)
             if isinstance(self.scene, BattleScene):
                 mute_state = "Muted" if AudioBank.muted else "Sound on"
-                hint = self.font.render(f"Arrows move, Shift runs, J attack/pick up/drink, K jump_throw, L defend_actions, P spawn milk, V knockdown, B lift, G break, N die, M revive, Q drink, F fire knock, I ice knock, H hurt, F9 {mute_state}, F10 kill enemy", True, TEXT_COLOR)
+                if self.scene.test_mode:
+                    hint_text = (
+                        "TEST: "
+                        f"{KEY_BINDINGS.label('knock_down')} knockdown, "
+                        f"{KEY_BINDINGS.label('lift')} lift, "
+                        f"{KEY_BINDINGS.label('break_block')} break, "
+                        f"{KEY_BINDINGS.label('die')} die, "
+                        f"{KEY_BINDINGS.label('revive')} revive, "
+                        f"{KEY_BINDINGS.label('drink')} drink, "
+                        f"{KEY_BINDINGS.label('fire_knockdown')}/{KEY_BINDINGS.label('ice_knockdown')} fire/ice, "
+                        f"{KEY_BINDINGS.label('hurt')} hurt, "
+                        f"{KEY_BINDINGS.label('spawn_item')}/{KEY_BINDINGS.label('spawn_heavy_box')} spawn, "
+                        f"{KEY_BINDINGS.label('defeat_enemy')} defeat enemy"
+                    )
+                else:
+                    hint_text = (
+                        f"{KEY_BINDINGS.label('move_up')}/{KEY_BINDINGS.label('move_down')}/"
+                        f"{KEY_BINDINGS.label('move_left')}/{KEY_BINDINGS.label('move_right')} move, "
+                        f"{KEY_BINDINGS.label('sprint')} sprint, "
+                        f"{KEY_BINDINGS.label('attack')} attack/pick up/drink, "
+                        f"{KEY_BINDINGS.label('jump')} jump, "
+                        f"{KEY_BINDINGS.label('defend')} defend"
+                    )
+                hint = self.font.render(
+                    f"{hint_text} | {KEY_BINDINGS.label('mute')} {mute_state}",
+                    True,
+                    TEXT_COLOR,
+                )
                 self.screen.blit(hint, (20, 18))
             pygame.display.flip()

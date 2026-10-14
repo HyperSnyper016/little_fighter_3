@@ -31,6 +31,7 @@ from game.entities.fighter import (
     FighterSnapshot,
 )
 from game.systems.audio import AudioBank
+from game.systems.keybindings import KEY_BINDINGS
 from game.systems.item_anchors import (
     DEFAULT_WEAPON_ANCHOR_REFERENCE,
     HandAnchor,
@@ -6236,10 +6237,12 @@ class BattleScene:
 
         if self.stage_mode_complete:
             heading_text = "CAMPAIGN COMPLETE"
-            subtitle_text = "All ten stages cleared - press J to return to the menu"
+            subtitle_text = (
+                f"All ten stages cleared - press {KEY_BINDINGS.label('menu_confirm')} to return to the menu"
+            )
         elif self.stage_mode_failed:
             heading_text = "STAGE FAILED"
-            subtitle_text = "Press J to return to the menu"
+            subtitle_text = f"Press {KEY_BINDINGS.label('menu_confirm')} to return to the menu"
         else:
             heading_text = f"STAGE {STAGE_ROMAN_NUMERALS[self.stage_index]}"
             subtitle_text = "Prepare for battle"
@@ -6529,8 +6532,16 @@ class BattleScene:
             overlay.fill((0, 0, 0, 150))
             surface.blit(overlay, (0, 0))
             paused = self.pause_font.render("Paused", True, TEXT_COLOR)
-            resume = self.small_font.render("Esc: Resume", True, TEXT_COLOR)
-            menu = self.small_font.render("M: Main Menu", True, TEXT_COLOR)
+            resume = self.small_font.render(
+                f"{KEY_BINDINGS.label('back_pause')}: Resume",
+                True,
+                TEXT_COLOR,
+            )
+            menu = self.small_font.render(
+                f"{KEY_BINDINGS.label('return_to_menu')}: Main Menu",
+                True,
+                TEXT_COLOR,
+            )
             surface.blit(paused, paused.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 40)))
             surface.blit(resume, resume.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 10)))
             surface.blit(menu, menu.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 40)))

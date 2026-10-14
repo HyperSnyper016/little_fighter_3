@@ -260,3 +260,11 @@ Append each new release at the bottom with its version and player-facing changes
 - Tune movement and projectile behavior for Davis, Deep, Denis, Firen, Jack, Julian, and Woody.
 - Refine Firzen's fire/freeze knockdowns, Freeze's ice-sword follow-through, and Firen's projectile sounds.
 - Fix milk break-animation asset mapping and heavy-item get-up anchoring; refine Dark Bat reach and armored-bandit attack sounds.
+
+## v0.21.0 - Refresh menus and fighter selection
+### Added
+- Add a draggable Update History scrollbar and persistent, rebindable controls in Settings.
+- Group playable fighters into categories and showcase each fighter with animated previews, stats, and move details.
+### Changed
+- Remove Dummy from playable selection and limit debug controls to Test Mode.
+- Refresh menu control hints to reflect configured keybindings.

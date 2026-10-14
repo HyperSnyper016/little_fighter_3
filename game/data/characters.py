@@ -2901,6 +2901,31 @@ CHARACTERS = {
     },
 }
 
+CHARACTER_GROUPS = (
+    ("Grunts", ("bandit", "hunter", "mark")),
+    ("Veterans", ("axle", "armored_bandit", "jack", "jan", "knight", "monk")),
+    ("Elementals", ("firen", "freeze", "firzen", "john", "sorcerer")),
+    ("Rangers", ("henry", "rudolf")),
+    ("Brawlers", ("davis", "denis", "deep", "woody")),
+    ("Heavyweights", ("luis", "luis_liberated")),
+    ("Ace's", ("bat", "dark_bat")),
+    ("Bosses", ("julian",)),
+    ("Training / Placeholder", ("template",)),
+)
+NON_PLAYABLE_CHARACTER_KEYS = frozenset({"dummy"})
+CHARACTER_CATEGORIES = {
+    character_key: category
+    for category, character_keys in CHARACTER_GROUPS
+    for character_key in character_keys
+}
+
+if len(CHARACTER_CATEGORIES) != sum(len(keys) for _, keys in CHARACTER_GROUPS):
+    raise ValueError("A character is assigned to more than one group.")
+if not NON_PLAYABLE_CHARACTER_KEYS <= CHARACTERS.keys():
+    raise ValueError("Non-playable character keys must exist in CHARACTERS.")
+if set(CHARACTER_CATEGORIES) != set(CHARACTERS) - NON_PLAYABLE_CHARACTER_KEYS:
+    raise ValueError("Character groups must cover every playable character exactly once.")
+
 for character_name, definition in CHARACTERS.items():
     jump_throw_files = _animation_files(character_name, "hold_item", "throw_item", "jump_throw")
     if jump_throw_files:

@@ -9,6 +9,7 @@ import pygame
 
 from game.constants import SCREEN_HEIGHT, SCREEN_WIDTH, TEXT_COLOR
 from game.systems.audio import AudioBank
+from game.systems.keybindings import KEY_BINDINGS, KEYBINDING_ROWS
 
 
 @dataclass
@@ -23,6 +24,9 @@ class MainMenuScene:
     MAIN_OPTIONS = ("Play", "Test Mode", "Stage Mode", "Settings", "Quit")
     HISTORY_BUTTON = pygame.Rect(24, SCREEN_HEIGHT - 64, 220, 42)
     HISTORY_PANEL = pygame.Rect(SCREEN_WIDTH - 650, 64, 626, SCREEN_HEIGHT - 88)
+    KEYBINDINGS_VIEWPORT = pygame.Rect(420, 330, 1080, 570)
+    KEYBINDINGS_BACK = pygame.Rect(SCREEN_WIDTH // 2 - 150, 930, 300, 54)
+    KEYBINDING_ROW_HEIGHT = 42
 
     def __init__(self) -> None:
         self.title_font = pygame.font.Font(None, 72)
@@ -38,8 +42,14 @@ class MainMenuScene:
         self.stage_mode_requested = False
         self.quit_requested = False
         self.settings_open = False
+        self.keybindings_open = False
+        self.keybinding_scroll = 0
+        self.keybinding_selected_index = 0
+        self.keybinding_capture: str | None = None
+        self.keybinding_notice = ""
         self.history_open = False
         self.history_scroll = 0
+        self.history_drag_offset: int | None = None
         self.selected_index = 0
         self._up_pressed = False
         self._down_pressed = False
@@ -238,7 +248,7 @@ class MainMenuScene:
     def _menu_options(self) -> tuple[str, ...]:
         if self.settings_open:
             sound_state = "Off" if AudioBank.muted else "On"
-            return (f"Sound: {sound_state}", "Volume", "Back")
+            return (f"Sound: {sound_state}", "Volume", "Key Bindings", "Back")
         return self.MAIN_OPTIONS
 
     def _option_rects(self) -> list[pygame.Rect]:
@@ -258,6 +268,10 @@ class MainMenuScene:
                 AudioBank.set_muted(not AudioBank.muted)
             elif self.selected_index == 1:
                 AudioBank.set_master_volume(AudioBank.master_volume + 0.1)
+            elif self.selected_index == 2:
+                self.keybindings_open = True
+                self.keybinding_selected_index = 0
+                self.keybinding_scroll = 0
             else:
                 self.settings_open = False
                 self.selected_index = 0
@@ -285,38 +299,84 @@ class MainMenuScene:
         mouse_pos: tuple[int, int] | None = None,
         mouse_click: tuple[int, int] | None = None,
         mouse_wheel_y: int = 0,
+        mouse_left_down: bool = False,
+        pressed_keys: list[int] | None = None,
     ) -> None:
         keys = pygame.key.get_pressed()
-        up_pressed = keys[pygame.K_UP]
-        down_pressed = keys[pygame.K_DOWN]
-        left_pressed = keys[pygame.K_LEFT]
-        right_pressed = keys[pygame.K_RIGHT]
-        confirm_pressed = keys[pygame.K_j] or keys[pygame.K_RETURN] or keys[pygame.K_SPACE]
-        escape_pressed = keys[pygame.K_ESCAPE]
+        up_pressed = KEY_BINDINGS.is_pressed("move_up", keys)
+        down_pressed = KEY_BINDINGS.is_pressed("move_down", keys)
+        left_pressed = KEY_BINDINGS.is_pressed("move_left", keys)
+        right_pressed = KEY_BINDINGS.is_pressed("move_right", keys)
+        confirm_pressed = (
+            KEY_BINDINGS.is_pressed("menu_confirm", keys)
+            or KEY_BINDINGS.is_pressed("main_menu_confirm_space", keys)
+        )
+        escape_pressed = KEY_BINDINGS.is_pressed("back_pause", keys)
         options = self._menu_options()
         rects = self._option_rects()
 
         self.start_requested = False
         self.quit_requested = False
         close_rect = pygame.Rect(self.HISTORY_PANEL.right - 52, self.HISTORY_PANEL.y + 12, 36, 36)
-        if self.history_open:
+        if self.keybindings_open:
+            self._update_keybindings(
+                mouse_click,
+                mouse_wheel_y,
+                pressed_keys or [],
+                keys,
+                up_pressed,
+                down_pressed,
+                confirm_pressed,
+                escape_pressed,
+            )
+        elif self.history_open:
             if mouse_click is not None and (
                 not self.HISTORY_PANEL.collidepoint(mouse_click) or close_rect.collidepoint(mouse_click)
             ):
                 self.history_open = False
+                self.history_drag_offset = None
             if self.history_open:
                 if escape_pressed and not self._escape_pressed:
                     self.history_open = False
+                    self.history_drag_offset = None
                 else:
                     self.history_scroll -= mouse_wheel_y * 52
                     if up_pressed and not self._up_pressed:
                         self.history_scroll -= 54
                     elif down_pressed and not self._down_pressed:
                         self.history_scroll += 54
-                    if keys[pygame.K_PAGEUP]:
+                    if KEY_BINDINGS.is_pressed("history_page_up", keys):
                         self.history_scroll -= self._history_viewport().height
-                    elif keys[pygame.K_PAGEDOWN]:
+                    elif KEY_BINDINGS.is_pressed("history_page_down", keys):
                         self.history_scroll += self._history_viewport().height
+                    track, thumb, max_scroll = self._history_scrollbar()
+                    if mouse_click is not None and mouse_pos is not None:
+                        hit_area = track.inflate(16, 0)
+                        if hit_area.collidepoint(mouse_click) and max_scroll:
+                            if thumb.collidepoint(mouse_click):
+                                self.history_drag_offset = mouse_click[1] - thumb.y
+                            else:
+                                self.history_drag_offset = thumb.height // 2
+                            mouse_y = max(track.top, min(mouse_pos[1], track.bottom))
+                            thumb_travel = track.height - thumb.height
+                            thumb_y = max(
+                                track.top,
+                                min(mouse_y - self.history_drag_offset, track.top + thumb_travel),
+                            )
+                            self.history_scroll = round(
+                                (thumb_y - track.top) * max_scroll / thumb_travel
+                            )
+                    if mouse_left_down and self.history_drag_offset is not None and mouse_pos is not None:
+                        thumb_travel = track.height - thumb.height
+                        thumb_y = max(
+                            track.top,
+                            min(mouse_pos[1] - self.history_drag_offset, track.top + thumb_travel),
+                        )
+                        self.history_scroll = round(
+                            (thumb_y - track.top) * max_scroll / thumb_travel
+                        )
+                    elif not mouse_left_down:
+                        self.history_drag_offset = None
                     self._clamp_history_scroll()
         elif mouse_click is not None and self.HISTORY_BUTTON.collidepoint(mouse_click):
             self.history_open = True
@@ -365,11 +425,103 @@ class MainMenuScene:
         self.scroll_x += self.scroll_speed_x * dt
         self.scroll_y += self.scroll_speed_y * dt
 
+    def _update_keybindings(
+        self,
+        mouse_click: tuple[int, int] | None,
+        mouse_wheel_y: int,
+        pressed_keys: list[int],
+        keys: pygame.key.ScancodeWrapper,
+        up_pressed: bool,
+        down_pressed: bool,
+        confirm_pressed: bool,
+        escape_pressed: bool,
+    ) -> None:
+        if self.keybinding_capture is not None:
+            if pressed_keys:
+                key_code = pressed_keys[-1]
+                if key_code == pygame.K_ESCAPE:
+                    self.keybinding_notice = "Rebinding cancelled."
+                else:
+                    KEY_BINDINGS.set_binding(self.keybinding_capture, key_code)
+                    self.keybinding_notice = "Key binding saved."
+                self.keybinding_capture = None
+            return
+
+        if mouse_click is not None:
+            if self.KEYBINDINGS_BACK.collidepoint(mouse_click):
+                self.keybindings_open = False
+                self.keybinding_capture = None
+                return
+            if self.KEYBINDINGS_VIEWPORT.collidepoint(mouse_click):
+                index = (mouse_click[1] - self.KEYBINDINGS_VIEWPORT.top + self.keybinding_scroll) // self.KEYBINDING_ROW_HEIGHT
+                if index < len(KEYBINDING_ROWS):
+                    self.keybinding_selected_index = index
+                    self.keybinding_capture = KEYBINDING_ROWS[index][1]
+                    self.keybinding_notice = "Press any key to assign it. Escape cancels."
+                    self.audio.play("menu_accept")
+                    return
+
+        if escape_pressed and not self._escape_pressed:
+            self.keybindings_open = False
+            return
+        if confirm_pressed and not self._confirm_pressed:
+            self.keybinding_capture = KEYBINDING_ROWS[self.keybinding_selected_index][1]
+            self.keybinding_notice = "Press any key to assign it. Escape cancels."
+            return
+
+        selection_moved = False
+        if up_pressed and not self._up_pressed:
+            self.keybinding_selected_index = (self.keybinding_selected_index - 1) % len(KEYBINDING_ROWS)
+            selection_moved = True
+        elif down_pressed and not self._down_pressed:
+            self.keybinding_selected_index = (self.keybinding_selected_index + 1) % len(KEYBINDING_ROWS)
+            selection_moved = True
+
+        if mouse_wheel_y:
+            self.keybinding_scroll -= mouse_wheel_y * self.KEYBINDING_ROW_HEIGHT * 3
+        elif KEY_BINDINGS.is_pressed("history_page_up", keys):
+            self.keybinding_scroll -= self.KEYBINDINGS_VIEWPORT.height
+        elif KEY_BINDINGS.is_pressed("history_page_down", keys):
+            self.keybinding_scroll += self.KEYBINDINGS_VIEWPORT.height
+        if selection_moved:
+            self._ensure_keybinding_visible()
+        else:
+            max_scroll = max(
+                0,
+                len(KEYBINDING_ROWS) * self.KEYBINDING_ROW_HEIGHT - self.KEYBINDINGS_VIEWPORT.height,
+            )
+            self.keybinding_scroll = max(0, min(self.keybinding_scroll, max_scroll))
+
+    def _ensure_keybinding_visible(self) -> None:
+        selected_top = self.keybinding_selected_index * self.KEYBINDING_ROW_HEIGHT
+        selected_bottom = selected_top + self.KEYBINDING_ROW_HEIGHT
+        if selected_top < self.keybinding_scroll:
+            self.keybinding_scroll = selected_top
+        elif selected_bottom > self.keybinding_scroll + self.KEYBINDINGS_VIEWPORT.height:
+            self.keybinding_scroll = selected_bottom - self.KEYBINDINGS_VIEWPORT.height
+        max_scroll = max(
+            0,
+            len(KEYBINDING_ROWS) * self.KEYBINDING_ROW_HEIGHT - self.KEYBINDINGS_VIEWPORT.height,
+        )
+        self.keybinding_scroll = max(0, min(self.keybinding_scroll, max_scroll))
+
     def _draw_history_button(self, surface: pygame.Surface) -> None:
         pygame.draw.rect(surface, (35, 38, 48), self.HISTORY_BUTTON, border_radius=8)
         pygame.draw.rect(surface, (210, 210, 220), self.HISTORY_BUTTON, 2, border_radius=8)
         label = self.history_button_font.render("Update History", True, TEXT_COLOR)
         surface.blit(label, label.get_rect(center=self.HISTORY_BUTTON.center))
+
+    def _history_scrollbar(self) -> tuple[pygame.Rect, pygame.Rect, int]:
+        viewport = self._history_viewport()
+        track = pygame.Rect(viewport.right + 5, viewport.y, 6, viewport.height)
+        max_scroll = max(0, self.history_content_height - viewport.height)
+        if max_scroll:
+            thumb_height = max(30, round(track.height * viewport.height / self.history_content_height))
+            thumb_y = track.y + round((track.height - thumb_height) * self.history_scroll / max_scroll)
+        else:
+            thumb_height = track.height
+            thumb_y = track.y
+        return track, pygame.Rect(track.x, thumb_y, track.width, thumb_height), max_scroll
 
     def _draw_history_panel(self, surface: pygame.Surface) -> None:
         panel = self.HISTORY_PANEL
@@ -402,23 +554,19 @@ class MainMenuScene:
             surface.blit(empty, (viewport.x, viewport.y))
         surface.set_clip(old_clip)
 
-        track = pygame.Rect(viewport.right + 5, viewport.y, 6, viewport.height)
+        track, thumb, _ = self._history_scrollbar()
         pygame.draw.rect(surface, (43, 51, 62), track, border_radius=3)
-        max_scroll = max(0, self.history_content_height - viewport.height)
-        if max_scroll:
-            thumb_height = max(30, round(track.height * viewport.height / self.history_content_height))
-            thumb_y = track.y + round((track.height - thumb_height) * self.history_scroll / max_scroll)
-        else:
-            thumb_height = track.height
-            thumb_y = track.y
         pygame.draw.rect(
             surface,
             (147, 166, 184),
-            pygame.Rect(track.x, thumb_y, track.width, thumb_height),
+            thumb,
             border_radius=3,
         )
         hint = self.history_hint_font.render(
-            "Scroll: wheel or Up / Down / Page Up / Page Down    Esc: close",
+            "Drag bar / Scroll: wheel, "
+            f"{KEY_BINDINGS.label('move_up')}/{KEY_BINDINGS.label('move_down')}, "
+            f"{KEY_BINDINGS.label('history_page_up')}/{KEY_BINDINGS.label('history_page_down')}    "
+            f"{KEY_BINDINGS.label('back_pause')}: close",
             True,
             (174, 188, 204),
         )
@@ -451,6 +599,68 @@ class MainMenuScene:
         overlay.fill((10, 10, 14, 120))
         surface.blit(overlay, (0, 0))
 
+    def _draw_keybindings(self, surface: pygame.Surface) -> None:
+        viewport = self.KEYBINDINGS_VIEWPORT
+        panel = pygame.Rect(viewport.x - 24, viewport.y - 34, viewport.width + 48, viewport.height + 132)
+        pygame.draw.rect(surface, (18, 23, 32), panel, border_radius=16)
+        pygame.draw.rect(surface, (108, 132, 156), panel, 2, border_radius=16)
+
+        instruction_text = (
+            self.keybinding_notice
+            or "Select a row and press a key to rebind. Changes save automatically."
+        )
+        instruction = self.history_hint_font.render(instruction_text, True, (174, 188, 204))
+        surface.blit(instruction, instruction.get_rect(midtop=(viewport.centerx, viewport.top - 26)))
+
+        old_clip = surface.get_clip()
+        surface.set_clip(viewport)
+        for index, (label, action, test_only) in enumerate(KEYBINDING_ROWS):
+            row_y = viewport.top + index * self.KEYBINDING_ROW_HEIGHT - self.keybinding_scroll
+            row_rect = pygame.Rect(viewport.x, row_y, viewport.width - 14, self.KEYBINDING_ROW_HEIGHT - 4)
+            if not viewport.colliderect(row_rect):
+                continue
+            selected = index == self.keybinding_selected_index
+            row_color = (59, 82, 105) if selected else (29, 37, 49)
+            pygame.draw.rect(surface, row_color, row_rect, border_radius=7)
+            if selected:
+                pygame.draw.rect(surface, (255, 190, 92), row_rect, 2, border_radius=7)
+            display_label = f"{label}  [TEST]" if test_only else label
+            label_surface = self.history_button_font.render(display_label, True, TEXT_COLOR)
+            surface.blit(label_surface, label_surface.get_rect(midleft=(row_rect.x + 16, row_rect.centery)))
+            binding_text = (
+                "Press a key..."
+                if self.keybinding_capture == action
+                else KEY_BINDINGS.label(action)
+            )
+            binding = self.history_button_font.render(binding_text, True, (255, 207, 122))
+            surface.blit(binding, binding.get_rect(midright=(row_rect.right - 16, row_rect.centery)))
+        surface.set_clip(old_clip)
+
+        track = pygame.Rect(viewport.right + 2, viewport.top, 6, viewport.height)
+        pygame.draw.rect(surface, (43, 51, 62), track, border_radius=3)
+        max_scroll = max(
+            0,
+            len(KEYBINDING_ROWS) * self.KEYBINDING_ROW_HEIGHT - viewport.height,
+        )
+        if max_scroll:
+            thumb_height = max(32, round(track.height * viewport.height / (max_scroll + viewport.height)))
+            thumb_y = track.top + round(
+                (track.height - thumb_height) * self.keybinding_scroll / max_scroll
+            )
+        else:
+            thumb_height = track.height
+            thumb_y = track.top
+        pygame.draw.rect(
+            surface,
+            (147, 166, 184),
+            pygame.Rect(track.x, thumb_y, track.width, thumb_height),
+            border_radius=3,
+        )
+        pygame.draw.rect(surface, (48, 58, 72), self.KEYBINDINGS_BACK, border_radius=8)
+        pygame.draw.rect(surface, (210, 210, 220), self.KEYBINDINGS_BACK, 2, border_radius=8)
+        back = self.history_button_font.render("Back", True, TEXT_COLOR)
+        surface.blit(back, back.get_rect(center=self.KEYBINDINGS_BACK.center))
+
     def _draw_title(self, surface: pygame.Surface) -> None:
         credit = self.credit_font.render("Official game by Josh Olsson", True, TEXT_COLOR)
 
@@ -468,9 +678,16 @@ class MainMenuScene:
             surface.blit(shadow, (title_rect.x + 3, title_rect.y + 3))
             surface.blit(title, title_rect)
 
-        heading_text = "Settings" if self.settings_open else "Main Menu"
-        heading = self.option_font.render(heading_text, True, TEXT_COLOR)
-        surface.blit(heading, heading.get_rect(center=(SCREEN_WIDTH // 2, 260)))
+        if self.settings_open:
+            heading_text = "Key Bindings" if self.keybindings_open else "Settings"
+            heading = self.option_font.render(heading_text, True, TEXT_COLOR)
+            surface.blit(heading, heading.get_rect(center=(SCREEN_WIDTH // 2, 260)))
+        if self.keybindings_open:
+            self._draw_keybindings(surface)
+            credit_rect = credit.get_rect(bottomright=(SCREEN_WIDTH - 20, SCREEN_HEIGHT - 16))
+            surface.blit(credit, credit_rect)
+            return
+
         for index, (label, rect) in enumerate(zip(self._menu_options(), self._option_rects())):
             color = (80, 110, 165) if index == self.selected_index else (35, 38, 48)
             pygame.draw.rect(surface, color, rect, border_radius=8)
@@ -496,6 +713,7 @@ class MainMenuScene:
     def draw(self, surface: pygame.Surface) -> None:
         self._draw_background(surface)
         self._draw_title(surface)
-        self._draw_history_button(surface)
+        if not self.keybindings_open:
+            self._draw_history_button(surface)
         if self.history_open:
             self._draw_history_panel(surface)

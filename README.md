@@ -48,7 +48,7 @@ PyCharm-friendly Python prototype for a Little Fighter 2-inspired side-scrolling
 ### Menus and character selection
 
 - Main menu: use Up / Down or click an option; press J, Enter, or Space to select it. Choose Test Mode to practice without enemies. Click Update History to open the release notes, then scroll with the mouse wheel or Up / Down / Page Up / Page Down; press Escape or click outside the panel to close it.
-- Settings: select Sound or Volume; use Left / Right to adjust volume, or click the volume bar. Press Escape to return to the main menu. F9 toggles mute during play.
+- Settings: select Sound or Volume; use Left / Right to adjust volume, or click the volume bar. Open Key Bindings to see all menu, gameplay, and Test Mode controls. Select an action and press the key you want to assign; changes are saved automatically and special-attack chords use the updated movement, attack, jump, and defend bindings. Press Escape to return to the main menu. F9 toggles mute during play by default.
 - Character selection: choose your fighter with the arrow keys or by clicking a portrait, then press J, Enter, or numpad Enter, click Confirm, or double-click the portrait.
 - Opponent selection: choose one or more enemies with the arrow keys and Space, or click portraits to toggle them; press J or Enter, or click Start Battle, to begin.
 - Stage Mode runs through ten encounters. After winning or losing the campaign, press J to return to the main menu.
@@ -62,7 +62,6 @@ PyCharm-friendly Python prototype for a Little Fighter 2-inspired side-scrolling
 - L: defend while held.
 - J + L: throw a held item. Ground and airborne throws use different animations.
 - Carrying an item disables basic and special attacks.
-- P: spawn a random available item. O: spawn a heavy box for testing.
 - Escape: pause or resume. While paused, press M to return to the main menu.
 
 ### Special attacks
@@ -81,4 +80,4 @@ Luis uses J + L + Left / Right for an advancing knockdown attack, J + K + Left /
 
 ### Testing controls
 
-These extra keys are intended for testing: V knocks the player down, B lifts, G breaks the player's block, N starts the player's death animation, M revives the player, Q consumes a held item, F / I trigger fire / ice knockdown, H applies a hurt reaction, and F10 defeats the current enemy when one is present.
+These keys are available only in Test Mode: P spawns a random available item, O spawns a heavy box, V knocks the player down, B lifts, G breaks the player's block, N starts the player's death animation, M revives the player, Q consumes a held item, F / I trigger fire / ice knockdown, H applies a hurt reaction, and F10 defeats the current enemy when one is present. F9 toggles mute in any mode.

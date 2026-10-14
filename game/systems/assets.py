@@ -100,11 +100,16 @@ def _load_animation_frames(animation_name: str, animation: dict, scale: int) -> 
     return surfaces
 
 
-def load_character_sheet(definition: dict) -> dict[str, dict]:
+def load_character_animations(
+    definition: dict,
+    animation_names: set[str] | None = None,
+) -> dict[str, dict]:
     scale = definition["scale"]
     animations = {}
 
     for name, animation in definition["animations"].items():
+        if animation_names is not None and name not in animation_names:
+            continue
         animations[name] = {
             "surfaces": _load_animation_frames(name, animation, scale),
             "frame_duration": animation["frame_duration"],
@@ -112,3 +117,7 @@ def load_character_sheet(definition: dict) -> dict[str, dict]:
         }
 
     return animations
+
+
+def load_character_sheet(definition: dict) -> dict[str, dict]:
+    return load_character_animations(definition)
