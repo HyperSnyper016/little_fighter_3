@@ -250,3 +250,13 @@ Append each new release at the bottom with its version and player-facing changes
 ### Changed
 - Prompt for map selection after fighter selection in Play and Test modes.
 - Add brief invulnerability to jump dodges and improve second-jump horizontal movement.
+
+## v0.20.0 - Refine fighter abilities and impact effects
+### Added
+- Add directional ice fragments for freeze-column breaks and frozen-character breakouts.
+- Let Henry's flute float nearby items and bring Julian's explosions into the foreground with attack-timed audio.
+- Add Dark Bat's weapon overlay and Axle's separated weapon-carry attack sprite sets.
+### Changed
+- Tune movement and projectile behavior for Davis, Deep, Denis, Firen, Jack, Julian, and Woody.
+- Refine Firzen's fire/freeze knockdowns, Freeze's ice-sword follow-through, and Firen's projectile sounds.
+- Fix milk break-animation asset mapping and heavy-item get-up anchoring; refine Dark Bat reach and armored-bandit attack sounds.

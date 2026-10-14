@@ -4,7 +4,7 @@ GROUND_Y = 780
 LANE_MIN_Y = 36
 LANE_MAX_Y = SCREEN_HEIGHT - GROUND_Y
 FPS = 60
-VERSION = "v0.19.0"
+VERSION = "v0.20.0"
 
 HENRY_FLUTE_SEQUENCE_DURATION = 1.805  # Combined duration of flute_1.wav, flute_2.wav, and flute_3.wav.
 HEAVY_BOX_ITEM_ID = "throwables/heavy_box"
@@ -15,6 +15,7 @@ JUMP_DODGE_INVULNERABILITY_DURATION = 0.2
 JUMP_SECOND_STAGE_HORIZONTAL_MULTIPLIER = 2.0
 JUMP_LANDING_RECOVERY_DURATION = 0.06
 HEAVY_ITEM_ANCHOR_KEYS = {
+    "get_up": "heavy_carry_get_up",
     "lift_heavy": "heavy_carry_walk",
     "heavy_carry_walk": "heavy_carry_walk",
     "heavy_carry_sprint": "heavy_carry_sprint",

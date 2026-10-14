@@ -168,6 +168,7 @@ class AudioBank:
             "freeze_colum": self._load_sound("freeze_colum.wav"),
             "freeze_tornado": self._load_sound("freeze_tornado.wav"),
             "fire_knock": self._load_sound("fire_knock.wav"),
+            "fire_explode": self._load_sound("fire_explode.wav"),
             "fireball_1": self._load_sound("fireball_1.wav"),
             "fireball_2": self._load_sound("fireball_2.wav"),
             "fire_breath_1": self._load_sound("fire_breath_1.wav"),

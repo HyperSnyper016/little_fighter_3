@@ -40,8 +40,13 @@ HENRY_FLOAT_DURATION = HENRY_FLUTE_SEQUENCE_DURATION
 HENRY_FLOAT_HEIGHT = 72.0
 HENRY_FLOAT_BOB_AMPLITUDE = 12.0
 HENRY_FLOAT_BOB_PERIOD = 0.4
+JULIAN_SPRINT_ATTACK_SOUND_FRAME = 1
+WOODY_VERT_ATTACK_JUMP_MULTIPLIER = 1.1
+WOODY_VERT_ATTACK_DASH_SPEED_MULTIPLIER = 2.5
+JULIAN_SP_VERT_ATTACK_2_EXPLODE_SOUND_FRAME = 3
 SPECIAL_INPUT_BUFFER_DURATION = 0.18
 BAT_SP_VERT_ATTACK_1_SHADOW_STEP_FRAME = 2
+HENRY_SP_MOVE_ATTACK_1_SHOT_FRAME = 4
 WEAPON_CARRY_ANIMATION_FOLDERS = {
     "weapon_basic_attack": "basic_attack",
     "weapon_jump_attack": "jump_attack",
@@ -274,6 +279,7 @@ class Fighter:
         self.freeze_break_timer = 0.0
         self.freeze_recovery_timer = 0.0
         self.freeze_break_started = False
+        self.ice_break_fragments_pending = False
         self.facing_lock_until_get_up = False
         self.block_dodge_animation = "block_dodge"
         self.next_block_dodge_animation = "block_dodge"
@@ -281,6 +287,25 @@ class Fighter:
         self.block_dodge_index = 0
         self.special_move_followup_state: str | None = None
         self.pending_projectile: str | None = None
+        self.dark_bat_weapon_overlay: pygame.Surface | None = None
+        if self.name == "dark_bat":
+            weapon_overlay_path = (
+                Path(__file__).resolve().parents[2]
+                / "assets"
+                / "sprites"
+                / "characters"
+                / "dark_bat"
+                / "weapon_overlay.png"
+            )
+            weapon_overlay = pygame.image.load(str(weapon_overlay_path)).convert_alpha()
+            overlay_scale = int(self.definition["scale"])
+            self.dark_bat_weapon_overlay = pygame.transform.scale(
+                weapon_overlay,
+                (
+                    weapon_overlay.get_width() * overlay_scale,
+                    weapon_overlay.get_height() * overlay_scale,
+                ),
+            )
         self.davis_ball_projectiles_pending = 0
         self.davis_ball_spawned_sp_1 = False
         self.davis_ball_spawned_sp_2 = False
@@ -307,7 +332,9 @@ class Fighter:
         self.henry_wind_projectiles_pending = 0
         self.henry_wind_sfx_pending = False
         self.henry_sp_vert_attack_2_pending = False
-        self.armored_bandit_sword_swing_sfx_pending = False
+        self.henry_sp_move_attack_1_projectile_pending = False
+        self.armored_bandit_attack_sfx_pending: str | None = None
+        self.armored_bandit_next_attack_sfx = "hit_miss1"
         self.dark_bat_sword_swing_sfx_pending = False
         self.dark_bat_shadow_step_sfx_pending = False
         self.template_uppercut_shear_sfx_pending = False
@@ -532,6 +559,12 @@ class Fighter:
             "rudolf_blade_2" if self.rudolf_next_blade_sound == "rudolf_blade_1" else "rudolf_blade_1"
         )
 
+    def _queue_armored_bandit_attack_sound(self) -> None:
+        self.armored_bandit_attack_sfx_pending = self.armored_bandit_next_attack_sfx
+        self.armored_bandit_next_attack_sfx = (
+            "hit_miss2" if self.armored_bandit_next_attack_sfx == "hit_miss1" else "hit_miss1"
+        )
+
     def next_special_move_projectile_index(self) -> int:
         index = self.special_move_projectile_index
         self.special_move_projectile_index = (self.special_move_projectile_index + 1) % 3
@@ -620,6 +653,8 @@ class Fighter:
             elif state == "sp_vert_attack_1":
                 self.woody_vert_dash_active = False
                 self.woody_vert_dash_hit_targets.clear()
+                self.z = max(self.z, 1.0)
+                self.velocity_z = self.movement["jump_velocity"] * WOODY_VERT_ATTACK_JUMP_MULTIPLIER
         if self.name == "axle" and state == "sp_move_attack_1":
             self.axle_shot_pending = False
         if self.name == "axle" and state == "sp_move_attack_2":
@@ -641,10 +676,11 @@ class Fighter:
             self.hunter_draw_arrow_sfx_pending = True
         if self.name == "henry" and state == "sp_move_attack_1":
             self.hunter_projectile_style = "enchanted"
+            self.henry_sp_move_attack_1_projectile_pending = False
         if self.name == "henry" and state == "sp_vert_attack_2":
             self.henry_sp_vert_attack_2_pending = True
         if self.name == "armored_bandit" and state in COMBAT_ATTACK_STATES:
-            self.armored_bandit_sword_swing_sfx_pending = True
+            self._queue_armored_bandit_attack_sound()
         if self.name == "dark_bat" and state in {"sp_move_attack_1", "jump_attack"}:
             self.dark_bat_sword_swing_sfx_pending = True
         if self.name == "template" and state == "sp_vert_attack_1":
@@ -666,6 +702,10 @@ class Fighter:
             self.davis_uppercut_shear_sfx_pending = True
             self.z = max(self.z, 1.0)
             self.velocity_z = self.movement["jump_velocity"] * 0.85
+        if self.name == "jack" and state == "sp_vert_attack_1":
+            self.z = max(self.z, 1.0)
+            self.velocity_z = self.movement["jump_velocity"] * 0.75
+            self.just_jumped = True
         if self.name == "denis" and state == "sp_move_attack_1":
             self.denis_ball_projectiles_pending = 0
             self.denis_sp_move_attack_1_spawned_frames.clear()
@@ -838,6 +878,8 @@ class Fighter:
         self.special_move_followup_state = state
         if self.name == "axle" and state == "sp_move_attack_1":
             self.axle_shot_pending = False
+        if self.name == "henry" and state == "sp_move_attack_1":
+            self.henry_sp_move_attack_1_projectile_pending = False
         if self.name == "denis" and state == "sp_move_attack_1":
             self.denis_sp_move_attack_1_spawned_frames.clear()
         if self.name == "julian" and state == "sp_move_attack_1":
@@ -930,7 +972,7 @@ class Fighter:
             and self.animation_player.frame_index == 2
         ):
             anchor_frame = self.animations["sp_move_attack_1"]["surfaces"][0].get_rect()
-            x_offset = (frame_rect.width - anchor_frame.width) / 2
+            x_offset = ((frame_rect.width - anchor_frame.width) / 2) * self.facing
             y_offset = frame_rect.height - anchor_frame.height
             return (
                 int(self.x - camera_x - frame_rect.width / 2 + x_offset),
@@ -1017,7 +1059,7 @@ class Fighter:
         self.velocity_z = self.movement["jump_velocity"] * 0.85
         self.just_jumped = True
 
-    def _start_fire_knockdown(self) -> None:
+    def _start_fire_knockdown(self, push_back: bool = True) -> None:
         self.item_throw_animation = None
         self.state = "knocked_fire"
         self.state_timer = 0.52
@@ -1026,7 +1068,7 @@ class Fighter:
         self.freeze_cooldown = 0.0
         self.attack_timer = 0.0
         self.block_hold_timer = 0.0
-        self.push_velocity_x = -self.facing * 180.0
+        self.push_velocity_x = -self.facing * 180.0 if push_back else 0.0
         self.jump_stage = 0
         self.jump_horizontal_velocity = 0.0
         self.jump_attack_active = False
@@ -1035,7 +1077,7 @@ class Fighter:
         self.fire_knock_sfx_pending = True
         self.facing_lock_until_get_up = True
 
-    def _start_ice_knockdown(self) -> None:
+    def _start_ice_knockdown(self, push_back: bool = True) -> None:
         self.item_throw_animation = None
         self.state = "knocked_freeze"
         self.state_timer = 1.0
@@ -1049,7 +1091,7 @@ class Fighter:
         self.freeze_cooldown = 0.0
         self.attack_timer = 0.0
         self.block_hold_timer = 0.0
-        self.push_velocity_x = -self.facing * 150.0
+        self.push_velocity_x = -self.facing * 150.0 if push_back else 0.0
         self.jump_stage = 0
         self.jump_horizontal_velocity = 0.0
         self.jump_attack_active = False
@@ -1201,7 +1243,7 @@ class Fighter:
         if self.name == "dark_bat":
             self.dark_bat_sword_swing_sfx_pending = True
         if self.name == "armored_bandit":
-            self.armored_bandit_sword_swing_sfx_pending = True
+            self._queue_armored_bandit_attack_sound()
         if self.name == "hunter":
             self.hunter_draw_arrow_sfx_pending = True
 
@@ -1226,6 +1268,7 @@ class Fighter:
         return True
 
     def update(self, dt: float, inputs: FighterInput, target: Fighter | None = None, controlled: bool = True) -> None:
+        previous_state = self.state
         weapon_held = self._is_holding_weapon()
         can_attack = self.held_item is None or (
             weapon_held
@@ -1344,6 +1387,7 @@ class Fighter:
 
         if self.state == "knocked_freeze" and self.freeze_timer <= 0 and not self.freeze_break_started and not self.ice_launch_break_on_landing:
             self.freeze_break_started = True
+            self.ice_break_fragments_pending = "knocked_freeze_break" in self.animations
             if self.ice_launch_freeze_break_pending:
                 self.freeze_break_sfx_pending = True
                 self.ice_launch_freeze_break_pending = False
@@ -1627,13 +1671,14 @@ class Fighter:
                     self.state = "throw_heavy"
                     self._start_attack_state("throw_heavy")
                 elif attack_just_pressed and self.z == 0 and move_x != 0 and running and not block_pressed and self.state in {"run", "walk"}:
+                    sprint_attack_push = 0.0 if self.name == "julian" else self.facing * 160.0
                     if weapon_held:
                         if "weapon_sprint_basic_attack" in self.animations:
                             self.state = "sprint_punch"
-                            self._start_attack_state("sprint_punch", push_velocity_x=self.facing * 160.0)
+                            self._start_attack_state("sprint_punch", push_velocity_x=sprint_attack_push)
                     else:
                         self.state = "sprint_punch"
-                        self._start_attack_state("sprint_punch", push_velocity_x=self.facing * 160.0)
+                        self._start_attack_state("sprint_punch", push_velocity_x=sprint_attack_push)
                 elif attack_just_pressed and self.z == 0 and (move_x or move_y):
                     if weapon_held:
                         if self.weapon_basic_attack_cycle or "weapon_basic_attack" in self.animations:
@@ -1694,13 +1739,19 @@ class Fighter:
             self.lane_y += move_y * self.movement["lane_speed"] * dt
         elif self.name == "bat" and self.state == "sp_vert_attack_1":
             speed = self.movement["walk_speed"]
-            self.x += move_x * speed * dt
+            self.x += self.facing * speed * dt
             self.lane_y += move_y * self.movement["lane_speed"] * dt
+        elif self.name == "davis" and self.state == "sp_vert_attack_1":
+            self.x += self.facing * self.movement["walk_speed"] * 0.5 * dt
+        elif self.name == "deep" and self.state == "sp_vert_attack_2":
+            self.x += self.facing * self.movement["walk_speed"] * 0.4 * dt
+        elif self.name == "jack" and self.state == "sp_vert_attack_1":
+            self.x += self.facing * self.movement["walk_speed"] * 0.5 * dt
         elif self.name == "firen" and self.state == "sp_vert_attack_1":
             speed = self.movement["run_speed"]
             self.x += self.facing * speed * dt
         elif self.name == "woody" and self.state == "sp_vert_attack_1" and self.woody_vert_dash_active:
-            self.x += self.facing * self.movement["run_speed"] * 1.25 * dt
+            self.x += self.facing * self.movement["run_speed"] * WOODY_VERT_ATTACK_DASH_SPEED_MULTIPLIER * dt
         elif self.name in {"luis", "luis_liberated"} and self.state == "sp_vert_attack_1":
             self.x += self.facing * self.movement["run_speed"] * dt
         elif (
@@ -1710,6 +1761,8 @@ class Fighter:
         ):
             self.x += self.facing * self.movement["run_speed"] * 1.5 * dt
         elif self.name == "denis" and self.state == "sp_move_attack_2":
+            self.x += self.facing * self.movement["run_speed"] * 1.25 * dt
+        elif self.name == "julian" and self.state == "sprint_punch" and not self._is_holding_weapon():
             self.x += self.facing * self.movement["run_speed"] * 1.25 * dt
         elif self.state == "jump_throw":
             air_horizontal_speed = (
@@ -1751,6 +1804,7 @@ class Fighter:
             self.step_cycle_timer = 0.0
             self.last_step_state = False
 
+        pause_heavy_carry_walk = False
         if self.item_throw_animation is not None:
             animation_name = self.item_throw_animation
         elif self.state == "basic_attack":
@@ -1851,11 +1905,23 @@ class Fighter:
         elif self.state == "jump_throw":
             animation_name = self.current_jump_animation if self.current_jump_animation in self.animations else "jump_normal"
         else:
-            animation_name = (
-                "heavy_carry_idle"
-                if self.state == "idle" and self.held_item in HEAVY_ITEM_IDS and "heavy_carry_idle" in self.animations
-                else "idle"
-            )
+            animation_name = "idle"
+            if self.state == "idle" and self.held_item in HEAVY_ITEM_IDS:
+                if previous_state == "run" or self.animation_player.current_name == "heavy_carry_sprint":
+                    animation_name = "heavy_carry_walk"
+                    self.animation_player.frame_index = 0
+                    self.animation_player.timer = 0.0
+                    pause_heavy_carry_walk = True
+                elif self.animation_player.current_name == "heavy_carry_walk":
+                    animation_name = "heavy_carry_walk"
+                    pause_heavy_carry_walk = True
+                elif "heavy_carry_walk" in self.animations:
+                    animation_name = "heavy_carry_walk"
+                    self.animation_player.frame_index = 0
+                    self.animation_player.timer = 0.0
+                    pause_heavy_carry_walk = True
+                elif "heavy_carry_idle" in self.animations:
+                    animation_name = "heavy_carry_idle"
         if self.animation_player.current_name != animation_name:
             self.animation_player.play(animation_name)
         if self.state == "knocked_freeze" and self.freeze_timer > 0.0:
@@ -1863,7 +1929,7 @@ class Fighter:
         previous_animation_name = self.animation_player.current_name
         previous_frame_index = self.animation_player.frame_index
         self.animation_previous_frame_index = previous_frame_index
-        self.animation_player.update(dt, facing=self.facing)
+        self.animation_player.update(0.0 if pause_heavy_carry_walk else dt, facing=self.facing)
         if self.name == "deep" and self.state == "sp_move_attack_2":
             current_animation_name = self.animation_player.current_name
             frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
@@ -1960,6 +2026,12 @@ class Fighter:
             current_animation_name = self.animation_player.current_name
             frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
             crossed_frames = self._crossed_frame_indices(previous_frame_index, self.animation_player.frame_index, frame_count)
+            if (
+                self.state == "sprint_punch"
+                and current_animation_name == "sprint_punch"
+                and JULIAN_SPRINT_ATTACK_SOUND_FRAME in crossed_frames
+            ):
+                self.luis_sounds_pending.append("luis_shear")
             if self.state == "sp_move_attack_1" and 1 in crossed_frames:
                 self.julian_skull_pending = True
             if self.state == "sp_move_attack_2" and current_animation_name == "sp_move_attack_2" and 3 in crossed_frames:
@@ -1968,6 +2040,12 @@ class Fighter:
                 self.julian_sp_vert_attack_1_pending = True
             if self.state == "sp_vert_attack_2" and current_animation_name == "sp_vert_attack_2" and 4 in crossed_frames:
                 self.julian_sp_vert_attack_2_pending = True
+            if (
+                self.state == "sp_vert_attack_2"
+                and current_animation_name == "sp_vert_attack_2"
+                and JULIAN_SP_VERT_ATTACK_2_EXPLODE_SOUND_FRAME in crossed_frames
+            ):
+                self.luis_sounds_pending.append("julian_ball_explode")
         if self.name == "monk" and self.state == "sp_move_attack_1" and self.animation_player.current_name == "sp_move_attack_1":
             current_animation_name = self.animation_player.current_name
             frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
@@ -2156,6 +2234,13 @@ class Fighter:
             frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
             crossed_frames = self._crossed_frame_indices(previous_frame_index, current_frame_index, frame_count)
 
+            if (
+                self.state == "sp_move_attack_1"
+                and current_animation_name == "sp_move_attack_1"
+                and HENRY_SP_MOVE_ATTACK_1_SHOT_FRAME in crossed_frames
+                and not self.attack_projectile_fired
+            ):
+                self.henry_sp_move_attack_1_projectile_pending = True
             if self.state == "sp_move_attack_2" and current_animation_name == "sp_move_attack_2":
                 for frame_index in crossed_frames:
                     if frame_index == 7 and not self.attack_projectile_fired:
@@ -2218,7 +2303,10 @@ class Fighter:
                 self.attack_started = False
                 self.has_applied_attack_damage = False
                 self.attack_projectile_fired = False
-            elif self._can_continue_special("sp_move_attack_1", move_special_1_chord):
+            elif self._can_continue_special(
+                "sp_move_attack_1",
+                move_special_1_chord and (self.name != "denis" or attack_pressed),
+            ):
                 if self.name == "deep":
                     self._queue_deep_blade_swipe()
                 elif self.name == "firen":
@@ -2272,6 +2360,8 @@ class Fighter:
                 self.attack_started = False
                 self.has_applied_attack_damage = False
         if self.state in COMBAT_ATTACK_STATES and self.attack_timer == 0 and self.animation_player.finished:
+            if self.name == "freeze" and self.state == "sp_vert_attack_2":
+                self.held_item = "weapons/ice_sword"
             self.state = "idle"
             self.has_applied_attack_damage = False
             self.attack_started = False
