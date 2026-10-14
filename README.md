@@ -15,6 +15,18 @@ PyCharm-friendly Python prototype for a Little Fighter 2-inspired side-scrolling
 3. Run:
    `python main.py`
 
+## Windows portable build
+
+Build on 64-bit Windows with Python 3.12 or newer:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\build_windows.ps1
+```
+
+The script runs the unit tests, creates a portable `LittleFighter3` folder, verifies that the assets and update history are bundled, and writes a versioned ZIP under `dist/`. Test the extracted ZIP on a Windows machine without Python installed before distributing it.
+
 ## Sprite workflow
 
 - Put source sprite sheets under `assets/sprites/characters/`.

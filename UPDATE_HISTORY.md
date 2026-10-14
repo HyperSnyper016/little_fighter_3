@@ -281,3 +281,9 @@ Append each new release at the bottom with its version and player-facing changes
 ### Fixed
 - Preserve the selected map when entering battle from opponent selection.
 - Clamp current health to the new maximum when Luis transforms.
+
+## v0.23.0 - Add portable Windows distribution
+### Added
+- Add a pinned PyInstaller build environment and a Windows x64 packaging script that tests the game, bundles assets and update history, and creates a portable ZIP.
+### Changed
+- Document the Windows release build workflow and ignore generated build outputs.
