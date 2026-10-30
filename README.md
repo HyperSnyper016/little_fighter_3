@@ -48,13 +48,15 @@ The script runs the unit tests, creates a portable `LittleFighter3` folder, veri
 - Idle, walk, run, jump, attack, defend states
 - Spawned items stay on the ground until picked up; after pickup, they can be thrown and land twice before breaking
 - A random consumable or throwable spawns every 18 seconds; milk restores 5 HP when consumed, armor-piece throwables cannot be consumed, and thrown items damage enemies before dropping where they hit
+- Whiskey breaks into shards and fire: thrown hits and fire trails cause fire knockdowns, while drinking doubles damage for three seconds before the character falls asleep and recovers.
 - Heavy boxes use their spawn, carry, throw, and landing animations; fighters lift them with the get-up animation, use the first heavy-carry walking frame while idle, and switch between carry-walking and carry-sprinting sprites when moving. Landed boxes block movement and break into jumping fragments when hit; box landings alternate between two impact sounds
 - Armor-piece throwables travel twice as far as consumables when thrown
 - Baseballs bounce once on landing and play `baseball_break.wav` when they break
+- Reece launches a Buzz Ball on frame 7 of `sp_move_attack_1`; it breaks into tossed fragments on enemy or ground impact and is not part of random item spawns
 - Jan's healing-bird summon and homing orb, John's blast, projectile-reflecting barrier, homing disk, and healing orb, Axle's ranged shot and knockdown/launching attacks, Julian's height-guided skulls, piercing ball, and area attacks, Luis's advancing knockdown, bidirectional wind attack, and held sprinting attack, Liberated Luis's sword combos, wind knockdown, and forward dash, Mark's mana-powered charge through the first enemy until a second enemy is hurt, Monk's wind strike, and Freeze's ice-ball, ice-column, and moving tornado special attacks
 - Rudolf's four-lane shuriken volley and air-launching sword strikes
 - The City battle stage, with a parallax sunset-city backdrop, ground-aligned scenery, and a tiled fighting floor
-- Stage Mode campaign with three acts, named encounters, reinforcement waves, three health-or-mana supply breaks, and a campaign score
+- Endless Stage Mode with a deterministic, difficulty-aware threat budget, progressive roster unlocks, periodic milestone fighters, queued reinforcements, recurring health-or-mana supply breaks, a run score, and collectible XP orbs worth more for stronger enemies. Stage and wave notices appear as brief compact banners without pausing combat.
 - Data-driven animation timing and frame layout
 
 ## Controls
@@ -65,8 +67,8 @@ The script runs the unit tests, creates a portable `LittleFighter3` folder, veri
 - Settings: select Sound or Volume; use Left / Right to adjust volume, or click the volume bar. Select Difficulty and use Left / Right or confirm to choose Easy, Medium, or Hard; it carries into Play and Stage Mode. Open Key Bindings to see all menu, gameplay, and Test Mode controls. Select an action and press the key you want to assign; changes are saved automatically and special-attack chords use the updated movement, attack, jump, and defend bindings. Press Escape to return to the main menu. F9 toggles mute during play by default.
 - Character selection: choose your fighter with the arrow keys or by clicking a portrait, then press J, Enter, or numpad Enter, click Confirm, or double-click the portrait.
 - Opponent selection: choose one or more enemies with the arrow keys and Space, or click portraits to toggle them; press J or Enter, or click Start Battle, to begin.
-- Stage Mode runs through ten encounters. After winning or losing the campaign, press J to return to the main menu.
-- At supply breaks after stages III, VI, and IX, use Left / Right to choose health or mana recovery, then press J to continue.
+- Stage Mode begins with one bandit and continues indefinitely. Threat budgets rise gradually; Easy, Medium, and Hard adjust enemy health and AI, while Stage Mode enemies start with half of their difficulty-adjusted normal max health. New roster fighters enter progressively, periodic milestone waves feature a stronger fighter, and no more than four enemies are active at once. Clearing every fifth stage grants bonus XP equal to 10 times the stage cleared (50 XP at stage 5, 100 XP at stage 10). Level-up cards have no rank cap and share the same base offer weight across card types. Each rank multiplies a card's relative offer weight by 0.95; for example, Level V has about 77.4% of an unranked card's weight. Three distinct cards are chosen using weighted selection, and cards remain eligible at every rank. The HUD shows the current stage/wave, score, level, XP progress, and a live between-wave countdown. Collect enemy XP orbs to add to your run's XP total. Your run ends when your fighter is defeated; press J to return to the main menu.
+- At every third-stage supply break, use Left / Right to choose health or mana recovery, then press J to continue.
 
 ### Battle
 
@@ -95,4 +97,4 @@ Luis uses J + L + Left / Right for an advancing knockdown attack, J + K + Left /
 
 ### Testing controls
 
-These keys are available only in Test Mode: P spawns a random available item, O spawns a heavy box, V knocks the player down, B lifts, G breaks the player's block, N starts the player's death animation, M revives the player, Q consumes a held item, F / I trigger fire / ice knockdown, H applies a hurt reaction, and F10 defeats the current enemy when one is present. F9 toggles mute in any mode.
+These keys are available only in Test Mode: P spawns a random available item, O spawns a heavy box, F7 spawns an XP orb at a random visible arena position with a random XP value, V knocks the player down, B lifts, G breaks the player's block, N starts the player's death animation, M revives the player, Q consumes a held item, F / I trigger fire / ice knockdown, H applies a hurt reaction, F10 defeats the current enemy when one is present, and F8 opens a visual-only level-up offer slot machine. Collecting enough XP in Test Mode now opens a real level-up selection, applies its card, and upgrades that card's rank just as in Stage Mode. F8 remains a visual preview and does not change progression or stats. Test Mode controls, including the F7 and F8 bindings, can be reassigned in Settings → Key Bindings. F9 toggles mute in any mode.

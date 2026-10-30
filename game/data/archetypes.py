@@ -164,6 +164,7 @@ CHARACTER_ARCHETYPES = {
     "sorcerer": "mystic",
     "template": "training",
     "woody": "agile",
+    "reece": "balanced",
     "dummy": "dummy",
 }
 

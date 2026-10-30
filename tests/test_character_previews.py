@@ -5,6 +5,7 @@ import pygame
 
 from game.data.characters import CHARACTERS
 from game.scenes.character_select_scene import (
+    CharacterSelectScene,
     PREVIEW_CLONE_MOVES,
     PREVIEW_COMPANIONS,
     PREVIEW_PROJECTILES,
@@ -169,6 +170,14 @@ class CharacterPreviewEffectTests(unittest.TestCase):
         self.assertFalse(clone.finished)
         clone.update(0.3)
         self.assertTrue(clone.finished)
+
+    def test_reece_jpeg_is_available_as_his_roster_profile(self) -> None:
+        character_directory = Path(__file__).resolve().parents[1] / "assets" / "sprites" / "characters" / "reece"
+        scene = CharacterSelectScene.__new__(CharacterSelectScene)
+        self.assertEqual(
+            scene._resolve_profile_path(character_directory),
+            character_directory / "Reece.jpg",
+        )
 
 
 if __name__ == "__main__":

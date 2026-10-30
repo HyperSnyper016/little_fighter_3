@@ -563,10 +563,16 @@ class CharacterSelectScene:
         preferred_names = (
             f"{directory.name}.bmp",
             f"{directory.name}.png",
+            f"{directory.name}.jpg",
+            f"{directory.name}.jpeg",
             f"{directory.name}_profile.bmp",
             f"{directory.name}_profile.png",
+            f"{directory.name}_profile.jpg",
+            f"{directory.name}_profile.jpeg",
             f"{directory.name.capitalize()}.bmp",
             f"{directory.name.capitalize()}.png",
+            f"{directory.name.capitalize()}.jpg",
+            f"{directory.name.capitalize()}.jpeg",
         )
         for filename in preferred_names:
             candidate = directory / filename
@@ -577,7 +583,7 @@ class CharacterSelectScene:
             path
             for path in directory.iterdir()
             if path.is_file()
-            and path.suffix.lower() in {".bmp", ".png"}
+            and path.suffix.lower() in {".bmp", ".png", ".jpg", ".jpeg"}
             and "profile" in path.stem.lower()
         )
         if fallback_profiles:
@@ -586,7 +592,7 @@ class CharacterSelectScene:
         fallback_frames = sorted(
             path
             for path in directory.iterdir()
-            if path.is_file() and path.suffix.lower() in {".bmp", ".png"}
+            if path.is_file() and path.suffix.lower() in {".bmp", ".png", ".jpg", ".jpeg"}
         )
         if fallback_frames:
             return fallback_frames[0]
@@ -594,7 +600,7 @@ class CharacterSelectScene:
         nested_frames = sorted(
             path
             for path in directory.rglob("*")
-            if path.is_file() and path.suffix.lower() in {".bmp", ".png"}
+            if path.is_file() and path.suffix.lower() in {".bmp", ".png", ".jpg", ".jpeg"}
         )
         return nested_frames[0] if nested_frames else None
 

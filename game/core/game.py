@@ -101,6 +101,8 @@ class Game:
                 hurt_just_pressed=test_mode and KEY_BINDINGS.was_pressed("hurt", pressed_actions),
                 spawn_random_item_just_pressed=test_mode and KEY_BINDINGS.was_pressed("spawn_item", pressed_actions),
                 spawn_heavy_item_just_pressed=test_mode and KEY_BINDINGS.was_pressed("spawn_heavy_box", pressed_actions),
+                test_level_up_just_pressed=test_mode and KEY_BINDINGS.was_pressed("test_level_up", pressed_actions),
+                test_spawn_xp_orb_just_pressed=test_mode and KEY_BINDINGS.was_pressed("test_spawn_xp_orb", pressed_actions),
             )
 
             if isinstance(self.scene, BattleScene):
@@ -204,6 +206,7 @@ class Game:
                 mute_state = "Muted" if AudioBank.muted else "Sound on"
                 hint_text = (
                     "TEST: "
+                    f"{KEY_BINDINGS.label('test_level_up')} offers, "
                     f"{KEY_BINDINGS.label('knock_down')} knockdown, "
                     f"{KEY_BINDINGS.label('lift')} lift, "
                     f"{KEY_BINDINGS.label('break_block')} break, "
@@ -214,6 +217,7 @@ class Game:
                     f"{KEY_BINDINGS.label('hurt')} hurt, "
                     f"{KEY_BINDINGS.label('spawn_item')}/{KEY_BINDINGS.label('spawn_heavy_box')} spawn, "
                     f"{KEY_BINDINGS.label('defeat_enemy')} defeat enemy"
+                    f", {KEY_BINDINGS.label('test_spawn_xp_orb')} XP orb"
                 )
                 hint = self.font.render(
                     f"{hint_text} | {KEY_BINDINGS.label('mute')} {mute_state}",

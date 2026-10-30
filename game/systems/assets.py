@@ -28,6 +28,43 @@ def _load_sheet_frame(sheet_path: Path, frame_rect: tuple[int, int, int, int], s
     return pygame.transform.scale(frame, (width * scale, height * scale))
 
 
+def _key_near_black_background(surface: pygame.Surface, tolerance: int) -> None:
+    if tolerance <= 0:
+        return
+
+    width, height = surface.get_size()
+    visited = bytearray(width * height)
+    # Key only near-black pixels connected to the frame edge, preserving enclosed dark details.
+    stack = [
+        *((x, 0) for x in range(width)),
+        *((x, height - 1) for x in range(width)),
+        *((0, y) for y in range(1, height - 1)),
+        *((width - 1, y) for y in range(1, height - 1)),
+    ]
+
+    while stack:
+        x, y = stack.pop()
+        index = y * width + x
+        if visited[index]:
+            continue
+        visited[index] = 1
+
+        pixel = surface.get_at((x, y))
+        if max(pixel.r, pixel.g, pixel.b) > tolerance:
+            continue
+        surface.set_at((x, y), (0, 0, 0))
+
+        for dx, dy in (
+            (-1, -1), (0, -1), (1, -1),
+            (-1, 0),             (1, 0),
+            (-1, 1),  (0, 1),   (1, 1),
+        ):
+            nx = x + dx
+            ny = y + dy
+            if 0 <= nx < width and 0 <= ny < height:
+                stack.append((nx, ny))
+
+
 def _trim_small_components(surface: pygame.Surface, max_component_size: int) -> pygame.Surface:
     width, height = surface.get_size()
     visited = [[False for _ in range(height)] for _ in range(width)]
@@ -71,7 +108,12 @@ def _trim_small_components(surface: pygame.Surface, max_component_size: int) -> 
     return surface
 
 
-def _load_animation_frames(animation_name: str, animation: dict, scale: int) -> list[pygame.Surface]:
+def _load_animation_frames(
+    animation_name: str,
+    animation: dict,
+    scale: int,
+    colorkey_tolerance: int = 0,
+) -> list[pygame.Surface]:
     surfaces: list[pygame.Surface] = []
 
     if "sheet" in animation and "frames" in animation:
@@ -90,6 +132,7 @@ def _load_animation_frames(animation_name: str, animation: dict, scale: int) -> 
         frame = pygame.image.load(str(frame_path)).convert()
         if animation.get("trim_small_components"):
             frame = _trim_small_components(frame, int(animation["trim_small_components"]))
+        _key_near_black_background(frame, colorkey_tolerance)
         frame.set_colorkey((0, 0, 0))
         width, height = frame.get_size()
         surfaces.append(pygame.transform.scale(frame, (width * scale, height * scale)))
@@ -105,13 +148,14 @@ def load_character_animations(
     animation_names: set[str] | None = None,
 ) -> dict[str, dict]:
     scale = definition["scale"]
+    colorkey_tolerance = int(definition.get("colorkey_tolerance", 0))
     animations = {}
 
     for name, animation in definition["animations"].items():
         if animation_names is not None and name not in animation_names:
             continue
         animations[name] = {
-            "surfaces": _load_animation_frames(name, animation, scale),
+            "surfaces": _load_animation_frames(name, animation, scale, colorkey_tolerance),
             "frame_duration": animation["frame_duration"],
             "loop": animation["loop"],
         }

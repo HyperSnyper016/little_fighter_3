@@ -48,6 +48,10 @@ JULIAN_SP_VERT_ATTACK_2_EXPLODE_SOUND_FRAME = 3
 SPECIAL_INPUT_BUFFER_DURATION = 0.18
 BAT_SP_VERT_ATTACK_1_SHADOW_STEP_FRAME = 2
 HENRY_SP_MOVE_ATTACK_1_SHOT_FRAME = 4
+# Animation frame indices are zero-based; index 6 is sprite/frame 7.
+REECE_SP_MOVE_ATTACK_1_SHOT_FRAME = 6
+REECE_SP_VERT_ATTACK_2_BIGGIE_BALL_FRAME = 2
+REECE_SP_VERT_ATTACK_1_FIRE_FRAMES = (4, 5, 6)
 WEAPON_CARRY_ANIMATION_FOLDERS = {
     "weapon_basic_attack": "basic_attack",
     "weapon_jump_attack": "jump_attack",
@@ -140,6 +144,8 @@ class FighterInput:
     hurt_just_pressed: bool = False
     spawn_random_item_just_pressed: bool = False
     spawn_heavy_item_just_pressed: bool = False
+    test_level_up_just_pressed: bool = False
+    test_spawn_xp_orb_just_pressed: bool = False
 
 
 @dataclass
@@ -171,6 +177,7 @@ class Fighter:
         self.attack_timer = 0.0
         self.state_timer = 0.0
         self.knock_hold_timer = 0.0
+        self.whiskey_sleep_hold = False
         self.freeze_timer = 0.0
         self.freeze_cooldown = 0.0
         self.henry_float_timer = 0.0
@@ -237,6 +244,7 @@ class Fighter:
         self.jan_follow_orb_pending = False
         self.john_blast_pending = False
         self.john_barrier_pending = False
+        self.reece_vape_barrier_pending = False
         self.john_follow_disk_pending = False
         self.john_heal_orb_pending = False
         self.sorcerer_fireball_pending = False
@@ -336,6 +344,9 @@ class Fighter:
         self.henry_wind_sfx_pending = False
         self.henry_sp_vert_attack_2_pending = False
         self.henry_sp_move_attack_1_projectile_pending = False
+        self.reece_buzz_ball_pending = False
+        self.reece_biggie_ball_pending = False
+        self.reece_fire_breath_projectiles_pending = 0
         self.armored_bandit_attack_sfx_pending: str | None = None
         self.armored_bandit_next_attack_sfx = "hit_miss1"
         self.dark_bat_sword_swing_sfx_pending = False
@@ -429,6 +440,7 @@ class Fighter:
                 load_character_sheet(
                     {
                         "scale": self.definition["scale"],
+                        "colorkey_tolerance": self.definition.get("colorkey_tolerance", 0),
                         "animations": carry_animations,
                     }
                 )
@@ -482,6 +494,7 @@ class Fighter:
                 load_character_sheet(
                     {
                         "scale": self.definition["scale"],
+                        "colorkey_tolerance": self.definition.get("colorkey_tolerance", 0),
                         "animations": weapon_carry_definitions,
                     }
                 )
@@ -583,6 +596,14 @@ class Fighter:
         self.attack_projectile_fired = False
         self.pending_projectile = None
         self.hunter_projectile_style = "basic"
+        if self.name == "reece" and state == "sp_move_attack_1":
+            self.reece_buzz_ball_pending = False
+        if self.name == "reece" and state == "sp_vert_attack_2":
+            self.reece_biggie_ball_pending = False
+        if self.name == "reece" and state == "sp_move_attack_2":
+            self.reece_vape_barrier_pending = False
+        if self.name == "reece" and state == "sp_vert_attack_1":
+            self.reece_fire_breath_projectiles_pending = 0
         self.push_velocity_x = push_velocity_x
         if self.name == "rudolf" and state == "sp_move_attack_2":
             self.rudolf_next_blade_sound = "rudolf_blade_1"
@@ -786,7 +807,17 @@ class Fighter:
                 and self.special_move_followup_state == state
                 and hold_active
             )
-        return self.name in {"deep", "template", "davis", "firen", "firzen", "henry", "axle", "julian", "woody"} and self.special_move_followup_state == state and hold_active
+        if self.name == "reece":
+            return (
+                state == "sp_move_attack_1"
+                and self.special_move_followup_state == state
+                and hold_active
+            )
+        return (
+            self.name in {"deep", "template", "davis", "firen", "firzen", "henry", "axle", "julian", "woody"}
+            and self.special_move_followup_state == state
+            and hold_active
+        )
 
     def _restart_firen_move_attack_1(self, stage: int, hold_active: bool) -> bool:
         if self.name != "firen" or not hold_active:
@@ -867,6 +898,7 @@ class Fighter:
         repeatable_fighter = self.name in {
             "deep", "template", "davis", "firen", "firzen", "henry", "axle", "julian", "mark", "woody",
         } or (self.name == "denis" and state == "sp_move_attack_1")
+        repeatable_fighter = repeatable_fighter or (self.name == "reece" and state == "sp_move_attack_1")
         if not repeatable_fighter or not hold_active:
             return False
         if not self._consume_mana_for_state(state):
@@ -885,6 +917,10 @@ class Fighter:
             self.axle_shot_pending = False
         if self.name == "henry" and state == "sp_move_attack_1":
             self.henry_sp_move_attack_1_projectile_pending = False
+        if self.name == "reece" and state == "sp_move_attack_1":
+            self.reece_buzz_ball_pending = False
+        if self.name == "reece" and state == "sp_vert_attack_2":
+            self.reece_biggie_ball_pending = False
         if self.name == "denis" and state == "sp_move_attack_1":
             self.denis_sp_move_attack_1_spawned_frames.clear()
         if self.name == "julian" and state == "sp_move_attack_1":
@@ -1029,6 +1065,7 @@ class Fighter:
     def _start_knockdown(self) -> None:
         self.item_throw_animation = None
         self.state = "fall"
+        self.whiskey_sleep_hold = False
         self.henry_float_timer = 0.0
         self.state_timer = 0.48
         self.knock_hold_timer = 1.0
@@ -1067,6 +1104,7 @@ class Fighter:
     def _start_fire_knockdown(self, push_back: bool = True) -> None:
         self.item_throw_animation = None
         self.state = "knocked_fire"
+        self.whiskey_sleep_hold = False
         self.state_timer = 0.52
         self.knock_hold_timer = 1.0
         self.freeze_timer = 0.0
@@ -1085,6 +1123,7 @@ class Fighter:
     def _start_ice_knockdown(self, push_back: bool = True) -> None:
         self.item_throw_animation = None
         self.state = "knocked_freeze"
+        self.whiskey_sleep_hold = False
         self.state_timer = 1.0
         self.knock_hold_timer = 1.0
         self.freeze_timer = 1.0
@@ -1483,7 +1522,12 @@ class Fighter:
             self.attack_started = False
             self.attack_projectile_fired = False
             self.hunter_projectile_style = "basic"
-        if self.state == "fall" and self.state_timer == 0 and self.knock_hold_timer == 0:
+        if (
+            self.state == "fall"
+            and self.state_timer == 0
+            and self.knock_hold_timer == 0
+            and not self.whiskey_sleep_hold
+        ):
             self.state = "get_up"
             self.state_timer = 0.36
         if self.state == "knocked_fire" and self.state_timer == 0 and self.knock_hold_timer == 0:
@@ -1631,7 +1675,7 @@ class Fighter:
                 else:
                     special_attack_started = True
             if special_attack_started and self.state == "sp_move_attack_1":
-                if self.name in {"deep", "template", "davis", "firen", "firzen", "axle", "julian", "mark", "denis"}:
+                if self.name in {"deep", "template", "davis", "firen", "firzen", "axle", "julian", "mark", "denis", "reece"}:
                     self.special_move_followup_state = "sp_move_attack_1"
                     self.special_attack_lock = "sp_move_attack_1"
                 else:
@@ -2021,6 +2065,12 @@ class Fighter:
                 self.john_follow_disk_pending = True
             if self.state == "sp_vert_attack_2" and current_animation_name == "sp_vert_attack_2" and 3 in crossed_frames:
                 self.john_heal_orb_pending = True
+        if self.name == "reece" and previous_animation_name == self.animation_player.current_name:
+            current_animation_name = self.animation_player.current_name
+            frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
+            crossed_frames = self._crossed_frame_indices(previous_frame_index, self.animation_player.frame_index, frame_count)
+            if self.state == "sp_move_attack_2" and current_animation_name == "sp_move_attack_2" and 2 in crossed_frames:
+                self.reece_vape_barrier_pending = True
         if self.name == "axle" and self.state == "sp_move_attack_1" and self.animation_player.current_name == "sp_move_attack_1":
             current_animation_name = self.animation_player.current_name
             frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
@@ -2251,6 +2301,37 @@ class Fighter:
                     if frame_index == 7 and not self.attack_projectile_fired:
                         self.henry_wind_projectiles_pending += 1
                         self.henry_wind_sfx_pending = True
+        if self.name == "reece":
+            current_animation_name = self.animation_player.current_name
+            current_frame_index = self.animation_player.frame_index
+            frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
+            crossed_frames = self._crossed_frame_indices(previous_frame_index, current_frame_index, frame_count)
+            if (
+                self.state == "sp_move_attack_1"
+                and current_animation_name == "sp_move_attack_1"
+                and REECE_SP_MOVE_ATTACK_1_SHOT_FRAME in crossed_frames
+                and not self.attack_projectile_fired
+            ):
+                self.reece_buzz_ball_pending = True
+            if (
+                self.state == "sp_vert_attack_2"
+                and current_animation_name == "sp_vert_attack_2"
+                and REECE_SP_VERT_ATTACK_2_BIGGIE_BALL_FRAME in crossed_frames
+                and not self.attack_projectile_fired
+            ):
+                self.reece_biggie_ball_pending = True
+            if self.state == "sp_vert_attack_1" and current_animation_name == "sp_vert_attack_1":
+                self.reece_fire_breath_projectiles_pending += sum(
+                    frame_index in crossed_frames
+                    for frame_index in REECE_SP_VERT_ATTACK_1_FIRE_FRAMES
+                )
+                if 6 in crossed_frames and vert_special_1_chord:
+                    player = self.animation_player
+                    player.frame_index = 4
+                    player.timer = 0.0
+                    player.finished = False
+                    surface = player.animations[current_animation_name]["surfaces"][4]
+                    player.current_frame = surface if self.facing == 1 else pygame.transform.flip(surface, True, False)
         if self.name == "freeze":
             current_animation_name = self.animation_player.current_name
             current_frame_index = self.animation_player.frame_index

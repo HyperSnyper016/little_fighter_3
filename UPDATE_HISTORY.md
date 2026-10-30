@@ -287,3 +287,14 @@ Append each new release at the bottom with its version and player-facing changes
 - Add a pinned PyInstaller build environment and a Windows x64 packaging script that tests the game, bundles assets and update history, and creates a portable ZIP.
 ### Changed
 - Document the Windows release build workflow and ignore generated build outputs.
+
+## v0.24.0 - Expand Stage Mode and the character roster
+### Added
+- Add Reece as a playable character, with new animations and special attacks.
+- Add Biggie Ball and Buzz Ball attacks, plus whiskey item support.
+- Add endless Stage Mode progression with XP leveling, ranked card rewards, and stage milestone bonuses.
+### Changed
+- Set Stage Mode enemies to half of their normal maximum health.
+- Reduce a card's relative slot-machine offer weight by 5% per rank, and improve pause-menu card selection and previews.
+### Fixed
+- Reapply Stage Mode card modifiers after Luis transforms.

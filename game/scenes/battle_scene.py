@@ -4,6 +4,7 @@ import math
 import random
 import re
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from pathlib import Path
 
 import pygame
@@ -21,8 +22,13 @@ from game.constants import (
     TEXT_COLOR,
 )
 from game.data.characters import CHARACTERS
-from game.data.campaign import CAMPAIGN_ENCOUNTERS, RECOVERY_STAGES
+from game.data.campaign import (
+    ENDLESS_SUPPLY_BREAK_INTERVAL,
+    get_endless_encounter,
+)
 from game.data.difficulty import DEFAULT_DIFFICULTY, DifficultyProfile, get_difficulty_profile
+from game.data.stage_progression import StageProgression
+from game.data.xp_rewards import enemy_xp_reward
 from game.entities.fighter import (
     COMBAT_ATTACK_STATES,
     HENRY_FLOAT_DURATION,
@@ -32,8 +38,18 @@ from game.entities.fighter import (
     FighterInput,
     FighterSnapshot,
 )
+from game.entities.xp_orb import XPOrb
 from game.systems.audio import AudioBank
 from game.systems.keybindings import KEY_BINDINGS
+from game.systems.stage_cards import (
+    CARDS_BY_KEY,
+    CARDS_BY_TITLE,
+    STAGE_CARD_CATALOG,
+    StageCard,
+    card_rank_title,
+    stage_card_effects,
+)
+from game.systems.stage_level_up_slot import SAMPLE_CARD_LABELS, StageLevelUpSlot
 from game.systems.item_anchors import (
     DEFAULT_WEAPON_ANCHOR_REFERENCE,
     HandAnchor,
@@ -49,10 +65,153 @@ THROWN_ITEM_MAX_DISTANCE = 330.0
 THROWABLE_DISTANCE_MULTIPLIER = 2.0
 HEAVY_ITEM_DISTANCE_MULTIPLIER = THROWABLE_DISTANCE_MULTIPLIER / 2
 DARK_BAT_SP_MOVE_ATTACK_REACH = 270
+BUZZ_BALL_ITEM_ID = "throwables/buzz_ball"
+BIGGIE_BALL_ITEM_ID = "throwables/biggie_ball"
+BIGGIE_BALL_BLAST_RADIUS = 110.0
+# Normalized chest point measured from frame 8 of Reece's moving special animation.
+REECE_SP_MOVE_ATTACK_1_CHEST_ANCHOR = (0.5, 0.53)
 STAGE_CARD_DURATION = 2.4
+STAGE_WAVE_GRACE_DURATION = 4.0
+STAGE_MILESTONE_XP_PER_STAGE = 10
+STAGE_SLOT_CANVAS_SIZE = (1_040, 598)
+STAGE_SLOT_SCALE = min(
+    SCREEN_WIDTH * 0.9 / STAGE_SLOT_CANVAS_SIZE[0],
+    SCREEN_HEIGHT * 0.9 / STAGE_SLOT_CANVAS_SIZE[1],
+)
+STAGE_SLOT_DISPLAY_SIZE = tuple(
+    round(dimension * STAGE_SLOT_SCALE) for dimension in STAGE_SLOT_CANVAS_SIZE
+)
+STAGE_CARD_SIZE = (
+    round(208 * STAGE_SLOT_SCALE),
+    round(279 * STAGE_SLOT_SCALE),
+)
+PAUSE_CARD_SIZE = (220, 295)
+PAUSE_CARD_HOVER_SIZE = (370, 496)
+PAUSE_CARD_HOVER_DELAY = 0.055
+PAUSE_CARD_HOVER_IN_DURATION = 0.18
+PAUSE_CARD_HOVER_OUT_DURATION = 0.14
+STAGE_CARD_WINDOWS = (
+    pygame.Rect(138, 184, 210, 281),
+    pygame.Rect(416, 184, 216, 281),
+    pygame.Rect(694, 184, 221, 281),
+)
+
+
+@lru_cache(maxsize=6)
+def _load_stage_card_image(card_key: str) -> pygame.Surface:
+    card = CARDS_BY_KEY[card_key]
+    image_path = (
+        Path(__file__).resolve().parents[2]
+        / "assets"
+        / "sprites"
+        / "ui"
+        / "stage_mode"
+        / "cards"
+        / card.image
+    )
+    if not image_path.is_file():
+        raise FileNotFoundError(f"Required Stage Mode card artwork is missing: {image_path}")
+    image = pygame.image.load(str(image_path))
+    if image.get_size() != (896, 1200):
+        raise ValueError(
+            f"Stage Mode card artwork must be 896x1200 pixels: {image_path}"
+        )
+    return pygame.transform.smoothscale(image, STAGE_CARD_SIZE)
+
+
+def _scale_stage_slot_rect(rect: pygame.Rect) -> pygame.Rect:
+    return pygame.Rect(
+        round(rect.x * STAGE_SLOT_SCALE),
+        round(rect.y * STAGE_SLOT_SCALE),
+        round(rect.width * STAGE_SLOT_SCALE),
+        round(rect.height * STAGE_SLOT_SCALE),
+    )
+
+
+@lru_cache(maxsize=6)
+def _stage_card_font(size: int) -> pygame.font.Font:
+    return pygame.font.Font(None, size)
+
+
+def _wrap_stage_card_text(
+    text: str,
+    font: pygame.font.Font,
+    max_width: int,
+) -> list[tuple[str, int, int]]:
+    lines = []
+    start = 0
+    while start < len(text):
+        end = start
+        last_space = -1
+        while end < len(text):
+            if text[end].isspace():
+                last_space = end
+            if font.size(text[start:end + 1])[0] > max_width:
+                break
+            end += 1
+        if end == len(text):
+            lines.append((text[start:end], start, end))
+            break
+        if last_space >= start:
+            line_end = last_space
+            next_start = last_space + 1
+        else:
+            line_end = max(start + 1, end)
+            next_start = line_end
+        lines.append((text[start:line_end], start, line_end))
+        start = next_start
+    return lines
+
+
+@lru_cache(maxsize=36)
+def _pause_card_surface(
+    card_key: str,
+    rank: int,
+    width: int,
+    height: int,
+) -> pygame.Surface:
+    card = CARDS_BY_KEY[card_key]
+    surface = pygame.transform.smoothscale(
+        _load_stage_card_image(card_key),
+        (width, height),
+    )
+    title_font = _stage_card_font(max(11, width // 15))
+    detail_font = _stage_card_font(max(10, width // 18))
+    title = card_rank_title(card, rank)
+    title_lines = _wrap_stage_card_text(title, title_font, width - 28)
+    title_y = max(8, round(height * 0.065))
+    for line, _, _ in title_lines[:2]:
+        label = title_font.render(line, True, (255, 232, 173))
+        surface.blit(label, label.get_rect(midtop=(width // 2, title_y)))
+        title_y += title_font.get_linesize()
+
+    description_lines = _wrap_stage_card_text(
+        card.description,
+        detail_font,
+        width - 34,
+    )
+    description_y = round(height * 0.735)
+    for line, _, _ in description_lines[:3]:
+        detail = detail_font.render(line, True, (245, 237, 220))
+        surface.blit(detail, detail.get_rect(midtop=(width // 2, description_y)))
+        description_y += detail_font.get_linesize()
+    perk = detail_font.render(card.perk, True, (255, 217, 126))
+    surface.blit(
+        perk,
+        perk.get_rect(midtop=(width // 2, height - detail_font.get_linesize() - 11)),
+    )
+    return surface
+
+
+STAGE_CORPSE_DURATION = 15.0
+STAGE_ENEMY_SPAWN_MARGIN = SCREEN_WIDTH * 0.3 + 200.0
+STAGE_MAX_ACTIVE_ENEMIES = 4
+STAGE_MAX_XP_ORBS = 128
+STAGE_TITLE_BANNER_TOP = 96
+STAGE_TITLE_BANNER_WIDTH = 1_080
+STAGE_TITLE_BANNER_HEIGHT = 106
 CAMERA_FOLLOW_SPEED = 10.0
 QUICK_PLAY_OPPONENT_HEALTH = 5
-STAGE_ROMAN_NUMERALS = ("I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X")
 WEAPON_ANCHOR_POSES = {
     "idle": "weapon_idle",
     "weapon_idle": "weapon_idle",
@@ -226,6 +385,16 @@ def _load_item_sprite_animations(root: Path) -> dict[str, dict[str, list[pygame.
             if animations:
                 item_sprites[item_folder.relative_to(root).as_posix()] = animations
     return item_sprites
+
+
+def _is_spawnable_item(item_id: str, animations: dict, has_land_frames: bool) -> bool:
+    return (
+        item_id not in {BUZZ_BALL_ITEM_ID, BIGGIE_BALL_ITEM_ID}
+        and bool(animations.get("spawn"))
+        and bool(animations.get("holding"))
+        and bool(animations.get("throw"))
+        and has_land_frames
+    )
 
 
 class ConsumableItem:
@@ -599,6 +768,109 @@ class IceFragmentEffect:
         frame_index = min(int(self.elapsed / self.FRAME_DURATION), len(self.frames) - 1)
         frame = self.frames[frame_index]
         surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
+
+
+class BuzzBallProjectile:
+    FLIGHT_DISTANCE = 360.0
+    SPEED_X = 480.0
+    ARC_HEIGHT = 78.0
+
+    def __init__(
+        self,
+        owner: Fighter,
+        x: float,
+        lane_y: float,
+        facing: int,
+        frames: list[pygame.Surface],
+        origin_y: float | None = None,
+    ) -> None:
+        self.owner = owner
+        self.x = float(x)
+        self.lane_y = float(lane_y)
+        self.ground_y = GROUND_Y + lane_y
+        self.facing = 1 if facing >= 0 else -1
+        self.frames = frames
+        self.frame_index = 0
+        self.elapsed = 0.0
+        self.flight_duration = self.FLIGHT_DISTANCE / self.SPEED_X
+        self.start_x = self.x
+        ground_center_y = self.ground_y - self.frames[0].get_height() / 2
+        self.y = ground_center_y if origin_y is None else float(origin_y)
+        self.launch_height_offset = ground_center_y - self.y
+        self.phase = "fly"
+        self.damage = 1
+        self.finished = False
+        self.just_ground_hit = False
+
+    def update(self, dt: float) -> None:
+        if self.finished:
+            return
+        self.elapsed = min(self.flight_duration, self.elapsed + dt)
+        progress = self.elapsed / self.flight_duration
+        self.x = self.start_x + self.facing * self.FLIGHT_DISTANCE * progress
+        self.frame_index = min(int(progress * len(self.frames)), len(self.frames) - 1)
+        self.y = (
+            self.ground_y
+            - self.frames[self.frame_index].get_height() / 2
+            - self.launch_height_offset * (1.0 - progress)
+            - self.ARC_HEIGHT * math.sin(math.pi * progress)
+        )
+        if progress >= 1.0:
+            self.finished = True
+            self.just_ground_hit = True
+
+    def rect(self) -> pygame.Rect:
+        frame = self.frames[self.frame_index]
+        return frame.get_rect(center=(round(self.x), round(self.y)))
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        frame = self.frames[self.frame_index]
+        if self.facing < 0:
+            frame = pygame.transform.flip(frame, True, False)
+        surface.blit(frame, frame.get_rect(center=(round(self.x - camera_x), round(self.y))))
+
+
+class BiggieBallProjectile:
+    GRAVITY = 1400.0
+    DAMAGE = 2
+
+    def __init__(
+        self,
+        owner: Fighter,
+        x: float,
+        lane_y: float,
+        frames: list[pygame.Surface],
+    ) -> None:
+        self.owner = owner
+        self.x = float(x)
+        self.lane_y = float(lane_y)
+        self.ground_y = GROUND_Y + self.lane_y
+        self.frames = frames
+        self.frame_index = 0
+        self.frame_timer = 0.0
+        self.y = -self.frames[0].get_height() / 2
+        self.velocity_y = 0.0
+        self.just_ground_hit = False
+        self.finished = False
+
+    def update(self, dt: float) -> None:
+        if self.finished:
+            return
+        self.frame_timer += dt
+        while self.frame_timer >= 0.08:
+            self.frame_timer -= 0.08
+            self.frame_index = (self.frame_index + 1) % len(self.frames)
+        self.velocity_y += self.GRAVITY * dt
+        self.y += self.velocity_y * dt
+        floor_center_y = self.ground_y - self.frames[self.frame_index].get_height() / 2
+        if self.y >= floor_center_y:
+            self.y = floor_center_y
+            self.finished = True
+            self.just_ground_hit = True
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        frame = self.frames[self.frame_index]
+        surface.blit(frame, frame.get_rect(center=(round(self.x - camera_x), round(self.y))))
 
 
 @dataclass
@@ -1655,7 +1927,14 @@ class JohnBlastProjectile:
 
 
 class JohnBarrierEffect:
-    def __init__(self, owner: Fighter, x: float, y: float, facing: int) -> None:
+    def __init__(
+        self,
+        owner: Fighter,
+        x: float,
+        y: float,
+        facing: int,
+        asset_folder: str = "john_magical_barrier",
+    ) -> None:
         self.owner = owner
         self.x = float(x)
         self.y = float(y)
@@ -1670,7 +1949,7 @@ class JohnBarrierEffect:
         self.just_barrier_sound = False
         self.just_reflect_sound = False
         self.just_burst_sound = False
-        root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "john_magical_barrier"
+        root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / asset_folder
         self.create_frames = _load_folder_frames(root / "create")
         self.barrier_frames = _load_folder_frames(root / "barrier")
         self.reflect_frames = _load_folder_frames(root / "barrier_reflect")
@@ -3407,10 +3686,11 @@ class WoodyShotProjectile:
 
 
 class FireBreathProjectile:
-    def __init__(self, owner: Fighter, x: float, y: float, facing: int) -> None:
+    def __init__(self, owner: Fighter, x: float, y: float, facing: int, lane_y: float | None = None) -> None:
         self.owner = owner
         self.x = float(x)
         self.y = float(y)
+        self.lane_y = float(owner.lane_y if lane_y is None else lane_y)
         self.origin_x = float(x)
         self.facing = 1 if facing >= 0 else -1
         self.damage = 1
@@ -3527,6 +3807,12 @@ class FireTrailEffect:
         surface.blit(scaled, (int(self.x - camera_x - width / 2), int(self.y - height / 2)))
 
 
+class WhiskeyFireTrailEffect(FireTrailEffect):
+    def __init__(self, owner: Fighter, x: float, y: float) -> None:
+        super().__init__(owner, x, y)
+        self.hits_all_fighters = True
+
+
 class FireExplosionEffect:
     def __init__(self, owner: Fighter, x: float, y: float) -> None:
         self.owner = owner
@@ -3586,21 +3872,43 @@ class BattleScene:
         self.stage_name_font = pygame.font.Font(None, 42)
         self.stage_act_font = pygame.font.Font(None, 28)
         self.stage_subtitle_font = pygame.font.Font(None, 26)
+        self.stage_banner_heading_font = pygame.font.Font(None, 38)
+        self.stage_banner_subtitle_font = pygame.font.Font(None, 24)
         self.stage_choice_font = pygame.font.Font(None, 30)
         self.projectiles: list[object] = []
         self.consumable_items: list[SpawnedConsumable | ThrownItem] = []
         self.paused = False
+        self._pause_hover_candidate_key: str | None = None
+        self._pause_hover_dwell = 0.0
+        self._pause_card_hover_progress: dict[str, float] = {}
         self.stage_mode = stage_mode
         self.test_mode = test_mode
         self.difficulty = get_difficulty_profile(difficulty)
         self.stage_index = 0
         self.stage_wave_index = 0
+        self.stage_wave_clear_timer: float | None = None
+        self.stage_wave_enemies: list[Fighter] = []
+        self.stage_wave_enemy_total = 0
+        self._stage_enemy_spawn_queue: list[str] = []
+        self._stage_corpse_timers: dict[Fighter, float] = {}
+        self.stage_xp_orbs: list[XPOrb] = []
+        self.stage_xp_total = 0
+        self.stage_progression: StageProgression | None = None
+        self.stage_card_ranks: dict[str, int] = {}
+        self._stage_damage_remainder = 0.0
+        self._stage_damage_reduction_remainder = 0.0
+        self._stage_xp_remainder = 0.0
+        self._stage_base_movement: dict[str, float] | None = None
+        self._reset_stage_progression()
+        self.stage_level_up_slot = StageLevelUpSlot()
         self.campaign_score = 0
         self.stage_intermission = False
         self.stage_intermission_choice = 0
         self.stage_card_mode = "stage"
         self.stage_card_timer = STAGE_CARD_DURATION if stage_mode else 0.0
-        self.stage_mode_complete = False
+        self.stage_milestone_reward_xp = 0
+        self.stage_milestone_reward_stage = 0
+        self.stage_milestone_reward_timer = 0.0
         self.stage_mode_failed = False
         self.return_to_menu_requested = False
         stage_config = STAGE_CONFIGS.get(map_name)
@@ -3637,6 +3945,26 @@ class BattleScene:
             or any(not frames for frames in self.milk_break_frames.values())
         ):
             raise FileNotFoundError(f"Milk sprites are missing from {milk_root}")
+        whiskey_root = item_sprites_root / "consumables" / "whiskey"
+        whiskey_animations = self.item_sprite_animations.get("consumables/whiskey", {})
+        self.whiskey_break_frames = {
+            name: whiskey_animations.get(f"broken/{name}", [])
+            for name in ("dust", "large", "small_1", "small_2")
+        }
+        if (
+            not whiskey_animations.get("spawn")
+            or not self._land_frame_sets_for_item("consumables/whiskey")
+            or not whiskey_animations.get("holding")
+            or not whiskey_animations.get("drink")
+            or not whiskey_animations.get("throw")
+            or any(not frames for frames in self.whiskey_break_frames.values())
+        ):
+            raise FileNotFoundError(f"Whiskey sprites are missing from {whiskey_root}")
+        particles_root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "particals"
+        self.drunk_bubbles_frames = _scale_frames(_load_folder_frames(particles_root / "drunk_bubbles"), 1.2)
+        self.sleep_frames = _scale_frames(_load_folder_frames(particles_root / "sleep"), 1.2)
+        if not self.drunk_bubbles_frames or not self.sleep_frames:
+            raise FileNotFoundError(f"Whiskey status sprites are missing from {particles_root}")
         heavy_box_animations = self.item_sprite_animations.get(HEAVY_BOX_ITEM_ID, {})
         self.heavy_box_break_frames = {
             name: heavy_box_animations.get(f"broken/{name}", [])
@@ -3644,15 +3972,33 @@ class BattleScene:
         }
         if any(not frames for frames in self.heavy_box_break_frames.values()):
             raise FileNotFoundError(f"Heavy-box break sprites are missing from {item_sprites_root / 'throwables' / 'heavy_box' / 'broken'}")
+        buzz_ball_animations = self.item_sprite_animations.get(BUZZ_BALL_ITEM_ID, {})
+        self.buzz_ball_throw_frames = buzz_ball_animations.get("throw", [])
+        self.buzz_ball_break_frames = {
+            name: buzz_ball_animations.get(f"broken/{name}", [])
+            for name in ("large", "small_1", "small_2")
+        }
+        if not self.buzz_ball_throw_frames or any(not frames for frames in self.buzz_ball_break_frames.values()):
+            raise FileNotFoundError(f"Buzz Ball sprites are missing from {item_sprites_root / 'throwables' / 'buzz_ball'}")
+        biggie_ball_animations = self.item_sprite_animations.get(BIGGIE_BALL_ITEM_ID, {})
+        self.biggie_ball_drop_frames = biggie_ball_animations.get("spawn", [])
+        self.biggie_ball_break_frames = {
+            name: biggie_ball_animations.get(f"broken/{name}", [])
+            for name in ("large", "small_1", "small_2")
+        }
+        if not self.biggie_ball_drop_frames or any(not frames for frames in self.biggie_ball_break_frames.values()):
+            raise FileNotFoundError(f"Biggie Ball sprites are missing from {item_sprites_root / 'throwables' / 'biggie_ball'}")
         self.spawnable_items = sorted(
             item_id
             for item_id, animations in self.item_sprite_animations.items()
-            if animations.get("spawn")
-            and animations.get("holding")
-            and animations.get("throw")
-            and self._land_frame_sets_for_item(item_id)
+            if _is_spawnable_item(
+                item_id,
+                animations,
+                bool(self._land_frame_sets_for_item(item_id)),
+            )
         )
         self.active_item_overlays: dict[Fighter, tuple[str, ItemSpriteAnimation, str | None]] = {}
+        self.whiskey_status_effects: dict[Fighter, dict] = {}
         self.held_item_animations: dict[Fighter, tuple[str, ItemSpriteAnimation]] = {}
         self.consumable_break_effects: list[
             ConsumableBreakEffect | HeavyBoxBreakEffect | ItemBreakEffect | MetalFragmentEffect | IceFragmentEffect
@@ -3684,6 +4030,8 @@ class BattleScene:
         x_bounds = (self.stage.play_min_x, self.stage.play_max_x)
         start_x = SCREEN_WIDTH / 2
         self.fighter = Fighter(FighterConfig(character_name, CHARACTERS[character_name]), (start_x, 0), x_bounds=x_bounds)
+        if self.stage_mode or self.test_mode:
+            self._apply_stage_card_modifiers()
         self.enemy_names = enemy_names
         self.enemies: list[Fighter] = []
         self.enemy_brains: dict[Fighter, BanditBrain] = {}
@@ -3693,15 +4041,21 @@ class BattleScene:
 
     def _spawn_encounter(self, x_bounds: tuple[float, float], start_x: float) -> None:
         if self.stage_mode:
-            wave = CAMPAIGN_ENCOUNTERS[self.stage_index].waves[self.stage_wave_index]
-            character_names = [name for name, count in wave.enemies for _ in range(count)]
+            wave = self._endless_encounter(self.stage_index + 1).waves[self.stage_wave_index]
+            self.stage_wave_enemies = []
+            self._stage_enemy_spawn_queue = [
+                name for name, count in wave.enemies for _ in range(count)
+            ]
+            self.stage_wave_enemy_total = len(self._stage_enemy_spawn_queue)
+            self._dispatch_stage_enemy_spawns(x_bounds)
+            return
         elif self.test_mode:
             character_names = []
         else:
             character_names = list(self.enemy_names if self.enemy_names is not None else ("bandit",))
-        self.enemies = []
-        self.enemy_brains = {}
-
+        if not self.stage_mode:
+            self.enemies = []
+            self.enemy_brains = {}
         for index, character_name in enumerate(character_names):
             x_offset = 220.0 + (index % 3) * 115.0 + (index // 3) * 90.0
             x = min(x_bounds[1], max(x_bounds[0], start_x + x_offset))
@@ -3711,13 +4065,558 @@ class BattleScene:
                 (x, lane_y),
                 x_bounds=x_bounds,
             )
-            if not self.stage_mode:
-                enemy.max_health = QUICK_PLAY_OPPONENT_HEALTH
+            enemy.max_health = QUICK_PLAY_OPPONENT_HEALTH
             enemy.max_health = self.difficulty.scale_enemy_health(enemy.max_health)
             enemy.health = enemy.max_health
             enemy.controls_enabled = True
             self.enemies.append(enemy)
             self.enemy_brains[enemy] = BanditBrain(self.difficulty)
+
+    def _endless_encounter(self, stage_number: int):
+        difficulty = getattr(self, "difficulty", None)
+        return get_endless_encounter(
+            stage_number,
+            getattr(difficulty, "name", "Medium"),
+        )
+
+    def _dispatch_stage_enemy_spawns(
+        self,
+        x_bounds: tuple[float, float] | None = None,
+    ) -> None:
+        spawn_queue = getattr(self, "_stage_enemy_spawn_queue", [])
+        if not self.stage_mode or not spawn_queue:
+            return
+        active_count = sum(not enemy.is_dead for enemy in self.stage_wave_enemies)
+        slots = min(
+            STAGE_MAX_ACTIVE_ENEMIES - active_count,
+            len(spawn_queue),
+        )
+        if slots <= 0:
+            return
+        if x_bounds is None:
+            x_bounds = (self.stage.play_min_x, self.stage.play_max_x)
+        focus_x = (
+            self._camera_focus_x()
+            if hasattr(self, "camera_focus_x")
+            else self.fighter.x
+        )
+        positions, spawn_facing = self._stage_wave_spawn_positions(
+            slots,
+            x_bounds,
+            focus_x,
+        )
+        for character_name, (x, lane_y) in zip(
+            spawn_queue[:slots],
+            positions,
+        ):
+            enemy = Fighter(
+                FighterConfig(character_name, CHARACTERS[character_name]),
+                (x, lane_y),
+                x_bounds=x_bounds,
+            )
+            enemy.facing = spawn_facing
+            normal_max_health = self.difficulty.scale_enemy_health(enemy.max_health)
+            enemy.max_health = max(1, round(normal_max_health / 2))
+            enemy.health = enemy.max_health
+            enemy.controls_enabled = True
+            self.enemies.append(enemy)
+            self.stage_wave_enemies.append(enemy)
+            self.enemy_brains[enemy] = BanditBrain(self.difficulty)
+        del spawn_queue[:slots]
+
+    def _stage_wave_spawn_positions(
+        self,
+        enemy_count: int,
+        x_bounds: tuple[float, float],
+        focus_x: float,
+    ) -> tuple[list[tuple[float, float]], int]:
+        camera_x = self.stage.camera_x(focus_x)
+        view_left = camera_x
+        view_right = camera_x + SCREEN_WIDTH
+        spawn_margin = STAGE_ENEMY_SPAWN_MARGIN
+        can_spawn_left = view_left - spawn_margin >= x_bounds[0]
+        can_spawn_right = view_right + spawn_margin <= x_bounds[1]
+
+        if can_spawn_right and (
+            not can_spawn_left or self.fighter.x <= (view_left + view_right) / 2
+        ):
+            side = 1
+        elif can_spawn_left:
+            side = -1
+        else:
+            side = 1 if x_bounds[1] - view_right >= view_left - x_bounds[0] else -1
+
+        positions = []
+        lane_count = 3
+        lane_step = (LANE_MAX_Y - LANE_MIN_Y) / (lane_count - 1)
+        for index in range(enemy_count):
+            offset = spawn_margin + (index // lane_count) * 54.0
+            if side > 0:
+                x = min(x_bounds[1], view_right + offset)
+            else:
+                x = max(x_bounds[0], view_left - offset)
+            lane_y = LANE_MIN_Y + (index % lane_count) * lane_step
+            positions.append((x, lane_y))
+        return positions, -side
+
+    def _age_stage_enemy_corpses(self, dt: float) -> None:
+        for enemy, remaining in tuple(self._stage_corpse_timers.items()):
+            remaining -= dt
+            if remaining > 0.0:
+                self._stage_corpse_timers[enemy] = remaining
+                continue
+            self._stage_corpse_timers.pop(enemy, None)
+            if enemy in self.enemies:
+                self.enemies.remove(enemy)
+            self.enemy_brains.pop(enemy, None)
+
+    def _register_stage_enemy_corpses(self) -> None:
+        if not self.stage_mode:
+            return
+        for enemy in self.enemies:
+            if enemy.is_dead and enemy not in self._stage_corpse_timers:
+                self._stage_corpse_timers[enemy] = STAGE_CORPSE_DURATION
+                self._add_stage_xp_orb(
+                    getattr(enemy, "x", 0.0),
+                    getattr(enemy, "lane_y", 0.0),
+                    enemy_xp_reward(getattr(enemy, "name", "")),
+                )
+
+    def _add_stage_xp_orb(self, x: float, lane_y: float, xp_value: int) -> None:
+        orbs = getattr(self, "stage_xp_orbs", None)
+        if orbs is None:
+            self.stage_xp_orbs = []
+            orbs = self.stage_xp_orbs
+        if len(orbs) >= STAGE_MAX_XP_ORBS:
+            nearest = min(
+                orbs,
+                key=lambda orb: (orb.x - x) ** 2 + (orb.lane_y - lane_y) ** 2,
+            )
+            nearest.xp_value += xp_value
+            return
+        orbs.append(XPOrb(x, lane_y, xp_value))
+
+    def _spawn_test_xp_orb(self) -> None:
+        if not getattr(self, "test_mode", False) or self.stage_mode:
+            return
+        camera_x = self.stage.camera_x(self._camera_focus_x())
+        left = max(self.stage.play_min_x, camera_x + 48.0)
+        right = min(self.stage.play_max_x, camera_x + SCREEN_WIDTH - 48.0)
+        if right < left:
+            left = right = min(
+                self.stage.play_max_x,
+                max(self.stage.play_min_x, self.fighter.x),
+            )
+        self._add_stage_xp_orb(
+            random.uniform(left, right),
+            random.uniform(LANE_MIN_Y, LANE_MAX_Y),
+            random.choice((5, 10, 15, 20, 25)),
+        )
+
+    def _update_stage_xp_orbs(self, dt: float) -> None:
+        if not (self.stage_mode or getattr(self, "test_mode", False)):
+            return
+        orbs = getattr(self, "stage_xp_orbs", [])
+        remaining_orbs = []
+        effects = stage_card_effects(getattr(self, "stage_card_ranks", {}))
+        for orb in orbs:
+            if orb.overlaps(self.fighter, effects["xp_range_multiplier"]):
+                self._award_stage_xp(orb.xp_value)
+            else:
+                orb.update(dt)
+                remaining_orbs.append(orb)
+        self.stage_xp_orbs = remaining_orbs
+
+    def _reset_stage_progression(self) -> None:
+        self.stage_progression = (
+            StageProgression()
+            if self.stage_mode or getattr(self, "test_mode", False)
+            else None
+        )
+        self.stage_xp_total = 0
+        self.stage_card_ranks = {}
+        self._stage_damage_remainder = 0.0
+        self._stage_damage_reduction_remainder = 0.0
+        self._stage_xp_remainder = 0.0
+        if (self.stage_mode or getattr(self, "test_mode", False)) and hasattr(self, "fighter"):
+            self._apply_stage_card_modifiers()
+
+    def _award_stage_xp(self, amount: int) -> None:
+        if not (self.stage_mode or getattr(self, "test_mode", False)):
+            return
+        effects = stage_card_effects(getattr(self, "stage_card_ranks", {}))
+        scaled_amount = amount * effects["xp_gain_multiplier"] + getattr(
+            self, "_stage_xp_remainder", 0.0
+        )
+        amount = int(scaled_amount)
+        self._stage_xp_remainder = scaled_amount - amount
+        if amount <= 0:
+            return
+        progression = getattr(self, "stage_progression", None)
+        if progression is None:
+            progression = StageProgression(getattr(self, "stage_xp_total", 0))
+            self.stage_progression = progression
+        progression.add_xp(amount)
+        self.stage_xp_total = progression.xp_total
+
+    def _apply_stage_card_modifiers(self) -> None:
+        if not (
+            getattr(self, "stage_mode", False)
+            or getattr(self, "test_mode", False)
+        ):
+            return
+        fighter = getattr(self, "fighter", None)
+        if fighter is None:
+            return
+        ranks = getattr(self, "stage_card_ranks", {})
+        effects = stage_card_effects(ranks)
+        base_movement = getattr(self, "_stage_base_movement", None)
+        if base_movement is None:
+            base_movement = dict(fighter.movement)
+            self._stage_base_movement = base_movement
+        fighter.movement.update(
+            {
+                name: speed * effects["movement_multiplier"]
+                for name, speed in base_movement.items()
+                if name in {"walk_speed", "run_speed", "lane_speed"}
+            }
+        )
+        base_max_health = int(fighter.stats.get("max_health", fighter.max_health))
+        fighter.max_health = base_max_health + int(effects["max_health_bonus"])
+        fighter.health = min(fighter.health, fighter.max_health)
+
+    def _apply_stage_card(self, title: str) -> bool:
+        if not (
+            getattr(self, "stage_mode", False)
+            or getattr(self, "test_mode", False)
+        ):
+            return False
+        card = CARDS_BY_TITLE.get(title)
+        if card is None:
+            return False
+        ranks = getattr(self, "stage_card_ranks", {})
+        rank = ranks.get(card.key, 0)
+        ranks[card.key] = rank + 1
+        self.stage_card_ranks = ranks
+        self._apply_stage_card_modifiers()
+        return True
+
+    def _transform_luis_if_pending(self, fighter: Fighter) -> None:
+        if not fighter.luis_transform_pending:
+            return
+        fighter.transform_to(FighterConfig("luis_liberated", CHARACTERS["luis_liberated"]))
+        if fighter is self.fighter and (
+            self.stage_mode or getattr(self, "test_mode", False)
+        ):
+            self._stage_base_movement = None
+            self._apply_stage_card_modifiers()
+
+    def consume_stage_level_up(self) -> int | None:
+        """Consume one queued level-up after its temporary offer screen is confirmed."""
+        if not (self.stage_mode or getattr(self, "test_mode", False)):
+            return None
+        progression = getattr(self, "stage_progression", None)
+        return progression.consume_pending_level() if progression is not None else None
+
+    def _ensure_stage_level_up_slot(self) -> None:
+        if (
+            not (self.stage_mode or getattr(self, "test_mode", False))
+            or (
+                self.stage_mode
+                and (
+                    getattr(self, "stage_mode_failed", False)
+                    or getattr(self, "stage_intermission", False)
+                )
+            )
+        ):
+            return
+        slot = getattr(self, "stage_level_up_slot", None)
+        if slot is None:
+            slot = StageLevelUpSlot()
+            self.stage_level_up_slot = slot
+        progression = getattr(self, "stage_progression", None)
+        if not slot.active and progression is not None and progression.pending_levels:
+            while progression.pending_levels and not slot.active:
+                if not slot.start(
+                    progression.pending_levels[0],
+                    getattr(self, "stage_card_ranks", {}),
+                ):
+                    progression.consume_pending_level()
+
+    def _update_stage_level_up_slot(self, dt: float, inputs: FighterInput) -> None:
+        self._ensure_stage_level_up_slot()
+        slot = self.stage_level_up_slot
+        if not slot.active:
+            return
+        slot.update(dt)
+        if not slot.ready:
+            return
+        if inputs.left_just_pressed:
+            slot.move_selection(-1)
+        elif inputs.right_just_pressed:
+            slot.move_selection(1)
+        if inputs.attack_just_pressed:
+            selected = slot.confirm()
+            if selected is not None:
+                self._apply_stage_card(selected)
+            self.consume_stage_level_up()
+            self._ensure_stage_level_up_slot()
+
+    def _update_test_level_up_slot(self, dt: float, inputs: FighterInput) -> bool:
+        if not self.test_mode or self.stage_mode:
+            return False
+        slot = self.stage_level_up_slot
+        if not slot.active and inputs.test_level_up_just_pressed:
+            slot.start(1, visual_only=True)
+        if not slot.active:
+            return False
+
+        slot.update(dt)
+        if slot.ready:
+            if inputs.left_just_pressed:
+                slot.move_selection(-1)
+            elif inputs.right_just_pressed:
+                slot.move_selection(1)
+            if inputs.attack_just_pressed:
+                slot.confirm()
+        return True
+
+    def _get_stage_level_up_slot_frame(self) -> pygame.Surface:
+        frame = getattr(self, "_stage_level_up_slot_frame", None)
+        if frame is None:
+            frame_path = (
+                Path(__file__).resolve().parents[2]
+                / "assets"
+                / "sprites"
+                / "ui"
+                / "stage_mode"
+                / "card_slot"
+                / "1.png"
+            )
+            if not frame_path.is_file():
+                raise FileNotFoundError(
+                    f"Required Stage Mode card-slot sprite is missing: {frame_path}"
+                )
+            frame = pygame.image.load(str(frame_path))
+            if frame.get_size() != STAGE_SLOT_CANVAS_SIZE:
+                raise ValueError(
+                    "Stage Mode card-slot sprite must be 1040x598 pixels: "
+                    f"{frame_path}"
+                )
+            frame = pygame.transform.smoothscale(frame, STAGE_SLOT_DISPLAY_SIZE)
+            self._stage_level_up_slot_frame = frame
+        return frame
+
+    def _draw_stage_level_up_slot(self, surface: pygame.Surface) -> None:
+        slot = self.stage_level_up_slot
+        if (
+            not (self.stage_mode or getattr(self, "test_mode", False))
+            or not slot.active
+            or self.paused
+            or self.stage_mode_failed
+            or self.stage_intermission
+        ):
+            return
+
+        shade = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        shade.fill((4, 8, 16, 205))
+        surface.blit(shade, (0, 0))
+        panel = pygame.Rect((0, 0), STAGE_SLOT_DISPLAY_SIZE)
+        panel.center = (SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2)
+        surface.blit(self._get_stage_level_up_slot_frame(), panel.topleft)
+        title_font = _stage_card_font(round(46 * STAGE_SLOT_SCALE))
+        subtitle_font = _stage_card_font(round(21 * STAGE_SLOT_SCALE))
+        title = title_font.render("LEVEL UP!", True, (255, 223, 143))
+        surface.blit(
+            title,
+            title.get_rect(
+                center=(
+                    panel.centerx,
+                    panel.y + round(128 * STAGE_SLOT_SCALE),
+                )
+            ),
+        )
+        subtitle = subtitle_font.render(
+            f"Level {slot.level_id}  •  Spin for three offers",
+            True,
+            (220, 227, 237),
+        )
+        surface.blit(
+            subtitle,
+            subtitle.get_rect(
+                center=(
+                    panel.centerx,
+                    panel.y + round(181 * STAGE_SLOT_SCALE),
+                )
+            ),
+        )
+
+        reel_centers = tuple(
+            round(center * STAGE_SLOT_SCALE) for center in (242, 520, 797)
+        )
+        card_font = _stage_card_font(round(18 * STAGE_SLOT_SCALE))
+        detail_font = _stage_card_font(round(14 * STAGE_SLOT_SCALE))
+        perk_font = _stage_card_font(round(15 * STAGE_SLOT_SCALE))
+        for index, title in enumerate(slot.reel_labels):
+            window = _scale_stage_slot_rect(STAGE_CARD_WINDOWS[index]).move(
+                panel.topleft
+            )
+            center_x = panel.x + reel_centers[index]
+            selected = slot.ready and slot.selected_index == index
+            old_clip = surface.get_clip()
+            surface.set_clip(window)
+            if slot.stopped[index]:
+                card = CARDS_BY_TITLE[slot.offers[index]]
+                image = _load_stage_card_image(card.key)
+                card_rect = image.get_rect(center=window.center)
+                surface.blit(image, card_rect)
+
+                title_text = card_rank_title(card, slot.offer_ranks[index])
+                revealed_title = slot.revealed_text(index, 0)
+                title_x = card_rect.centerx - card_font.size(title_text)[0] // 2
+                title_y = (
+                    card_rect.y
+                    + round(34 * STAGE_SLOT_SCALE)
+                    - card_font.get_height() // 2
+                )
+                for position, character in enumerate(title_text):
+                    if character.isspace() or (
+                        position < len(revealed_title)
+                        and revealed_title[position] != " "
+                    ):
+                        glyph = card_font.render(character, True, (255, 235, 180))
+                        surface.blit(
+                            glyph,
+                            (
+                                title_x + card_font.size(title_text[:position])[0],
+                                title_y,
+                            ),
+                        )
+
+                description = card.description
+                revealed_description = slot.revealed_text(index, 1)
+                description_lines = _wrap_stage_card_text(
+                    description,
+                    detail_font,
+                    STAGE_CARD_SIZE[0] - round(24 * STAGE_SLOT_SCALE),
+                )
+                footer_y = card_rect.y + round(202 * STAGE_SLOT_SCALE)
+                for line, start, end in description_lines[:2]:
+                    revealed_line = revealed_description[start:end]
+                    line_x = card_rect.centerx - detail_font.size(line)[0] // 2
+                    for position, character in enumerate(line):
+                        if character.isspace() or (
+                            position < len(revealed_line)
+                            and revealed_line[position] != " "
+                        ):
+                            glyph = detail_font.render(character, True, (247, 239, 220))
+                            surface.blit(
+                                glyph,
+                                (
+                                    line_x + detail_font.size(line[:position])[0],
+                                    footer_y,
+                                ),
+                            )
+                    footer_y += round(15 * STAGE_SLOT_SCALE)
+
+                perk = card.perk
+                revealed_perk = slot.revealed_text(index, 2)
+                perk_x = card_rect.centerx - perk_font.size(perk)[0] // 2
+                perk_y = card_rect.y + STAGE_CARD_SIZE[1] - round(
+                    45 * STAGE_SLOT_SCALE
+                )
+                for position, character in enumerate(perk):
+                    if character.isspace() or (
+                        position < len(revealed_perk)
+                        and revealed_perk[position] != " "
+                    ):
+                        glyph = perk_font.render(character, True, (255, 217, 126))
+                        surface.blit(
+                            glyph,
+                            (
+                                perk_x + perk_font.size(perk[:position])[0],
+                                perk_y,
+                            ),
+                        )
+            else:
+                position = slot.reel_scroll_positions[index]
+                first_card = int(position)
+                offset = position - first_card
+                sequence = slot.reel_card_sequences[index]
+                for stack_offset in range(3):
+                    sequence_index = min(first_card + stack_offset, len(sequence) - 1)
+                    stack_card = CARDS_BY_TITLE[sequence[sequence_index]]
+                    image = _load_stage_card_image(stack_card.key)
+                    card_rect = image.get_rect(
+                        center=(
+                            window.centerx,
+                            round(
+                                window.centery
+                                + (stack_offset - offset) * image.get_height()
+                            ),
+                        )
+                    )
+                    surface.blit(image, card_rect)
+            surface.set_clip(old_clip)
+
+            if selected:
+                outline = round(4 * STAGE_SLOT_SCALE)
+                selection = pygame.Rect(
+                    window.x - outline,
+                    window.y - outline,
+                    window.width + outline * 2,
+                    window.height + outline * 2,
+                )
+                pygame.draw.rect(
+                    surface,
+                    (255, 215, 117),
+                    selection,
+                    width=outline,
+                    border_radius=round(8 * STAGE_SLOT_SCALE),
+                )
+
+        if slot.ready:
+            controls = (
+                f"{KEY_BINDINGS.label('move_left')} / {KEY_BINDINGS.label('move_right')}  Select"
+                f"      {KEY_BINDINGS.label('attack')}  Choose"
+            )
+        else:
+            controls = "Reels are spinning..."
+        control_font = _stage_card_font(round(20 * STAGE_SLOT_SCALE))
+        control_label = control_font.render(controls, True, (236, 240, 247))
+        surface.blit(
+            control_label,
+            control_label.get_rect(
+                center=(
+                    panel.centerx,
+                    panel.y + round(516 * STAGE_SLOT_SCALE),
+                )
+            ),
+        )
+        if slot.ready:
+            pygame.draw.line(
+                surface,
+                (255, 215, 117),
+                (
+                    panel.x + round(102 * STAGE_SLOT_SCALE),
+                    panel.y + round(476 * STAGE_SLOT_SCALE),
+                ),
+                (
+                    panel.right - round(102 * STAGE_SLOT_SCALE),
+                    panel.y + round(476 * STAGE_SLOT_SCALE),
+                ),
+                max(1, round(2 * STAGE_SLOT_SCALE)),
+            )
+
+    def _stage_progress_display(self) -> tuple[int, int, int] | None:
+        progression = getattr(self, "stage_progression", None)
+        if not (self.stage_mode or getattr(self, "test_mode", False)) or progression is None:
+            return None
+        return (
+            progression.level,
+            progression.xp_into_level,
+            progression.xp_for_next_level,
+        )
 
     @property
     def enemy(self) -> Fighter | None:
@@ -3738,8 +4637,13 @@ class BattleScene:
         return [enemy for enemy in self.enemies if not enemy.is_dead]
 
     def _advance_stage_mode(self) -> None:
-        self.campaign_score += 100 * len(self.enemies)
-        encounter = CAMPAIGN_ENCOUNTERS[self.stage_index]
+        self.campaign_score += 100 * getattr(
+            self,
+            "stage_wave_enemy_total",
+            len(self.stage_wave_enemies),
+        )
+        self.stage_wave_clear_timer = None
+        encounter = self._endless_encounter(self.stage_index + 1)
         if self.stage_wave_index + 1 < len(encounter.waves):
             self.stage_wave_index += 1
             x_bounds = (self.stage.play_min_x, self.stage.play_max_x)
@@ -3749,11 +4653,7 @@ class BattleScene:
             self.victory_played = False
             return
 
-        if self.stage_index + 1 >= len(CAMPAIGN_ENCOUNTERS):
-            self.stage_mode_complete = True
-            return
-
-        if self.stage_index + 1 in RECOVERY_STAGES:
+        if (self.stage_index + 1) % ENDLESS_SUPPLY_BREAK_INTERVAL == 0:
             self.stage_intermission = True
             self.stage_intermission_choice = 0
             return
@@ -3761,6 +4661,17 @@ class BattleScene:
         self._start_next_campaign_stage()
 
     def _start_next_campaign_stage(self) -> None:
+        completed_stage = self.stage_index + 1
+        if completed_stage % 5 == 0:
+            previous_xp = getattr(self, "stage_xp_total", 0)
+            self._award_stage_xp(
+                completed_stage * STAGE_MILESTONE_XP_PER_STAGE
+            )
+            self.stage_milestone_reward_xp = (
+                self.stage_xp_total - previous_xp
+            )
+            self.stage_milestone_reward_stage = completed_stage
+            self.stage_milestone_reward_timer = STAGE_CARD_DURATION
         self.stage_index += 1
         self.stage_wave_index = 0
         x_bounds = (self.stage.play_min_x, self.stage.play_max_x)
@@ -3876,6 +4787,148 @@ class BattleScene:
             )
         )
         return True
+
+    def _deal_damage(
+        self,
+        attacker: Fighter,
+        target: Fighter,
+        amount: int,
+        ignore_invulnerability: bool = False,
+        apply_whiskey_multiplier: bool = True,
+    ) -> None:
+        target_can_receive_damage = (
+            amount > 0
+            and not getattr(target, "is_dead", False)
+            and (
+                ignore_invulnerability
+                or (
+                    getattr(target, "damage_cooldown", 0.0) <= 0.0
+                    and not getattr(target, "is_invulnerable", False)
+                )
+            )
+        )
+        if (
+            getattr(self, "stage_mode", False)
+            or getattr(self, "test_mode", False)
+        ):
+            effects = stage_card_effects(getattr(self, "stage_card_ranks", {}))
+            if attacker is getattr(self, "fighter", None) and target_can_receive_damage:
+                scaled = amount * effects["damage_multiplier"] + getattr(
+                    self, "_stage_damage_remainder", 0.0
+                )
+                amount = int(scaled)
+                self._stage_damage_remainder = scaled - amount
+                if amount <= 0:
+                    return
+        effect = self.whiskey_status_effects.get(attacker) if apply_whiskey_multiplier else None
+        multiplier = 2 if effect is not None and not effect["sleeping"] else 1
+        amount *= multiplier
+        if (
+            (
+                getattr(self, "stage_mode", False)
+                or getattr(self, "test_mode", False)
+            )
+            and target is getattr(self, "fighter", None)
+            and target_can_receive_damage
+        ):
+            effects = stage_card_effects(getattr(self, "stage_card_ranks", {}))
+            blocked = amount * effects["damage_reduction"] + getattr(
+                self, "_stage_damage_reduction_remainder", 0.0
+            )
+            reduced = int(blocked)
+            self._stage_damage_reduction_remainder = blocked - reduced
+            amount = max(0, amount - reduced)
+        target.receive_damage(amount, ignore_invulnerability=ignore_invulnerability)
+
+    def _break_whiskey_item(self, item: ConsumableItem, spawn_fire: bool) -> bool:
+        if item.item_id != "consumables/whiskey" or item not in self.consumable_items:
+            return False
+        self.consumable_items.remove(item)
+        self.audio.play("drink_break")
+        frames = self.whiskey_break_frames
+        self.consumable_break_effects.append(
+            ConsumableBreakEffect(
+                item.x,
+                item.lane_y,
+                frames["dust"],
+                frames["large"],
+                frames["small_1"],
+            )
+        )
+        fragment_y = GROUND_Y + item.lane_y - 10.0
+        self.consumable_break_effects.extend(
+            (
+                IceFragmentEffect(frames["small_1"], item.x, fragment_y, -250.0, -210.0),
+                IceFragmentEffect(frames["small_2"], item.x, fragment_y, 250.0, -210.0),
+            )
+        )
+        if spawn_fire:
+            self.projectiles.append(
+                WhiskeyFireTrailEffect(
+                    self.fighter,
+                    item.x,
+                    GROUND_Y + item.lane_y - 22.0,
+                )
+            )
+        return True
+
+    def _break_buzz_ball(self, projectile: BuzzBallProjectile) -> None:
+        self.audio.play("drink_break")
+        fragment_y = projectile.ground_y - 24.0
+        self.consumable_break_effects.extend(
+            (
+                IceFragmentEffect(
+                    self.buzz_ball_break_frames["large"],
+                    projectile.x,
+                    fragment_y,
+                    -260.0,
+                    -300.0,
+                ),
+                IceFragmentEffect(
+                    self.buzz_ball_break_frames["small_1"],
+                    projectile.x,
+                    fragment_y,
+                    320.0,
+                    -250.0,
+                ),
+                IceFragmentEffect(
+                    self.buzz_ball_break_frames["small_2"],
+                    projectile.x,
+                    fragment_y,
+                    -380.0,
+                    -180.0,
+                ),
+            )
+        )
+
+    def _break_biggie_ball(self, projectile: BiggieBallProjectile) -> None:
+        self.audio.play("drink_break")
+        fragment_y = projectile.ground_y - 24.0
+        self.consumable_break_effects.extend(
+        (
+            IceFragmentEffect(
+                self.biggie_ball_break_frames["large"],
+                projectile.x,
+                fragment_y,
+                -260.0,
+                -300.0,
+            ),
+            IceFragmentEffect(
+                self.biggie_ball_break_frames["small_1"],
+                projectile.x,
+                fragment_y,
+                320.0,
+                -250.0,
+            ),
+            IceFragmentEffect(
+                self.biggie_ball_break_frames["small_2"],
+                projectile.x,
+                fragment_y,
+                -380.0,
+                -180.0,
+            ),
+        )
+        )
 
     def _break_heavy_box_from_rect(self, attack_rect: pygame.Rect, lane_y: float | None = None) -> bool:
         for item in self._heavy_box_obstacles():
@@ -4084,6 +5137,61 @@ class BattleScene:
         self.active_item_overlays[fighter] = (action, ItemSpriteAnimation(frames, loop=should_loop), active_state)
         return True
 
+    def _start_whiskey_effect(self, fighter: Fighter) -> None:
+        self.whiskey_status_effects[fighter] = {
+            "remaining": 3.0,
+            "sleeping": False,
+            "just_started": True,
+            "bubbles": ItemSpriteAnimation(self.drunk_bubbles_frames, loop=True),
+            "sleep": ItemSpriteAnimation(self.sleep_frames, loop=True),
+        }
+
+    def _update_whiskey_effects(self, dt: float) -> None:
+        for fighter, effect in tuple(self.whiskey_status_effects.items()):
+            if effect["just_started"]:
+                effect["just_started"] = False
+                continue
+            if effect["sleeping"]:
+                if fighter.state == "idle" or fighter.is_dead:
+                    fighter.whiskey_sleep_hold = False
+                    del self.whiskey_status_effects[fighter]
+                    continue
+                effect["sleep"].update(dt)
+                if fighter.knock_hold_timer == 0.0:
+                    fighter.whiskey_sleep_hold = False
+                    if fighter.state != "fall":
+                        del self.whiskey_status_effects[fighter]
+                continue
+
+            effect["bubbles"].update(dt)
+            effect["remaining"] = max(0.0, effect["remaining"] - dt)
+            if effect["remaining"] == 0.0:
+                effect["sleeping"] = True
+                effect["bubbles"].frame_index = len(effect["bubbles"].frames) - 1
+                effect["bubbles"].frame_timer = 0.0
+                if not fighter.is_dead:
+                    fighter._start_knockdown()
+                    fighter.knock_hold_timer *= 2.0
+                    fighter.whiskey_sleep_hold = True
+
+    def _draw_whiskey_status(self, surface: pygame.Surface, fighter: Fighter, camera_x: float) -> None:
+        effect = self.whiskey_status_effects.get(fighter)
+        if effect is None:
+            return
+        animation = effect["sleep"] if effect["sleeping"] else effect["bubbles"]
+        frame = animation.current_frame
+        _, draw_y = fighter.draw_pos(camera_x)
+        sprite = fighter.animation_player.current_frame
+        surface.blit(
+            frame,
+            frame.get_rect(
+                center=(
+                    int(fighter.x - camera_x),
+                    int(draw_y + sprite.get_height() * 0.28),
+                )
+            ),
+        )
+
     def _land_frame_sets_for_item(self, item_id: str) -> list[tuple[str, list[pygame.Surface]]]:
         animations = self.item_sprite_animations.get(item_id, {})
         return [
@@ -4243,6 +5351,15 @@ class BattleScene:
             if target is None:
                 continue
 
+            if item.item_id == "consumables/whiskey":
+                self._break_whiskey_item(item, spawn_fire=False)
+                previous_health = target.health
+                self._deal_damage(item.owner, target, 1)
+                if not target.is_dead:
+                    target._start_fire_knockdown()
+                if target.health < previous_health:
+                    self.audio.play("hit_success")
+                continue
             item.drop_at_hit()
             if target.state == "block" and target.block_strength > 0:
                 target.block_strength = 0
@@ -4253,7 +5370,7 @@ class BattleScene:
                 self.audio.play("hit_guard")
             else:
                 previous_health = target.health
-                target.receive_damage(1)
+                self._deal_damage(item.owner, target, 1)
                 if target.health < previous_health:
                     self.audio.play("hit_success")
 
@@ -4680,7 +5797,7 @@ class BattleScene:
                 continue
 
             previous_health = defender.health
-            defender.receive_damage(attacker.touch_damage)
+            self._deal_damage(attacker, defender, attacker.touch_damage)
             if mark_plow_attack:
                 if defender.health < previous_health:
                     attacker.mark_sp_move_attack_1_targets_hit.add(id(defender))
@@ -4741,7 +5858,7 @@ class BattleScene:
                 defender._start_block_break()
                 self.audio.play("hit_guard")
                 continue
-            defender.receive_damage(attacker.touch_damage)
+            self._deal_damage(attacker, defender, attacker.touch_damage)
             self.audio.play("sword_cut")
 
     def _handle_woody_punches(self) -> None:
@@ -4776,7 +5893,7 @@ class BattleScene:
                     target._start_block_break()
                     self.audio.play("hit_guard")
                     continue
-                target.receive_damage(fighter.touch_damage)
+                self._deal_damage(fighter, target, fighter.touch_damage)
                 self.audio.play("hit_success")
 
     def _handle_woody_dash_hits(self, previous_x_by_fighter: dict[int, float]) -> None:
@@ -4806,7 +5923,7 @@ class BattleScene:
                     target._start_block_break()
                     self.audio.play("hit_guard")
                     continue
-                target.receive_damage(fighter.touch_damage)
+                self._deal_damage(fighter, target, fighter.touch_damage)
                 if not target.is_dead:
                     target._start_knockdown()
                     target.push_velocity_x = fighter.facing * fighter.movement["run_speed"]
@@ -4948,6 +6065,55 @@ class BattleScene:
         elif fighter.name != "rudolf":
             fighter.hunter_shoot_arrow_sfx_pending = True
 
+    def _spawn_reece_buzz_ball(self, fighter: Fighter) -> None:
+        if fighter.name != "reece" or fighter.state != "sp_move_attack_1" or not fighter.reece_buzz_ball_pending:
+            return
+        fighter.reece_buzz_ball_pending = False
+        fighter.attack_projectile_fired = True
+        reference_frame = fighter.animations["sp_move_attack_1"]["surfaces"][7]
+        anchor_x, anchor_y = REECE_SP_MOVE_ATTACK_1_CHEST_ANCHOR
+        origin_x = fighter.x + fighter.facing * (
+            reference_frame.get_width() * anchor_x
+            - reference_frame.get_width() / 2
+            + self.buzz_ball_throw_frames[0].get_width() / 2
+        )
+        origin_y = (
+            GROUND_Y
+            + fighter.lane_y
+            - fighter.z
+            - reference_frame.get_height()
+            + reference_frame.get_height() * anchor_y
+        )
+        self.projectiles.append(
+            BuzzBallProjectile(
+                fighter,
+                origin_x,
+                fighter.lane_y,
+                fighter.facing,
+                self.buzz_ball_throw_frames,
+                origin_y=origin_y,
+            )
+        )
+
+    def _spawn_reece_biggie_ball(self, fighter: Fighter) -> None:
+        if (
+            fighter.name != "reece"
+            or fighter.state != "sp_vert_attack_2"
+            or not fighter.reece_biggie_ball_pending
+        ):
+            return
+        fighter.reece_biggie_ball_pending = False
+        fighter.attack_projectile_fired = True
+        drop_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 1.1)
+        self.projectiles.append(
+            BiggieBallProjectile(
+                fighter,
+                drop_x,
+                fighter.lane_y,
+                self.biggie_ball_drop_frames,
+            )
+        )
+
     def _spawn_rudolf_shurikens(self, fighter: Fighter) -> None:
         if fighter.name != "rudolf" or fighter.state != "sp_move_attack_1":
             return
@@ -5032,12 +6198,20 @@ class BattleScene:
         self.audio.play("john_blast_create")
 
     def _spawn_john_barrier(self, fighter: Fighter) -> None:
-        if fighter.name != "john" or fighter.state != "sp_move_attack_2" or not fighter.john_barrier_pending:
+        is_john_barrier = fighter.name == "john" and fighter.john_barrier_pending
+        is_reece_barrier = fighter.name == "reece" and fighter.reece_vape_barrier_pending
+        if fighter.state != "sp_move_attack_2" or not (is_john_barrier or is_reece_barrier):
             return
-        fighter.john_barrier_pending = False
+        if is_john_barrier:
+            fighter.john_barrier_pending = False
+        else:
+            fighter.reece_vape_barrier_pending = False
         origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.68)
         origin_y = fighter.world_hitbox_rect().centery
-        self.projectiles.append(JohnBarrierEffect(fighter, origin_x, origin_y, fighter.facing))
+        asset_folder = "vape_barrier" if is_reece_barrier else "john_magical_barrier"
+        self.projectiles.append(
+            JohnBarrierEffect(fighter, origin_x, origin_y, fighter.facing, asset_folder=asset_folder)
+        )
         self.audio.play("john_barrier_create")
 
     def _spawn_john_follow_disk(self, fighter: Fighter) -> None:
@@ -5371,7 +6545,7 @@ class BattleScene:
             target._start_block_break()
             self.audio.play("hit_guard")
         else:
-            target.receive_damage(projectile.damage)
+            self._deal_damage(projectile.owner, target, projectile.damage)
             if not target.is_dead:
                 target._start_ice_knockdown(push_back=False)
                 self.audio.play("freeze")
@@ -5445,6 +6619,25 @@ class BattleScene:
             self.projectiles.append(FireBreathProjectile(fighter, origin_x, origin_y, fighter.facing))
             self.audio.play_fire_breath()
 
+    def _spawn_reece_fire_breath(self, fighter: Fighter) -> None:
+        if fighter.name != "reece":
+            return
+        while fighter.reece_fire_breath_projectiles_pending > 0:
+            fighter.reece_fire_breath_projectiles_pending -= 1
+            origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.40)
+            hitbox = fighter.world_hitbox_rect()
+            lane_spacing = (LANE_MAX_Y - LANE_MIN_Y) / 3.0
+            lane_offset = lane_spacing / 6.0
+            adjacent_lane = max(LANE_MIN_Y, fighter.lane_y - lane_offset)
+            if adjacent_lane == fighter.lane_y:
+                adjacent_lane = min(LANE_MAX_Y, fighter.lane_y + lane_offset)
+            for lane_y in (fighter.lane_y, adjacent_lane):
+                origin_y = hitbox.centery + lane_y - fighter.lane_y
+                self.projectiles.append(
+                    FireBreathProjectile(fighter, origin_x, origin_y, fighter.facing, lane_y=lane_y)
+                )
+                self.audio.play_fire_breath()
+
     def _spawn_henry_wind(self, fighter: Fighter) -> None:
         if fighter.name != "henry" or fighter.state != "sp_move_attack_2":
             return
@@ -5499,7 +6692,7 @@ class BattleScene:
             target._start_block_break()
             self.audio.play("hit_guard")
         else:
-            target.receive_damage(fighter.touch_damage)
+            self._deal_damage(fighter, target, fighter.touch_damage)
             if not target.is_dead:
                 target._start_knockdown()
 
@@ -5574,7 +6767,7 @@ class BattleScene:
             return
 
         wind.hit_targets.add(id(target))
-        target.receive_damage(fighter.touch_damage)
+        self._deal_damage(fighter, target, fighter.touch_damage)
         if not target.is_dead:
             target._start_knockdown()
         self.audio.play("wind_hit")
@@ -5661,6 +6854,79 @@ class BattleScene:
         visible_right = camera_x + SCREEN_WIDTH
         for projectile in list(self.projectiles):
             projectile.update(dt)
+            if isinstance(projectile, BuzzBallProjectile):
+                if projectile.phase == "fly":
+                    target = next(
+                        (
+                            target
+                            for target in self._opponents_of(projectile.owner)
+                            if target is not None
+                            and not target.is_dead
+                            and abs(target.lane_y - projectile.lane_y) <= 28.0
+                            and (
+                                target.world_hitbox_rect().centerx - projectile.start_x
+                            ) * projectile.facing >= 0
+                            and projectile.rect().colliderect(target.world_hitbox_rect())
+                        ),
+                        None,
+                    )
+                    if target is not None:
+                        self._break_buzz_ball(projectile)
+                        if target.state == "block" and target.block_strength > 0:
+                            target.block_strength = 0
+                            target.block_hold_timer = 0.0
+                            self.audio.play("hit_guard")
+                        elif target.state == "block":
+                            target._start_block_break()
+                            self.audio.play("hit_guard")
+                        else:
+                            previous_health = target.health
+                            self._deal_damage(projectile.owner, target, projectile.damage)
+                            if not target.is_dead:
+                                target._start_knockdown()
+                            if target.health < previous_health:
+                                self.audio.play("hit_success")
+                        self.projectiles.remove(projectile)
+                        continue
+                if projectile.just_ground_hit:
+                    projectile.just_ground_hit = False
+                    self._break_buzz_ball(projectile)
+                    self.projectiles.remove(projectile)
+                elif projectile.finished:
+                    self.projectiles.remove(projectile)
+                continue
+            if isinstance(projectile, BiggieBallProjectile):
+                if projectile.just_ground_hit:
+                    projectile.just_ground_hit = False
+                    self._break_biggie_ball(projectile)
+                    for target in self._opponents_of(projectile.owner):
+                        if target is None or target.is_dead:
+                            continue
+                        dx = target.world_hitbox_rect().centerx - projectile.x
+                        lane_delta = target.lane_y - projectile.lane_y
+                        if (
+                            abs(lane_delta) > 36.0
+                            or dx * dx + lane_delta * lane_delta > BIGGIE_BALL_BLAST_RADIUS**2
+                        ):
+                            continue
+                        if target.state == "block" and target.block_strength > 0:
+                            target.block_strength = 0
+                            target.block_hold_timer = 0.0
+                            self.audio.play("hit_guard")
+                        elif target.state == "block":
+                            target._start_block_break()
+                            self.audio.play("hit_guard")
+                        else:
+                            previous_health = target.health
+                            self._deal_damage(projectile.owner, target, projectile.DAMAGE)
+                            if not target.is_dead:
+                                target._start_knockdown()
+                            if target.health < previous_health:
+                                self.audio.play("hit_success")
+                    self.projectiles.remove(projectile)
+                elif projectile.finished:
+                    self.projectiles.remove(projectile)
+                continue
             self._shoot_firzen_target_orbs(projectile)
             self._damage_heavy_box_with_projectile(projectile)
             if isinstance(projectile, FirzenFireIceOrb) and projectile.just_split:
@@ -5911,7 +7177,7 @@ class BattleScene:
                         target._start_block_break()
                         self.audio.play("hit_guard")
                     else:
-                        target.receive_damage(projectile.damage)
+                        self._deal_damage(projectile.owner, target, projectile.damage)
                     projectile._start_burst()
                     self.audio.play("jan_burst")
                 continue
@@ -5931,7 +7197,7 @@ class BattleScene:
                         target._start_block_break()
                         self.audio.play("hit_guard")
                     else:
-                        target.receive_damage(projectile.damage)
+                        self._deal_damage(projectile.owner, target, projectile.damage)
                         if not target.is_dead:
                             target._start_knockdown()
                         self.audio.play("arrow_hit")
@@ -5961,7 +7227,7 @@ class BattleScene:
                             target._start_block_break()
                             self.audio.play("hit_guard")
                         else:
-                            target.receive_damage(projectile.damage)
+                            self._deal_damage(projectile.owner, target, projectile.damage)
                             if not target.is_dead:
                                 target._start_knockdown()
                         self.audio.play("julian_ball_hit")
@@ -5987,7 +7253,7 @@ class BattleScene:
                         target._start_block_break()
                         self.audio.play("hit_guard")
                     else:
-                        target.receive_damage(projectile.damage)
+                        self._deal_damage(projectile.owner, target, projectile.damage)
                         if not target.is_dead:
                             if projectile.launch:
                                 target._start_launch_knockdown()
@@ -5995,8 +7261,17 @@ class BattleScene:
                                 target._start_knockdown()
                 continue
 
-            for target in self._opponents_of(projectile.owner):
-                if target is None or target is projectile.owner or target.is_dead:
+            targets = (
+                self._fighters()
+                if getattr(projectile, "hits_all_fighters", False)
+                else self._opponents_of(projectile.owner)
+            )
+            for target in targets:
+                if (
+                    target is None
+                    or (target is projectile.owner and not getattr(projectile, "hits_all_fighters", False))
+                    or target.is_dead
+                ):
                     continue
                 if not projectile.can_damage:
                     continue
@@ -6016,7 +7291,7 @@ class BattleScene:
                         target._start_block_break()
                         self.audio.play("hit_guard")
                     else:
-                        target.receive_damage(projectile.damage)
+                        self._deal_damage(projectile.owner, target, projectile.damage)
                         if not target.is_dead:
                             target._start_ice_knockdown()
                             self.audio.play("freeze")
@@ -6037,7 +7312,7 @@ class BattleScene:
                         target._start_block_break()
                         self.audio.play("hit_guard")
                     else:
-                        target.receive_damage(projectile.damage)
+                        self._deal_damage(projectile.owner, target, projectile.damage)
                         self.audio.play("hit_success")
                     projectile._start_burst()
                     break
@@ -6060,7 +7335,7 @@ class BattleScene:
                         target._start_block_break()
                         self.audio.play("hit_guard")
                     else:
-                        target.receive_damage(projectile.damage)
+                        self._deal_damage(projectile.owner, target, projectile.damage)
                         if not target.is_dead:
                             target._start_fire_knockdown(push_back=False)
                         self.audio.play_fireball()
@@ -6085,7 +7360,7 @@ class BattleScene:
                         target._start_block_break()
                         self.audio.play("hit_guard")
                     else:
-                        target.receive_damage(projectile.damage)
+                        self._deal_damage(projectile.owner, target, projectile.damage)
                         self.audio.play("hit_success")
                     segment = next(
                         rect
@@ -6109,12 +7384,20 @@ class BattleScene:
                     if not projectile.rect().colliderect(target.world_hitbox_rect()):
                         continue
                     projectile.hit_targets.add(id(target))
-                    if knocked_and_vulnerable:
-                        target.receive_damage(projectile.damage, ignore_invulnerability=True)
+                    if isinstance(projectile, WhiskeyFireTrailEffect):
+                        self._deal_damage(
+                            projectile.owner,
+                            target,
+                            projectile.damage,
+                            ignore_invulnerability=knocked_and_vulnerable,
+                            apply_whiskey_multiplier=False,
+                        )
+                    elif knocked_and_vulnerable:
+                        self._deal_damage(projectile.owner, target, projectile.damage, ignore_invulnerability=True)
                     else:
-                        target.receive_damage(projectile.damage)
+                        self._deal_damage(projectile.owner, target, projectile.damage)
                     if not target.is_dead:
-                        if projectile.owner.name == "firzen":
+                        if projectile.owner.name == "firzen" and not isinstance(projectile, WhiskeyFireTrailEffect):
                             target._start_ice_knockdown(push_back=False)
                             self.audio.play("freeze")
                         else:
@@ -6122,7 +7405,7 @@ class BattleScene:
                             self.audio.play_fire_breath()
                     continue
                 if isinstance(projectile, FireBreathProjectile):
-                    if abs(target.lane_y - projectile.owner.lane_y) > 10:
+                    if abs(target.lane_y - projectile.lane_y) > 10:
                         continue
                     if projectile.facing > 0 and target.world_hitbox_rect().centerx < projectile.x:
                         continue
@@ -6132,7 +7415,7 @@ class BattleScene:
                         continue
                     if not projectile.rect().colliderect(target.world_hitbox_rect()):
                         continue
-                    target.receive_damage(projectile.damage, ignore_invulnerability=True)
+                    self._deal_damage(projectile.owner, target, projectile.damage, ignore_invulnerability=True)
                     self.audio.play_fireball()
                     if not target.is_dead:
                         target._start_fire_knockdown()
@@ -6182,9 +7465,9 @@ class BattleScene:
                     self.audio.play("hit_guard")
                 else:
                     if knocked_and_vulnerable:
-                        target.receive_damage(projectile.damage, ignore_invulnerability=True)
+                        self._deal_damage(projectile.owner, target, projectile.damage, ignore_invulnerability=True)
                     else:
-                        target.receive_damage(projectile.damage)
+                        self._deal_damage(projectile.owner, target, projectile.damage)
                     if isinstance(projectile, ArrowProjectile):
                         self.audio.play("arrow_hit")
                     elif isinstance(projectile, AxleShotProjectile):
@@ -6238,15 +7521,31 @@ class BattleScene:
         if self.test_mode:
             label = self.small_font.render("TEST MODE - NO ENEMIES", True, TEXT_COLOR)
             surface.blit(label, label.get_rect(topright=(SCREEN_WIDTH - 20, 24)))
-        elif self.stage_mode:
-            encounter = CAMPAIGN_ENCOUNTERS[self.stage_index]
-            progress = self.small_font.render(
-                f"STAGE {self.stage_index + 1}/10 - {encounter.title.upper()} - "
-                f"WAVE {self.stage_wave_index + 1}/{len(encounter.waves)} - SCORE {self.campaign_score}",
+            mode_label = self.small_font.render(
+                "TEST MODE  |  XP / LEVEL PREVIEW",
                 True,
                 TEXT_COLOR,
             )
-            surface.blit(progress, progress.get_rect(midtop=(SCREEN_WIDTH // 2, 24)))
+            surface.blit(mode_label, mode_label.get_rect(midtop=(SCREEN_WIDTH // 2, 24)))
+        elif self.stage_mode:
+            progress_text, encounter_title, countdown_text = self._stage_run_hud_labels()
+            progress = self.small_font.render(progress_text, True, TEXT_COLOR)
+            surface.blit(progress, progress.get_rect(midtop=(SCREEN_WIDTH // 2, 18)))
+            encounter_title = self.stage_banner_subtitle_font.render(
+                encounter_title,
+                True,
+                (200, 211, 224),
+            )
+            surface.blit(
+                encounter_title,
+                encounter_title.get_rect(midtop=(SCREEN_WIDTH // 2, 49)),
+            )
+            if countdown_text is not None:
+                countdown = self.small_font.render(countdown_text, True, (255, 214, 139))
+                surface.blit(
+                    countdown,
+                    countdown.get_rect(midtop=(SCREEN_WIDTH // 2, 68)),
+                )
             for index, enemy in enumerate(enemy for enemy in self.enemies if not enemy.is_dead):
                 self._draw_hud_bar(
                     surface,
@@ -6278,6 +7577,47 @@ class BattleScene:
                 self._draw_hud_bar(surface, x, 18, panel_width, 28, enemy.health, enemy.max_health, (194, 58, 58), f"{enemy.definition['display_name']} HP")
                 self._draw_hud_bar(surface, x, 52, panel_width, 24, enemy.mana, enemy.max_mana, (72, 122, 235), "MP")
 
+    def _stage_run_hud_labels(self) -> tuple[str, str, str | None]:
+        encounter = self._endless_encounter(self.stage_index + 1)
+        progress = (
+            f"STAGE {self.stage_index + 1}  |  "
+            f"WAVE {self.stage_wave_index + 1}/{len(encounter.waves)}  |  "
+            f"SCORE {self.campaign_score}"
+        )
+        timer = getattr(self, "stage_wave_clear_timer", None)
+        countdown = (
+            f"WAVE CLEARED  -  NEXT WAVE IN {timer:.1f}s"
+            if timer is not None and timer > 0.0
+            else None
+        )
+        return progress, encounter.title, countdown
+
+    def _draw_stage_progression_hud(self, surface: pygame.Surface) -> None:
+        progress = self._stage_progress_display()
+        if progress is None:
+            return
+
+        level, xp_into_level, xp_for_next_level = progress
+        panel = pygame.Rect(20, 82, 420, 48)
+        pygame.draw.rect(surface, (18, 27, 40), panel, border_radius=6)
+        pygame.draw.rect(surface, (74, 88, 105), panel, width=1, border_radius=6)
+        label = self.small_font.render(
+            f"LEVEL {level}  |  XP {xp_into_level}/{xp_for_next_level}",
+            True,
+            TEXT_COLOR,
+        )
+        surface.blit(label, (panel.x + 8, panel.y + 3))
+        bar = pygame.Rect(panel.x + 8, panel.y + 31, panel.width - 16, 9)
+        pygame.draw.rect(surface, (52, 63, 76), bar, border_radius=3)
+        fill_width = round(bar.width * xp_into_level / xp_for_next_level)
+        if fill_width:
+            pygame.draw.rect(
+                surface,
+                (66, 213, 155),
+                pygame.Rect(bar.x, bar.y, fill_width, bar.height),
+                border_radius=3,
+            )
+
     def _draw_stage_mode_card(self, surface: pygame.Surface) -> None:
         if not self.stage_mode:
             return
@@ -6286,9 +7626,59 @@ class BattleScene:
         if not (
             show_title
             or self.stage_intermission
-            or self.stage_mode_complete
             or self.stage_mode_failed
         ):
+            return
+
+        if show_title and not self.stage_intermission and not self.stage_mode_failed:
+            encounter = self._endless_encounter(self.stage_index + 1)
+            banner = pygame.Rect(
+                (SCREEN_WIDTH - STAGE_TITLE_BANNER_WIDTH) // 2,
+                STAGE_TITLE_BANNER_TOP,
+                STAGE_TITLE_BANNER_WIDTH,
+                STAGE_TITLE_BANNER_HEIGHT,
+            )
+            panel = pygame.Surface(banner.size, pygame.SRCALPHA)
+            pygame.draw.rect(
+                panel,
+                (18, 27, 40, 224),
+                panel.get_rect(),
+                border_radius=12,
+            )
+            pygame.draw.rect(
+                panel,
+                (220, 169, 91, 230),
+                panel.get_rect(),
+                width=2,
+                border_radius=12,
+            )
+            if self.stage_card_mode == "wave":
+                wave = encounter.waves[self.stage_wave_index]
+                tag = f"WAVE {self.stage_wave_index + 1}"
+                title = f"{tag}  ·  {wave.banner}"
+                subtitle = encounter.title
+            else:
+                tag = f"STAGE {self.stage_index + 1}"
+                title = f"{tag}  ·  {encounter.title}"
+                subtitle = encounter.description
+            if encounter.is_milestone:
+                tag = f"MILESTONE  ·  {tag}"
+                title = f"{tag}  ·  {encounter.title}"
+            act = self.stage_act_font.render(encounter.act, True, (255, 214, 139))
+            heading = self.stage_banner_heading_font.render(
+                title,
+                True,
+                (241, 245, 250),
+            )
+            detail = self.stage_banner_subtitle_font.render(
+                subtitle,
+                True,
+                (195, 205, 218),
+            )
+            panel.blit(act, act.get_rect(midtop=(banner.width // 2, 8)))
+            panel.blit(heading, heading.get_rect(midtop=(banner.width // 2, 34)))
+            panel.blit(detail, detail.get_rect(midtop=(banner.width // 2, 75)))
+            surface.blit(panel, banner.topleft)
             return
 
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
@@ -6308,7 +7698,7 @@ class BattleScene:
                 max(1, self.fighter.max_mana // 4),
             )
             act = self.stage_act_font.render(
-                f"SUPPLY BREAK - AFTER STAGE {STAGE_ROMAN_NUMERALS[self.stage_index]}",
+                f"SUPPLY BREAK - AFTER STAGE {self.stage_index + 1}",
                 True,
                 (255, 214, 139),
             )
@@ -6341,23 +7731,14 @@ class BattleScene:
             surface.blit(prompt, prompt.get_rect(center=(card.centerx, 660)))
             return
 
-        if self.stage_mode_complete:
-            act_text = "CAMPAIGN CLEAR"
-            heading_text = "CAMPAIGN COMPLETE"
-            detail_text = (
-                f"SCORE {self.campaign_score}  -  FINAL HP "
-                f"{self.fighter.health}/{self.fighter.max_health}"
-            )
-            secondary_text = "All ten stages cleared."
-            prompt_text = f"Press {KEY_BINDINGS.label('attack')} to return to the menu"
-        elif self.stage_mode_failed:
+        if self.stage_mode_failed:
             act_text = "RUN ENDED"
             heading_text = "STAGE FAILED"
-            detail_text = f"STAGE {STAGE_ROMAN_NUMERALS[self.stage_index]}"
-            secondary_text = CAMPAIGN_ENCOUNTERS[self.stage_index].title
+            detail_text = f"STAGE {self.stage_index + 1}"
+            secondary_text = self._endless_encounter(self.stage_index + 1).title
             prompt_text = f"Press {KEY_BINDINGS.label('attack')} to return to the menu"
         elif self.stage_card_mode == "wave":
-            encounter = CAMPAIGN_ENCOUNTERS[self.stage_index]
+            encounter = self._endless_encounter(self.stage_index + 1)
             wave = encounter.waves[self.stage_wave_index]
             act_text = encounter.act
             heading_text = "REINFORCEMENTS"
@@ -6365,9 +7746,9 @@ class BattleScene:
             secondary_text = wave.banner
             prompt_text = ""
         else:
-            encounter = CAMPAIGN_ENCOUNTERS[self.stage_index]
+            encounter = self._endless_encounter(self.stage_index + 1)
             act_text = encounter.act
-            heading_text = f"STAGE {STAGE_ROMAN_NUMERALS[self.stage_index]}"
+            heading_text = f"STAGE {self.stage_index + 1}"
             detail_text = encounter.title
             secondary_text = encounter.description
             prompt_text = "Clear all waves to continue."
@@ -6384,6 +7765,41 @@ class BattleScene:
             prompt = self.small_font.render(prompt_text, True, (170, 183, 198))
             surface.blit(prompt, prompt.get_rect(center=(card.centerx, 650)))
 
+    def _draw_stage_milestone_reward(self, surface: pygame.Surface) -> None:
+        reward_xp = getattr(self, "stage_milestone_reward_xp", 0)
+        if (
+            reward_xp <= 0
+            or getattr(self, "stage_milestone_reward_timer", 0.0) <= 0.0
+        ):
+            return
+        banner = pygame.Rect(
+            (SCREEN_WIDTH - 620) // 2,
+            STAGE_TITLE_BANNER_TOP + STAGE_TITLE_BANNER_HEIGHT + 12,
+            620,
+            52,
+        )
+        panel = pygame.Surface(banner.size, pygame.SRCALPHA)
+        pygame.draw.rect(
+            panel,
+            (18, 27, 40, 232),
+            panel.get_rect(),
+            border_radius=10,
+        )
+        pygame.draw.rect(
+            panel,
+            (91, 207, 155, 235),
+            panel.get_rect(),
+            width=2,
+            border_radius=10,
+        )
+        label = self.stage_subtitle_font.render(
+            f"STAGE {self.stage_milestone_reward_stage} CLEAR  ·  +{reward_xp} XP",
+            True,
+            (198, 255, 222),
+        )
+        panel.blit(label, label.get_rect(center=panel.get_rect().center))
+        surface.blit(panel, banner.topleft)
+
     def _draw_marker(self, surface: pygame.Surface, fighter: Fighter, camera_x: float, text: str) -> None:
         marker = self.small_font.render(text, True, (255, 240, 120))
         rect = marker.get_rect(midtop=(fighter.world_hitbox_rect().centerx - int(camera_x), fighter.world_hitbox_rect().bottom + 6))
@@ -6392,8 +7808,13 @@ class BattleScene:
 
     def update(self, dt: float, inputs: FighterInput) -> None:
         if self.paused:
+            if pygame.display.get_init():
+                self._update_pause_card_hover(dt, pygame.mouse.get_pos())
             return
-        if self.stage_mode and (self.stage_mode_complete or self.stage_mode_failed):
+        self._pause_hover_candidate_key = None
+        self._pause_hover_dwell = 0.0
+        self._pause_card_hover_progress = {}
+        if self.stage_mode and self.stage_mode_failed:
             if inputs.attack_just_pressed:
                 self.return_to_menu_requested = True
             return
@@ -6405,9 +7826,36 @@ class BattleScene:
             if inputs.attack_just_pressed:
                 self._confirm_recovery_choice()
             return
+        if self.stage_mode:
+            self._ensure_stage_level_up_slot()
+            if self.stage_level_up_slot.active:
+                self._update_stage_level_up_slot(dt, inputs)
+                for fighter in self._fighters():
+                    fighter.animation_player.update(dt, facing=fighter.facing)
+                return
+        elif self.test_mode:
+            self._ensure_stage_level_up_slot()
+            if (
+                self.stage_level_up_slot.active
+                and not self.stage_level_up_slot.visual_only
+            ):
+                self._update_stage_level_up_slot(dt, inputs)
+                for fighter in self._fighters():
+                    fighter.animation_player.update(dt, facing=fighter.facing)
+                return
+            if self._update_test_level_up_slot(dt, inputs):
+                for fighter in self._fighters():
+                    fighter.animation_player.update(dt, facing=fighter.facing)
+                return
+        if self.stage_mode:
+            self._age_stage_enemy_corpses(dt)
         if self.stage_mode and self.stage_card_timer > 0.0:
             self.stage_card_timer = max(0.0, self.stage_card_timer - dt)
-            return
+        if getattr(self, "stage_milestone_reward_timer", 0.0) > 0.0:
+            self.stage_milestone_reward_timer = max(
+                0.0,
+                self.stage_milestone_reward_timer - dt,
+            )
 
         self.consumable_spawn_timer -= dt
         while self.consumable_spawn_timer <= 0.0:
@@ -6417,6 +7865,8 @@ class BattleScene:
             self._spawn_consumable(random.choice(self.spawnable_items))
         if inputs.spawn_heavy_item_just_pressed:
             self._spawn_consumable(HEAVY_BOX_ITEM_ID)
+        if getattr(self, "test_mode", False) and inputs.test_spawn_xp_orb_just_pressed:
+            self._spawn_test_xp_orb()
         fighter_throw_was_active = self.fighter.item_throw_animation is not None
         fighter_throw_handled = self._handle_held_item_throw_input(self.fighter, inputs)
         if fighter_throw_was_active or fighter_throw_handled:
@@ -6509,8 +7959,7 @@ class BattleScene:
         for fighter in self._fighters():
             self._spawn_character_freeze_break_fragments(fighter)
         for fighter in self._fighters():
-            if fighter.luis_transform_pending:
-                fighter.transform_to(FighterConfig("luis_liberated", CHARACTERS["luis_liberated"]))
+            self._transform_luis_if_pending(fighter)
         for fighter in self._fighters():
             self._finish_held_item_throw(fighter)
         for fighter, previously_drinking in was_drinking.items():
@@ -6520,11 +7969,15 @@ class BattleScene:
                 if item_id is not None:
                     if item_id == "consumables/milk":
                         fighter.health = min(fighter.max_health, fighter.health + 5)
+                    elif item_id == "consumables/whiskey":
+                        self._start_whiskey_effect(fighter)
                     self.start_item_overlay(fighter, item_id, "drink", active_state="drink")
 
         for fighter in self._fighters():
             self._apply_henry_flute_attack(fighter)
             self._spawn_freeze_ball(fighter)
+            self._spawn_reece_buzz_ball(fighter)
+            self._spawn_reece_biggie_ball(fighter)
             self._spawn_sorcerer_freeze_ball(fighter)
             self._spawn_freeze_columns(fighter)
             self._spawn_freeze_tornado(fighter)
@@ -6558,6 +8011,7 @@ class BattleScene:
             self._spawn_firzen_vert_attack_2(fighter)
             self._spawn_woody_shots(fighter)
             self._spawn_firen_fire_breath(fighter)
+            self._spawn_reece_fire_breath(fighter)
             self._spawn_henry_wind(fighter)
             self._spawn_luis_wind(fighter)
             self._spawn_luis_liberated_wind(fighter)
@@ -6570,6 +8024,7 @@ class BattleScene:
         for effect in tuple(self.consumable_break_effects):
             if effect.update(dt):
                 self.consumable_break_effects.remove(effect)
+        self._update_whiskey_effects(dt)
         for effect in tuple(self.rudolf_clone_smoke_effects):
             if effect.update(dt):
                 self.rudolf_clone_smoke_effects.remove(effect)
@@ -6590,6 +8045,8 @@ class BattleScene:
             elif item_event == "break":
                 if item.item_id in HEAVY_ITEM_IDS:
                     self._break_heavy_box(item)
+                elif item.item_id == "consumables/whiskey":
+                    self._break_whiskey_item(item, spawn_fire=True)
                 else:
                     self.consumable_items.remove(item)
                     self.audio.play(
@@ -6631,12 +8088,401 @@ class BattleScene:
         self._remove_finished_rudolf_clones()
         self._handle_audio(dt)
         if self.stage_mode:
+            self._dispatch_stage_enemy_spawns()
+            self._register_stage_enemy_corpses()
+            self._update_stage_xp_orbs(dt)
             if self.fighter.state == "dead":
                 self.stage_mode_failed = True
-            elif self.fighter.state != "die" and self.enemies and all(
-                enemy.state == "dead" for enemy in self.enemies
-            ):
-                self._advance_stage_mode()
+            else:
+                self._ensure_stage_level_up_slot()
+                if (
+                    not getattr(self, "_stage_enemy_spawn_queue", [])
+                    and self.stage_wave_enemies
+                    and all(enemy.is_dead for enemy in self.stage_wave_enemies)
+                ):
+                    if self.stage_wave_clear_timer is None:
+                        self.stage_wave_clear_timer = STAGE_WAVE_GRACE_DURATION
+                    else:
+                        self.stage_wave_clear_timer = max(0.0, self.stage_wave_clear_timer - dt)
+                        if self.stage_wave_clear_timer <= 1e-6:
+                            self.stage_wave_clear_timer = 0.0
+                            self._advance_stage_mode()
+                else:
+                    self.stage_wave_clear_timer = None
+        elif getattr(self, "test_mode", False):
+            self._update_stage_xp_orbs(dt)
+            self._ensure_stage_level_up_slot()
+
+    def _pause_card_fan_layout(
+        self,
+    ) -> tuple[
+        list[tuple[int, StageCard, int, float, int, pygame.Surface, pygame.Rect]],
+        int,
+        int,
+    ]:
+        ranks = getattr(self, "stage_card_ranks", {})
+        owned_cards = [
+            (card, ranks[card.key])
+            for card in STAGE_CARD_CATALOG
+            if ranks.get(card.key, 0) > 0
+        ]
+        count = len(owned_cards)
+        step = min(90.0, 660.0 / max(1, count - 1))
+        middle = (count - 1) / 2
+        fan_center_x = pygame.Rect(38, 148, 914, 790).centerx
+        baseline_y = pygame.Rect(38, 148, 914, 790).bottom - 42
+        specs: list[
+            tuple[int, StageCard, int, float, int, pygame.Surface, pygame.Rect]
+        ] = []
+        for index, (card, rank) in enumerate(owned_cards):
+            angle_step = min(9.0, 44.0 / max(1, count - 1))
+            angle = (index - middle) * angle_step
+            center_x = round(fan_center_x + (index - middle) * step)
+            image = _pause_card_surface(card.key, rank, *PAUSE_CARD_SIZE)
+            rotated = pygame.transform.rotate(image, angle)
+            rect = rotated.get_rect(midbottom=(center_x, baseline_y))
+            specs.append((index, card, rank, angle, center_x, rotated, rect))
+        return specs, fan_center_x, baseline_y
+
+    def _pause_card_render_state(
+        self,
+        spec: tuple[int, StageCard, int, float, int, pygame.Surface, pygame.Rect],
+        progress: float,
+        baseline_y: int,
+    ) -> tuple[pygame.Surface, pygame.Rect, float]:
+        _, card, rank, angle, center_x, base_image, base_rect = spec
+        progress = max(0.0, min(1.0, progress))
+        eased = progress * progress * (3.0 - 2.0 * progress)
+        if eased <= 0.0:
+            return base_image, base_rect, eased
+        width = round(
+            PAUSE_CARD_SIZE[0]
+            + (PAUSE_CARD_HOVER_SIZE[0] - PAUSE_CARD_SIZE[0]) * eased
+        )
+        height = round(
+            PAUSE_CARD_SIZE[1]
+            + (PAUSE_CARD_HOVER_SIZE[1] - PAUSE_CARD_SIZE[1]) * eased
+        )
+        scaled = pygame.transform.smoothscale(
+            _pause_card_surface(card.key, rank, *PAUSE_CARD_SIZE),
+            (width, height),
+        )
+        image = pygame.transform.rotate(scaled, angle * (1.0 - eased))
+        rect = image.get_rect(
+            midbottom=(
+                center_x,
+                baseline_y - round(48 * eased),
+            )
+        )
+        return image, rect, eased
+
+    def _pause_card_mouse_target(
+        self,
+        mouse_pos: tuple[int, int],
+        specs: list[
+            tuple[int, StageCard, int, float, int, pygame.Surface, pygame.Rect]
+        ],
+        baseline_y: int,
+    ) -> str | None:
+        progress_by_key = getattr(self, "_pause_card_hover_progress", {})
+        base_candidates = [
+            spec for spec in specs if spec[6].collidepoint(mouse_pos)
+        ]
+        if base_candidates:
+            nearest = min(
+                base_candidates,
+                key=lambda spec: (
+                    (mouse_pos[0] - spec[4]) ** 2
+                    + (mouse_pos[1] - spec[6].centery) ** 2,
+                    -spec[0],
+                ),
+            )
+            return nearest[1].key
+
+        animated = [
+            spec
+            for spec in specs
+            if progress_by_key.get(spec[1].key, 0.0) > 0.0
+        ]
+        if animated:
+            foreground = max(
+                animated,
+                key=lambda spec: progress_by_key.get(spec[1].key, 0.0),
+            )
+            _, rect, _ = self._pause_card_render_state(
+                foreground,
+                progress_by_key.get(foreground[1].key, 0.0),
+                baseline_y,
+            )
+            if rect.collidepoint(mouse_pos):
+                return foreground[1].key
+            for spec in reversed(animated):
+                if spec is foreground:
+                    continue
+                _, rect, _ = self._pause_card_render_state(
+                    spec,
+                    progress_by_key.get(spec[1].key, 0.0),
+                    baseline_y,
+                )
+                if rect.collidepoint(mouse_pos):
+                    return spec[1].key
+        return None
+
+    def _update_pause_card_hover(
+        self,
+        dt: float,
+        mouse_pos: tuple[int, int],
+    ) -> None:
+        specs, _, baseline_y = self._pause_card_fan_layout()
+        hovered_key = self._pause_card_mouse_target(mouse_pos, specs, baseline_y)
+        candidate = getattr(self, "_pause_hover_candidate_key", None)
+        if hovered_key != candidate:
+            self._pause_hover_candidate_key = hovered_key
+            self._pause_hover_dwell = 0.0
+        elif hovered_key is not None:
+            self._pause_hover_dwell += max(0.0, dt)
+        ready_key = (
+            hovered_key
+            if hovered_key is not None
+            and self._pause_hover_dwell >= PAUSE_CARD_HOVER_DELAY
+            else None
+        )
+        owned_keys = {spec[1].key for spec in specs}
+        progress_by_key = getattr(self, "_pause_card_hover_progress", {})
+        for key in tuple(progress_by_key):
+            if key not in owned_keys:
+                del progress_by_key[key]
+        for key in owned_keys:
+            current = progress_by_key.get(key, 0.0)
+            if key == ready_key:
+                current = min(
+                    1.0,
+                    current + max(0.0, dt) / PAUSE_CARD_HOVER_IN_DURATION,
+                )
+            else:
+                current = max(
+                    0.0,
+                    current - max(0.0, dt) / PAUSE_CARD_HOVER_OUT_DURATION,
+                )
+            progress_by_key[key] = current
+        self._pause_card_hover_progress = progress_by_key
+
+    def _draw_pause_card_fan(
+        self,
+        surface: pygame.Surface,
+        mouse_pos: tuple[int, int],
+    ) -> str | None:
+        left_panel = pygame.Rect(38, 148, 914, 790)
+        pygame.draw.rect(surface, (13, 17, 28), left_panel, border_radius=18)
+        pygame.draw.rect(surface, (108, 121, 145), left_panel, 2, border_radius=18)
+        heading = self.stage_subtitle_font.render(
+            "COLLECTED CARDS",
+            True,
+            (255, 222, 154),
+        )
+        surface.blit(
+            heading,
+            heading.get_rect(midtop=(left_panel.centerx, left_panel.y + 24)),
+        )
+        specs, _, baseline_y = self._pause_card_fan_layout()
+        if not specs:
+            empty = self.small_font.render(
+                "No cards collected yet",
+                True,
+                (180, 191, 208),
+            )
+            surface.blit(
+                empty,
+                empty.get_rect(center=(left_panel.centerx, left_panel.centery)),
+            )
+            return None
+
+        hovered_key = self._pause_card_mouse_target(
+            mouse_pos,
+            specs,
+            baseline_y,
+        )
+        progress_by_key = getattr(self, "_pause_card_hover_progress", {})
+        foreground = max(
+            (
+                spec
+                for spec in specs
+                if progress_by_key.get(spec[1].key, 0.0) > 0.0
+            ),
+            key=lambda spec: progress_by_key.get(spec[1].key, 0.0),
+            default=None,
+        )
+        for spec in specs:
+            if spec is foreground:
+                continue
+            progress = progress_by_key.get(spec[1].key, 0.0)
+            image, rect, _ = self._pause_card_render_state(
+                spec,
+                progress,
+                baseline_y,
+            )
+            if progress > 0.0:
+                pygame.draw.rect(
+                    surface,
+                    (3, 5, 10),
+                    rect.inflate(10, 10).move(0, 6),
+                    border_radius=10,
+                )
+            surface.blit(image, rect)
+
+        if foreground is not None:
+            progress = progress_by_key.get(foreground[1].key, 0.0)
+            image, rect, eased = self._pause_card_render_state(
+                foreground,
+                progress,
+                baseline_y,
+            )
+            pygame.draw.rect(
+                surface,
+                (3, 5, 10),
+                rect.inflate(14, 14).move(0, 8),
+                border_radius=12,
+            )
+            surface.blit(image, rect)
+            if eased > 0.78:
+                pygame.draw.rect(
+                    surface,
+                    (255, 218, 125),
+                    rect.inflate(6, 6),
+                    3,
+                    border_radius=8,
+                )
+
+        return hovered_key
+
+    def _draw_pause_stats_panel(self, surface: pygame.Surface) -> None:
+        panel = pygame.Rect(978, 148, 904, 790)
+        pygame.draw.rect(surface, (13, 17, 28), panel, border_radius=18)
+        pygame.draw.rect(surface, (108, 121, 145), panel, 2, border_radius=18)
+        heading = self.stage_subtitle_font.render(
+            "CHARACTER STATS",
+            True,
+            (255, 222, 154),
+        )
+        surface.blit(heading, heading.get_rect(midtop=(panel.centerx, panel.y + 24)))
+
+        fighter = self.fighter
+        character_name = fighter.definition.get("display_name", "Player")
+        name = self.pause_font.render(character_name, True, TEXT_COLOR)
+        surface.blit(name, name.get_rect(midtop=(panel.centerx, panel.y + 68)))
+
+        bar_x = panel.x + 54
+        bar_width = panel.width - 108
+        self._draw_hud_bar(
+            surface,
+            bar_x,
+            panel.y + 146,
+            bar_width,
+            34,
+            fighter.health,
+            fighter.max_health,
+            (194, 58, 58),
+            "HP",
+        )
+        self._draw_hud_bar(
+            surface,
+            bar_x,
+            panel.y + 194,
+            bar_width,
+            30,
+            fighter.mana,
+            fighter.max_mana,
+            (72, 122, 235),
+            "MP",
+        )
+
+        effects = stage_card_effects(getattr(self, "stage_card_ranks", {}))
+        stats = (
+            ("WALK SPEED", f"{fighter.movement.get('walk_speed', 0):.0f} px/s"),
+            ("RUN SPEED", f"{fighter.movement.get('run_speed', 0):.0f} px/s"),
+            ("TOUCH DAMAGE", str(getattr(fighter, "touch_damage", 0))),
+            ("DAMAGE BONUS", f"+{(effects['damage_multiplier'] - 1) * 100:.0f}%"),
+            ("DAMAGE REDUCTION", f"{effects['damage_reduction'] * 100:.0f}%"),
+            ("MAX HP BONUS", f"+{effects['max_health_bonus']:.0f}"),
+            ("XP PICKUP RANGE", f"+{(effects['xp_range_multiplier'] - 1) * 100:.0f}%"),
+            ("XP GAIN", f"+{(effects['xp_gain_multiplier'] - 1) * 100:.0f}%"),
+        )
+        column_width = (panel.width - 120) // 2
+        for index, (label, value) in enumerate(stats):
+            column = index % 2
+            row = index // 2
+            x = panel.x + 54 + column * (column_width + 12)
+            y = panel.y + 278 + row * 72
+            label_surface = self.small_font.render(
+                label,
+                True,
+                (167, 181, 201),
+            )
+            value_surface = self.stage_subtitle_font.render(
+                value,
+                True,
+                (239, 242, 248),
+            )
+            surface.blit(label_surface, (x, y))
+            surface.blit(value_surface, (x, y + 27))
+
+        progression = getattr(self, "stage_progression", None)
+        if progression is not None:
+            progress_y = panel.y + 590
+            progress_text = self.small_font.render(
+                f"LEVEL {progression.level}    "
+                f"XP {progression.xp_into_level}/{progression.xp_for_next_level}",
+                True,
+                (255, 222, 154),
+            )
+            surface.blit(
+                progress_text,
+                progress_text.get_rect(midtop=(panel.centerx, progress_y)),
+            )
+            bar = pygame.Rect(panel.x + 54, progress_y + 36, bar_width, 18)
+            pygame.draw.rect(surface, (35, 40, 52), bar, border_radius=8)
+            fill = round(
+                bar.width
+                * progression.xp_into_level
+                / max(1, progression.xp_for_next_level)
+            )
+            if fill:
+                pygame.draw.rect(
+                    surface,
+                    (53, 199, 143),
+                    (bar.x, bar.y, fill, bar.height),
+                    border_radius=8,
+                )
+
+    def _draw_pause_menu(self, surface: pygame.Surface) -> None:
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((4, 7, 14, 224))
+        surface.blit(overlay, (0, 0))
+        paused = self.pause_font.render("PAUSED", True, TEXT_COLOR)
+        surface.blit(
+            paused,
+            paused.get_rect(center=(SCREEN_WIDTH // 2, 66)),
+        )
+        self._draw_pause_card_fan(surface, pygame.mouse.get_pos())
+        self._draw_pause_stats_panel(surface)
+        resume = self.small_font.render(
+            f"{KEY_BINDINGS.label('back_pause')}: Resume",
+            True,
+            TEXT_COLOR,
+        )
+        menu = self.small_font.render(
+            f"{KEY_BINDINGS.label('return_to_menu')}: Main Menu",
+            True,
+            TEXT_COLOR,
+        )
+        surface.blit(
+            resume,
+            resume.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 74)),
+        )
+        surface.blit(
+            menu,
+            menu.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 42)),
+        )
 
     def draw(self, surface: pygame.Surface) -> None:
         focus_x = self._camera_focus_x()
@@ -6659,29 +8505,20 @@ class BattleScene:
             self._draw_dark_bat_weapon_phase(surface, fighter, camera_x)
             self._draw_held_item(surface, fighter, camera_x)
             self._draw_item_overlay(surface, fighter, camera_x)
+            self._draw_whiskey_status(surface, fighter, camera_x)
             self._draw_speech_bubble(surface, fighter, camera_x)
+        if self.stage_mode or getattr(self, "test_mode", False):
+            for orb in self.stage_xp_orbs:
+                orb.draw(surface, camera_x)
         for projectile in self.projectiles:
             if isinstance(projectile, (AxleShotProjectile, FireExplosionEffect, JulianExplosionEffect)):
                 projectile.draw(surface, camera_x)
 
         self._draw_marker(surface, self.fighter, camera_x, "P1")
         self._draw_hud(surface)
+        self._draw_stage_progression_hud(surface)
         self._draw_stage_mode_card(surface)
+        self._draw_stage_milestone_reward(surface)
+        self._draw_stage_level_up_slot(surface)
         if self.paused:
-            overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-            overlay.fill((0, 0, 0, 150))
-            surface.blit(overlay, (0, 0))
-            paused = self.pause_font.render("Paused", True, TEXT_COLOR)
-            resume = self.small_font.render(
-                f"{KEY_BINDINGS.label('back_pause')}: Resume",
-                True,
-                TEXT_COLOR,
-            )
-            menu = self.small_font.render(
-                f"{KEY_BINDINGS.label('return_to_menu')}: Main Menu",
-                True,
-                TEXT_COLOR,
-            )
-            surface.blit(paused, paused.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 40)))
-            surface.blit(resume, resume.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 10)))
-            surface.blit(menu, menu.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 40)))
+            self._draw_pause_menu(surface)

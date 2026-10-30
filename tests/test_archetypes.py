@@ -5,7 +5,7 @@ from game.data.archetypes import (
     CHARACTER_ARCHETYPES,
     resolve_character_profile,
 )
-from game.data.characters import CHARACTERS
+from game.data.characters import CHARACTER_CATEGORIES, CHARACTERS
 
 
 class ArchetypeProfileTests(unittest.TestCase):
@@ -29,6 +29,7 @@ class ArchetypeProfileTests(unittest.TestCase):
             "julian": (15, 120),
             "template": (10, 20),
             "dummy": (9999, 20),
+            "reece": (10, 100),
         }
         for character_key, values in expected.items():
             with self.subTest(character=character_key):
@@ -37,6 +38,14 @@ class ArchetypeProfileTests(unittest.TestCase):
                     CHARACTERS[character_key],
                 )
                 self.assertEqual((stats["max_health"], stats["max_mana"]), values)
+
+    def test_reece_is_registered_with_loadable_animation_frames(self) -> None:
+        self.assertEqual(CHARACTER_CATEGORIES["reece"], "Brawlers")
+        self.assertTrue(CHARACTERS["reece"]["animations"]["jump_attack"]["files"])
+        for animation, definition in CHARACTERS["reece"]["animations"].items():
+            with self.subTest(animation=animation):
+                self.assertTrue(definition["files"])
+                self.assertTrue(all(path.is_file() for path in definition["files"]))
 
     def test_character_overrides_and_movement_are_preserved(self) -> None:
         archetype, stats, movement = resolve_character_profile(

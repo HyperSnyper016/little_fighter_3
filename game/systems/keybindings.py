@@ -37,6 +37,8 @@ KEYBINDING_ROWS = (
     ("Spawn Random Item", "spawn_item", True),
     ("Spawn Heavy Box", "spawn_heavy_box", True),
     ("Defeat Enemy", "defeat_enemy", True),
+    ("Test Level-Up Slot", "test_level_up", True),
+    ("Spawn XP Orb", "test_spawn_xp_orb", True),
 )
 
 
@@ -70,6 +72,8 @@ class KeyBindings:
         "spawn_item": (pygame.K_p,),
         "spawn_heavy_box": (pygame.K_o,),
         "defeat_enemy": (pygame.K_F10,),
+        "test_level_up": (pygame.K_F8,),
+        "test_spawn_xp_orb": (pygame.K_F7,),
     }
 
     def __init__(self) -> None:
