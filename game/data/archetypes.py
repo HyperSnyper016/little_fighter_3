@@ -149,6 +149,7 @@ CHARACTER_ARCHETYPES = {
     "firen": "mystic",
     "firzen": "mystic",
     "freeze": "mystic",
+    "ashley": "mystic",
     "henry": "ranger",
     "hunter": "ranger",
     "jack": "balanced",

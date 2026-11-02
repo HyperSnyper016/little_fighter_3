@@ -47,6 +47,14 @@ class ArchetypeProfileTests(unittest.TestCase):
                 self.assertTrue(definition["files"])
                 self.assertTrue(all(path.is_file() for path in definition["files"]))
 
+    def test_ashley_is_registered_with_loadable_animation_frames(self) -> None:
+        self.assertEqual(CHARACTER_CATEGORIES["ashley"], "Elementals")
+        self.assertEqual(CHARACTER_ARCHETYPES["ashley"], "mystic")
+        for animation, definition in CHARACTERS["ashley"]["animations"].items():
+            with self.subTest(animation=animation):
+                self.assertTrue(definition["files"])
+                self.assertTrue(all(path.is_file() for path in definition["files"]))
+
     def test_character_overrides_and_movement_are_preserved(self) -> None:
         archetype, stats, movement = resolve_character_profile(
             "davis",

@@ -174,6 +174,7 @@ ENDLESS_STAGE_MILESTONES = (
             "reece",
             "rudolf",
             "woody",
+            "ashley",
         ),
         14,
     ),
@@ -209,6 +210,7 @@ ENDLESS_ENEMY_THREAT = {
     "reece": 1.5,
     "rudolf": 1.5,
     "woody": 1.5,
+    "ashley": 1.5,
 }
 ENDLESS_RANGED_ENEMIES = frozenset(
     {"hunter", "sorcerer", "axle", "henry", "dark_bat", "firen", "freeze", "deep", "firzen"}

@@ -298,3 +298,14 @@ Append each new release at the bottom with its version and player-facing changes
 - Reduce a card's relative slot-machine offer weight by 5% per rank, and improve pause-menu card selection and previews.
 ### Fixed
 - Reapply Stage Mode card modifiers after Luis transforms.
+
+## v0.25.0 - Add Ashley and expand Stage Mode progression
+### Added
+- Add Ashley as a playable mystic with blast, missile, magical barrier, and mana-orb special attacks.
+- Add Stage Mode XP orbs, progressive leveling, ranked perk-and-curse card offers, and level-up rewards.
+- Add Bandit Horde, Hardened Gang, and Julian's Skull curses, plus six ranked perks.
+- Add XP and level-up slot previews to Test Mode.
+- Add bonus XP for clearing every fifth Stage Mode stage.
+### Changed
+- Expand the Stage Mode HUD with wave, level, XP, and transition details.
+- Organize card artwork into perk and curse categories, with animated curse-card glows.

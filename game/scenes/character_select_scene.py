@@ -589,6 +589,15 @@ class CharacterSelectScene:
         if fallback_profiles:
             return fallback_profiles[0]
 
+        idle_files = (
+            CHARACTERS.get(directory.name.lower(), {})
+            .get("animations", {})
+            .get("idle", {})
+            .get("files", [])
+        )
+        if idle_files and Path(idle_files[0]).is_file():
+            return Path(idle_files[0])
+
         fallback_frames = sorted(
             path
             for path in directory.iterdir()

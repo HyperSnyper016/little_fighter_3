@@ -131,6 +131,7 @@ class EndlessStageDataTests(unittest.TestCase):
             self.assertGreater(milestone.growth_interval, 0)
             for character in milestone.roster:
                 self.assertIn(character, CHARACTERS)
+        self.assertIn("ashley", ENDLESS_STAGE_MILESTONES[-1].roster)
 
         self.assertEqual(len(get_endless_encounter(ENDLESS_REINFORCEMENT_INTERVAL).waves), 2)
         self.assertEqual(ENDLESS_SUPPLY_BREAK_INTERVAL, 3)

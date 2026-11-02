@@ -215,6 +215,7 @@ class Fighter:
         self.max_mana = int(self.stats.get("max_mana", 100))
         self.mana = self.max_mana
         self.mana_regen_timer = 0.0
+        self.mana_regen_boost_timer = 0.0
         self.touch_damage = int(self.stats.get("touch_damage", 1))
         hitbox_width, hitbox_height = self.stats.get("hitbox", (92, 160))
         self.hitbox_size = (int(hitbox_width), int(hitbox_height))
@@ -251,6 +252,12 @@ class Fighter:
         self.sorcerer_freeze_ball_pending = False
         self.sorcerer_healed_target_sfx_pending = False
         self.sorcerer_heal_orb_pending = False
+        self.ashley_blast_pending = False
+        self.ashley_missiles_pending = False
+        self.ashley_barrier_pending = False
+        self.ashley_barrier_start_pending = False
+        self.ashley_mana_orb_pending = False
+        self.ashley_sparkles_pending = False
         self.firzen_char_blast_pending = False
         self.woody_shots_pending: list[int] = []
         self.woody_punches_pending: list[tuple[str, int]] = []
@@ -542,6 +549,7 @@ class Fighter:
         self.attack_started = False
         self.attack_projectile_fired = False
         self.jump_attack_active = False
+        self.ashley_sparkles_pending = False
         self.is_defending = False
         self.special_attack_lock = None
         self.special_move_followup_state = None
@@ -596,6 +604,13 @@ class Fighter:
         self.attack_projectile_fired = False
         self.pending_projectile = None
         self.hunter_projectile_style = "basic"
+        if self.name == "ashley":
+            self.ashley_blast_pending = False
+            self.ashley_missiles_pending = False
+            self.ashley_barrier_pending = False
+            self.ashley_barrier_start_pending = False
+            self.ashley_mana_orb_pending = False
+            self.ashley_sparkles_pending = False
         if self.name == "reece" and state == "sp_move_attack_1":
             self.reece_buzz_ball_pending = False
         if self.name == "reece" and state == "sp_vert_attack_2":
@@ -1081,6 +1096,9 @@ class Fighter:
         self.just_knocked_down = True
         self.facing_lock_until_get_up = True
 
+    def grant_mana_regen_boost(self, duration: float = 3.0) -> None:
+        self.mana_regen_boost_timer = max(self.mana_regen_boost_timer, duration)
+
     def _start_henry_float(self) -> None:
         self.state = "henry_float"
         self.henry_float_timer = HENRY_FLOAT_DURATION
@@ -1271,6 +1289,8 @@ class Fighter:
 
         self.state = "jump_throw"
         self.jump_attack_active = True
+        if self.name == "ashley":
+            self.ashley_sparkles_pending = False
         self.attack_timer = self.combat["attack_duration"]
         self.has_applied_attack_damage = False
         self.attack_started = True
@@ -1485,13 +1505,22 @@ class Fighter:
             if self.speech_timer == 0.0:
                 self.speech_text = None
 
+        boosted_dt = min(dt, self.mana_regen_boost_timer)
+        normal_dt = dt - boosted_dt
         if self.mana < self.max_mana:
-            self.mana_regen_timer += dt
-            while self.mana_regen_timer >= 0.5 and self.mana < self.max_mana:
-                self.mana_regen_timer -= 0.5
-                self.mana += 1
+            if boosted_dt > 0.0:
+                self.mana_regen_timer += boosted_dt
+                while self.mana_regen_timer >= 0.25 and self.mana < self.max_mana:
+                    self.mana_regen_timer -= 0.25
+                    self.mana += 1
+            if self.mana < self.max_mana:
+                self.mana_regen_timer += normal_dt
+                while self.mana_regen_timer >= 0.5 and self.mana < self.max_mana:
+                    self.mana_regen_timer -= 0.5
+                    self.mana += 1
         else:
             self.mana_regen_timer = 0.0
+        self.mana_regen_boost_timer = max(0.0, self.mana_regen_boost_timer - dt)
 
         if self.attack_timer == 0 and self.state in COMBAT_ATTACK_STATES and self.animation_player.finished:
             if self.state == "sp_move_attack_1" and move_special_1_chord and self.special_attack_lock == "sp_move_attack_1":
@@ -2065,6 +2094,42 @@ class Fighter:
                 self.john_follow_disk_pending = True
             if self.state == "sp_vert_attack_2" and current_animation_name == "sp_vert_attack_2" and 3 in crossed_frames:
                 self.john_heal_orb_pending = True
+        if self.name == "ashley" and previous_animation_name == self.animation_player.current_name:
+            current_animation_name = self.animation_player.current_name
+            frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])
+            crossed_frames = self._crossed_frame_indices(previous_frame_index, self.animation_player.frame_index, frame_count)
+            if self.state == "basic_attack":
+                sparkle_frame = {
+                    "attack_1": 2,
+                    "attack_2": 2,
+                    "attack_3": 1,
+                }.get(current_animation_name)
+                if sparkle_frame in crossed_frames:
+                    self.ashley_sparkles_pending = True
+            elif (
+                self.state == "sprint_punch"
+                and current_animation_name in {"sprint_basic_attack", "sprint_punch"}
+                and 1 in crossed_frames
+            ):
+                self.ashley_sparkles_pending = True
+            elif self.state == "jump_throw" and self.jump_attack_active:
+                sparkle_frame = {
+                    "jump_attack": 1,
+                    "second_jump_basic_attack": 2,
+                }.get(current_animation_name)
+                if sparkle_frame in crossed_frames:
+                    self.ashley_sparkles_pending = True
+            if self.state == "sp_move_attack_1" and current_animation_name == "sp_move_attack_1" and 2 in crossed_frames:
+                self.ashley_blast_pending = True
+            if self.state == "sp_move_attack_2" and current_animation_name == "sp_move_attack_2" and 2 in crossed_frames:
+                self.ashley_missiles_pending = True
+            if self.state == "sp_vert_attack_1" and current_animation_name == "sp_vert_attack_1":
+                if 5 in crossed_frames:
+                    self.ashley_barrier_pending = True
+                if 8 in crossed_frames:
+                    self.ashley_barrier_start_pending = True
+            if self.state == "sp_vert_attack_2" and current_animation_name == "sp_vert_attack_2" and 1 in crossed_frames:
+                self.ashley_mana_orb_pending = True
         if self.name == "reece" and previous_animation_name == self.animation_player.current_name:
             current_animation_name = self.animation_player.current_name
             frame_count = len(self.animation_player.animations[current_animation_name]["surfaces"])

@@ -97,7 +97,7 @@ STAGE_CARD_WINDOWS = (
 )
 
 
-@lru_cache(maxsize=6)
+@lru_cache(maxsize=12)
 def _load_stage_card_image(card_key: str) -> pygame.Surface:
     card = CARDS_BY_KEY[card_key]
     image_path = (
@@ -117,6 +117,74 @@ def _load_stage_card_image(card_key: str) -> pygame.Surface:
             f"Stage Mode card artwork must be 896x1200 pixels: {image_path}"
         )
     return pygame.transform.smoothscale(image, STAGE_CARD_SIZE)
+
+
+@lru_cache(maxsize=24)
+def _load_stage_card_glow_layer(
+    card_key: str,
+    width: int,
+    height: int,
+) -> pygame.Surface:
+    glow = _load_stage_card_glow_mask(card_key)
+    if glow.get_size() == (width, height):
+        return glow
+    return pygame.transform.smoothscale(glow, (width, height))
+
+
+@lru_cache(maxsize=3)
+def _load_stage_card_glow_mask(card_key: str) -> pygame.Surface:
+    card = CARDS_BY_KEY[card_key]
+    glow = pygame.Surface(STAGE_CARD_SIZE, pygame.SRCALPHA)
+    if not card.image.startswith("curse_cards/"):
+        return glow
+
+    image = _load_stage_card_image(card_key)
+    glow_mask = pygame.Surface(STAGE_CARD_SIZE, pygame.SRCALPHA)
+    for y in range(STAGE_CARD_SIZE[1]):
+        for x in range(STAGE_CARD_SIZE[0]):
+            red, green, blue, alpha = image.get_at((x, y))
+            if alpha and red >= 135 and red > green * 1.25 and red > blue * 1.15:
+                glow_mask.set_at((x, y), (255, 74, 20, 200))
+    blur_size = (
+        max(1, STAGE_CARD_SIZE[0] // 6),
+        max(1, STAGE_CARD_SIZE[1] // 6),
+    )
+    soft_glow = pygame.transform.smoothscale(
+        pygame.transform.smoothscale(glow_mask, blur_size),
+        STAGE_CARD_SIZE,
+    )
+    soft_glow.set_alpha(120)
+    glow.blit(soft_glow, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
+    glow_mask.set_alpha(80)
+    glow.blit(glow_mask, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
+    return glow
+
+
+def _stage_card_glow_alpha() -> int:
+    pulse = (math.sin(pygame.time.get_ticks() * math.tau / 2_600.0) + 1.0) / 2.0
+    return round(48 + pulse * 34)
+
+
+def _apply_stage_card_glow(
+    surface: pygame.Surface,
+    card_key: str,
+    glow_size: tuple[int, int] | None = None,
+    rotation: float = 0.0,
+    destination: tuple[int, int] = (0, 0),
+) -> None:
+    card = CARDS_BY_KEY[card_key]
+    if not card.image.startswith("curse_cards/"):
+        return
+    width, height = glow_size or surface.get_size()
+    glow = _load_stage_card_glow_layer(
+        card_key,
+        width,
+        height,
+    )
+    if rotation:
+        glow = pygame.transform.rotate(glow, rotation)
+    glow.set_alpha(_stage_card_glow_alpha())
+    surface.blit(glow, destination, special_flags=pygame.BLEND_RGBA_ADD)
 
 
 def _scale_stage_slot_rect(rect: pygame.Rect) -> pygame.Rect:
@@ -206,6 +274,7 @@ def _pause_card_surface(
 STAGE_CORPSE_DURATION = 15.0
 STAGE_ENEMY_SPAWN_MARGIN = SCREEN_WIDTH * 0.3 + 200.0
 STAGE_MAX_ACTIVE_ENEMIES = 4
+STAGE_CURSE_SKULL_INITIAL_DELAY = 12.0
 STAGE_MAX_XP_ORBS = 128
 STAGE_TITLE_BANNER_TOP = 96
 STAGE_TITLE_BANNER_WIDTH = 1_080
@@ -243,7 +312,7 @@ def _is_throwable_item(item_id: str) -> bool:
     return item_id.partition("/")[0] == "throwables"
 
 
-def _load_folder_frames(folder: Path) -> list[pygame.Surface]:
+def _load_folder_frames(folder: Path, *, prefix: str | None = None) -> list[pygame.Surface]:
     frames: list[pygame.Surface] = []
     if not folder.exists():
         return frames
@@ -251,7 +320,9 @@ def _load_folder_frames(folder: Path) -> list[pygame.Surface]:
     frame_paths = (
         path
         for path in folder.iterdir()
-        if path.is_file() and path.suffix.lower() in {".png", ".bmp"}
+        if path.is_file()
+        and path.suffix.lower() in {".png", ".bmp"}
+        and (prefix is None or path.stem.startswith(prefix))
     )
     for path in sorted(frame_paths, key=_sprite_frame_sort_key):
         frame = pygame.image.load(str(path)).convert()
@@ -1679,10 +1750,250 @@ class JohnBlastCreateEffect:
         surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
 
 
+class AshleySpriteEffect:
+    def __init__(
+        self,
+        asset_folder: str,
+        x: float,
+        y: float,
+        *,
+        facing: int = 1,
+        scale: float = 1.0,
+        ground_anchored: bool = False,
+        frame_prefix: str | None = None,
+        foreground: bool = False,
+    ) -> None:
+        self.x = float(x)
+        self.y = float(y)
+        self.facing = 1 if facing >= 0 else -1
+        self.scale = scale
+        self.ground_anchored = ground_anchored
+        self.frame_prefix = frame_prefix
+        self.foreground = foreground
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        self.finished = False
+        root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / asset_folder
+        self.frames = _load_folder_frames(root, prefix=frame_prefix) or [
+            pygame.Surface((24, 24), pygame.SRCALPHA)
+        ]
+
+    def update(self, dt: float) -> None:
+        self.frame_timer += dt
+        while self.frame_timer >= 0.06:
+            self.frame_timer -= 0.06
+            self.frame_index += 1
+            if self.frame_index >= len(self.frames):
+                self.frame_index = len(self.frames) - 1
+                self.finished = True
+                break
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        frame = self.frames[self.frame_index]
+        width = max(1, round(frame.get_width() * self.scale))
+        height = max(1, round(frame.get_height() * self.scale))
+        if self.scale != 1.0:
+            frame = pygame.transform.scale(frame, (width, height))
+        if self.facing < 0:
+            frame = pygame.transform.flip(frame, True, False)
+        y = self.y - height if self.ground_anchored else self.y - height / 2
+        surface.blit(frame, (int(self.x - camera_x - width / 2), int(y)))
+
+
+class AshleyBlastProjectile:
+    def __init__(self, owner: Fighter, x: float, y: float, facing: int) -> None:
+        self.owner = owner
+        self.x = float(x)
+        self.y = float(y)
+        self.origin_x = float(x)
+        self.facing = 1 if facing >= 0 else -1
+        self.lane_y = float(owner.lane_y)
+        self.speed_x = 720.0
+        self.damage = 1
+        self.phase = "fly"
+        self.can_damage = True
+        self.finished = False
+        self.just_burst = False
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "ashley_blast"
+        self.fly_frames = _load_folder_frames(root / "fly")
+        self.burst_frames = _load_folder_frames(root / "burst")
+        fallback = [pygame.Surface((24, 24), pygame.SRCALPHA)]
+        self.fly_frames = self.fly_frames or fallback
+        self.burst_frames = self.burst_frames or fallback
+        self.frames = self.fly_frames
+
+    def rect(self) -> pygame.Rect:
+        frame = self.frames[self.frame_index]
+        return pygame.Rect(
+            int(self.x - frame.get_width() / 2),
+            int(self.y - frame.get_height() / 2),
+            frame.get_width(),
+            frame.get_height(),
+        )
+
+    def _start_burst(self) -> None:
+        if self.phase == "burst":
+            return
+        self.phase = "burst"
+        self.can_damage = False
+        self.frames = self.burst_frames
+        self.frame_index = 0
+        self.frame_timer = 0.0
+        self.just_burst = True
+
+    def update(self, dt: float) -> None:
+        self.frame_timer += dt
+        if self.phase == "fly":
+            self.x += self.facing * self.speed_x * dt
+            while self.frame_timer >= 0.08:
+                self.frame_timer -= 0.08
+                self.frame_index = (self.frame_index + 1) % len(self.frames)
+            return
+        while self.frame_timer >= 0.05:
+            self.frame_timer -= 0.05
+            self.frame_index += 1
+            if self.frame_index >= len(self.frames):
+                self.frame_index = len(self.frames) - 1
+                self.finished = True
+                break
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        frame = self.frames[self.frame_index]
+        if self.facing < 0:
+            frame = pygame.transform.flip(frame, True, False)
+        surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
+
+
+class AshleyMissileProjectile:
+    def __init__(
+        self,
+        owner: Fighter,
+        target: Fighter | None,
+        x: float,
+        y: float,
+        facing: int,
+        target_lane_y: float,
+        missile_index: int,
+        ground_target_x: float | None = None,
+    ) -> None:
+        self.owner = owner
+        self.target = target
+        self.x = float(x)
+        self.y = float(y)
+        self.origin_x = float(x)
+        self.launch_x = float(x)
+        self.start_y = float(y)
+        self.facing = 1 if facing >= 0 else -1
+        self.lane_y = float(target_lane_y)
+        self.target_lane_y = float(target_lane_y)
+        self.speed_x = 360.0
+        self.arc_height = 80.0
+        self.missile_index = missile_index
+        self.damage = 1
+        self.phase = "fly"
+        self.can_damage = True
+        self.finished = False
+        self.just_ground_hit = False
+        self.flight_timer = 0.0
+        if ground_target_x is None and target is None:
+            ground_target_x = self.x + self.facing * 360.0
+        self.ground_target_x = ground_target_x
+        destination_x = (
+            target.world_hitbox_rect().centerx if target is not None else self.ground_target_x
+        )
+        self.flight_duration = max(0.45, abs(destination_x - self.launch_x) / self.speed_x)
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "ashley_missile"
+        self.fly_frames = _load_folder_frames(root / "fly")
+        self.burst_frames = _load_folder_frames(root / "burst")
+        fallback = [pygame.Surface((24, 24), pygame.SRCALPHA)]
+        self.fly_frames = self.fly_frames or fallback
+        self.burst_frames = self.burst_frames or fallback
+        self.frames = self.fly_frames
+
+    def rect(self) -> pygame.Rect:
+        frame = self.frames[self.frame_index]
+        return pygame.Rect(
+            int(self.x - frame.get_width() / 2),
+            int(self.y - frame.get_height() / 2),
+            frame.get_width(),
+            frame.get_height(),
+        )
+
+    def _start_burst(self) -> None:
+        if self.phase == "burst":
+            return
+        self.phase = "burst"
+        self.can_damage = False
+        self.frames = self.burst_frames
+        self.frame_index = 0
+        self.frame_timer = 0.0
+
+    def _begin_ground_fall(self) -> None:
+        self.target = None
+        self.launch_x = self.x
+        self.start_y = self.y
+        self.ground_target_x = self.x + self.facing * 220.0
+        self.flight_timer = 0.0
+        self.flight_duration = max(0.45, 220.0 / self.speed_x)
+        self.arc_height = 0.0
+
+    def update(self, dt: float) -> None:
+        self.frame_timer += dt
+        if self.phase == "fly":
+            self.flight_timer += dt
+            if self.target is not None and not self.target.is_dead:
+                target_rect = self.target.world_hitbox_rect()
+                target_x = target_rect.centerx
+                target_y = target_rect.centery
+                self.target_lane_y = float(self.target.lane_y)
+                self.lane_y = self.target_lane_y
+                if (target_x - self.x) * self.facing < 0.0:
+                    self._begin_ground_fall()
+            else:
+                if self.target is not None:
+                    self._begin_ground_fall()
+            if self.target is None:
+                target_x = self.ground_target_x
+                target_y = GROUND_Y + self.target_lane_y - 18.0
+            progress = min(1.0, self.flight_timer / self.flight_duration)
+            arc = math.sin(math.pi * progress)
+            self.x = self.launch_x + (target_x - self.launch_x) * progress
+            self.x += math.sin(self.flight_timer * 4.0 + self.missile_index) * 10.0 * arc
+            self.y = self.start_y + (target_y - self.start_y) * progress**2 - self.arc_height * arc
+            if self.target is None and progress >= 1.0:
+                self.x = self.ground_target_x
+                self.y = GROUND_Y + self.target_lane_y - 18.0
+                self.just_ground_hit = True
+                self._start_burst()
+                return
+            while self.frame_timer >= 0.08:
+                self.frame_timer -= 0.08
+                self.frame_index = (self.frame_index + 1) % len(self.frames)
+            return
+        while self.frame_timer >= 0.05:
+            self.frame_timer -= 0.05
+            self.frame_index += 1
+            if self.frame_index >= len(self.frames):
+                self.frame_index = len(self.frames) - 1
+                self.finished = True
+                break
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        frame = self.frames[self.frame_index]
+        if self.facing < 0:
+            frame = pygame.transform.flip(frame, True, False)
+        surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
+
+
 class JulianSkullProjectile:
     def __init__(self, owner: Fighter, target: Fighter | None, x: float, y: float, facing: int) -> None:
         self.owner = owner
         self.target = target
+        self.lane_y = float(owner.lane_y)
         self.x = float(x)
         self.y = float(y)
         self.facing = 1 if facing >= 0 else -1
@@ -1744,7 +2055,7 @@ class JulianSkullProjectile:
             if self.target is not None and not self.target.is_dead:
                 target_rect = self.target.world_hitbox_rect()
                 target_is_ahead = (target_rect.centerx - self.x) * self.facing > 0
-                target_is_in_lane = abs(self.target.lane_y - self.owner.lane_y) <= 36
+                target_is_in_lane = abs(self.target.lane_y - self.lane_y) <= 36
                 if target_is_ahead and target_is_in_lane:
                     vertical_offset = (target_rect.centery - self.y) * 0.55
                     vertical_step = max(-self.speed_y * dt, min(self.speed_y * dt, vertical_offset))
@@ -2038,6 +2349,148 @@ class JohnBarrierEffect:
 
     def draw(self, surface: pygame.Surface, camera_x: float) -> None:
         frame = self.frames[self.frame_index]
+        if self.facing < 0:
+            frame = pygame.transform.flip(frame, True, False)
+        surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
+
+
+class AshleyMagicalBarrierEffect:
+    def __init__(self, owner: Fighter, x: float, y: float, facing: int) -> None:
+        self.owner = owner
+        self.x = float(x)
+        self.y = float(y)
+        self.base_y = float(y)
+        self.facing = 1 if facing >= 0 else -1
+        self.lane_y = float(owner.lane_y)
+        self.phase = "create"
+        self.life_timer = 0.0
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        self.reflect_frame_timer = 0.0
+        self.reflect_frame_index = 0
+        self.reflect_active = False
+        self.speed_x = 125.0
+        self.movement_enabled = False
+        self.health = 2
+        self.enemy_hits = 0
+        self.reflect_count = 0
+        self.hit_targets: set[int] = set()
+        self.burst_after_reflect = False
+        self.finished = False
+        root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "ashley_magical_barrier"
+        self.create_frames = _load_folder_frames(root / "create")
+        self.barrier_frames = _load_folder_frames(root / "barrier")
+        self.reflect_frames = _load_folder_frames(root / "barrier_reflect")
+        self.burst_frames = _load_folder_frames(root / "burst")
+        fallback = [pygame.Surface((48, 48), pygame.SRCALPHA)]
+        self.create_frames = self.create_frames or fallback
+        self.barrier_frames = self.barrier_frames or fallback
+        self.reflect_frames = self.reflect_frames or fallback
+        self.burst_frames = self.burst_frames or fallback
+        self.frames = self.create_frames
+
+    @property
+    def can_reflect(self) -> bool:
+        return self.phase == "barrier" and not self.burst_after_reflect
+
+    def rect(self) -> pygame.Rect:
+        frame = self.frames[self.frame_index]
+        return pygame.Rect(
+            int(self.x - frame.get_width() / 2),
+            int(self.y - frame.get_height() / 2),
+            frame.get_width(),
+            frame.get_height(),
+        )
+
+    def start_moving(self) -> None:
+        self.movement_enabled = True
+
+    def _enter_barrier(self) -> None:
+        self.phase = "barrier"
+        self.frames = self.barrier_frames
+        self.frame_index = 0
+        self.frame_timer = 0.0
+
+    def _start_reflect(self, burst_after: bool = False) -> None:
+        if self.phase != "barrier":
+            return
+        self.reflect_active = True
+        self.reflect_frame_index = 0
+        self.reflect_frame_timer = 0.0
+        self.burst_after_reflect = burst_after
+
+    def take_damage(self) -> None:
+        if not self.can_reflect:
+            return
+        self.health -= 1
+        self.reflect_count += 1
+        self._start_reflect(self.health <= 0)
+
+    def hit_enemy(self, target: Fighter) -> bool:
+        if not self.can_reflect or id(target) in self.hit_targets:
+            return False
+        self.hit_targets.add(id(target))
+        self.enemy_hits += 1
+        self._start_reflect(self.enemy_hits >= 2)
+        return True
+
+    def _start_burst(self) -> None:
+        if self.phase == "burst":
+            return
+        self.phase = "burst"
+        self.reflect_active = False
+        self.frames = self.burst_frames
+        self.frame_index = 0
+        self.frame_timer = 0.0
+
+    def _advance_once(self, dt: float) -> bool:
+        self.frame_timer += dt
+        while self.frame_timer >= 0.08:
+            self.frame_timer -= 0.08
+            self.frame_index += 1
+            if self.frame_index >= len(self.frames):
+                self.frame_index = len(self.frames) - 1
+                return True
+        return False
+
+    def update(self, dt: float) -> None:
+        self.life_timer += dt
+        if self.phase == "create":
+            if self._advance_once(dt):
+                self._enter_barrier()
+        elif self.phase == "barrier":
+            if self.movement_enabled:
+                self.x += self.facing * self.speed_x * dt
+                self.y = self.base_y + math.sin(self.life_timer * 3.0) * 5.0
+            self.frame_timer += dt
+            while self.frame_timer >= 0.12:
+                self.frame_timer -= 0.12
+                self.frame_index = (self.frame_index + 1) % len(self.frames)
+            if self.reflect_active:
+                self.reflect_frame_timer += dt
+                while self.reflect_frame_timer >= 0.08:
+                    self.reflect_frame_timer -= 0.08
+                    self.reflect_frame_index += 1
+                    if self.reflect_frame_index >= len(self.reflect_frames):
+                        self.reflect_active = False
+                        if self.burst_after_reflect:
+                            self._start_burst()
+                        else:
+                            self.burst_after_reflect = False
+                        break
+        elif self.phase == "burst" and self._advance_once(dt):
+            self.finished = True
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        frame = self.frames[self.frame_index]
+        if self.facing < 0:
+            frame = pygame.transform.flip(frame, True, False)
+        surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
+
+    def draw_reflect_overlay(self, surface: pygame.Surface, camera_x: float) -> None:
+        if not self.reflect_active:
+            return
+        frame = self.reflect_frames[self.reflect_frame_index]
         if self.facing < 0:
             frame = pygame.transform.flip(frame, True, False)
         surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
@@ -3173,6 +3626,52 @@ class JohnHealOrbProjectile:
         surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
 
 
+class AshleyManaOrbProjectile:
+    def __init__(self, owner: Fighter, x: float, y: float, facing: int) -> None:
+        self.owner = owner
+        self.x = float(x)
+        self.y = float(y)
+        self.facing = 1 if facing >= 0 else -1
+        self.lane_y = float(owner.lane_y)
+        self.phase = "create"
+        self.frame_timer = 0.0
+        self.frame_index = 0
+        self.finished = False
+        root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "shared_sprites" / "ashley_mana_orb"
+        self.create_frames = _load_folder_frames(root / "create")
+        self.idle_frames = _load_folder_frames(root / "idle")
+        fallback = [pygame.Surface((24, 24), pygame.SRCALPHA)]
+        self.create_frames = self.create_frames or fallback
+        self.idle_frames = self.idle_frames or fallback
+        self.frames = self.create_frames
+
+    def contact_rect(self) -> pygame.Rect:
+        return pygame.Rect(int(self.x - 20), int(self.y - 20), 40, 40)
+
+    def update(self, dt: float) -> None:
+        self.frame_timer += dt
+        if self.phase == "create":
+            while self.frame_timer >= 0.08:
+                self.frame_timer -= 0.08
+                self.frame_index += 1
+                if self.frame_index >= len(self.frames):
+                    self.phase = "idle"
+                    self.frames = self.idle_frames
+                    self.frame_index = 0
+                    self.frame_timer = 0.0
+                    break
+        else:
+            while self.frame_timer >= 0.10:
+                self.frame_timer -= 0.10
+                self.frame_index = (self.frame_index + 1) % len(self.frames)
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        frame = self.frames[self.frame_index]
+        if self.facing < 0:
+            frame = pygame.transform.flip(frame, True, False)
+        surface.blit(frame, (int(self.x - camera_x - frame.get_width() / 2), int(self.y - frame.get_height() / 2)))
+
+
 class JohnHealOrbParticleEffect:
     def __init__(self, x: float, y: float) -> None:
         self.x = float(x)
@@ -3898,6 +4397,7 @@ class BattleScene:
         self._stage_damage_remainder = 0.0
         self._stage_damage_reduction_remainder = 0.0
         self._stage_xp_remainder = 0.0
+        self._stage_julian_skull_timer = 0.0
         self._stage_base_movement: dict[str, float] | None = None
         self._reset_stage_progression()
         self.stage_level_up_slot = StageLevelUpSlot()
@@ -4087,8 +4587,13 @@ class BattleScene:
         if not self.stage_mode or not spawn_queue:
             return
         active_count = sum(not enemy.is_dead for enemy in self.stage_wave_enemies)
+        active_enemy_cap = STAGE_MAX_ACTIVE_ENEMIES + int(
+            stage_card_effects(
+                getattr(self, "stage_card_ranks", {})
+            )["active_enemy_bonus"]
+        )
         slots = min(
-            STAGE_MAX_ACTIVE_ENEMIES - active_count,
+            active_enemy_cap - active_count,
             len(spawn_queue),
         )
         if slots <= 0:
@@ -4105,6 +4610,11 @@ class BattleScene:
             x_bounds,
             focus_x,
         )
+        enemy_health_bonus = int(
+            stage_card_effects(
+                getattr(self, "stage_card_ranks", {})
+            )["enemy_health_bonus"]
+        )
         for character_name, (x, lane_y) in zip(
             spawn_queue[:slots],
             positions,
@@ -4116,7 +4626,7 @@ class BattleScene:
             )
             enemy.facing = spawn_facing
             normal_max_health = self.difficulty.scale_enemy_health(enemy.max_health)
-            enemy.max_health = max(1, round(normal_max_health / 2))
+            enemy.max_health = max(1, round(normal_max_health / 2) + enemy_health_bonus)
             enemy.health = enemy.max_health
             enemy.controls_enabled = True
             self.enemies.append(enemy)
@@ -4238,6 +4748,7 @@ class BattleScene:
         self._stage_damage_remainder = 0.0
         self._stage_damage_reduction_remainder = 0.0
         self._stage_xp_remainder = 0.0
+        self._stage_julian_skull_timer = 0.0
         if (self.stage_mode or getattr(self, "test_mode", False)) and hasattr(self, "fighter"):
             self._apply_stage_card_modifiers()
 
@@ -4298,8 +4809,65 @@ class BattleScene:
         rank = ranks.get(card.key, 0)
         ranks[card.key] = rank + 1
         self.stage_card_ranks = ranks
+        if self.stage_mode and card.effect == "enemy_health":
+            health_bonus = int(card.amount_per_rank)
+            for enemy in getattr(self, "stage_wave_enemies", []):
+                if not enemy.is_dead:
+                    enemy.max_health += health_bonus
+                    enemy.health += health_bonus
+        if self.stage_mode and card.effect == "julian_skull" and rank == 0:
+            self._stage_julian_skull_timer = STAGE_CURSE_SKULL_INITIAL_DELAY
         self._apply_stage_card_modifiers()
+        if self.stage_mode and card.effect == "active_enemy":
+            self._dispatch_stage_enemy_spawns()
         return True
+
+    def _update_stage_curse_attacks(self, dt: float) -> None:
+        if not self.stage_mode:
+            return
+        interval = stage_card_effects(
+            getattr(self, "stage_card_ranks", {})
+        )["julian_skull_interval"]
+        if interval <= 0.0 or self.fighter.is_dead:
+            return
+        active_enemies = [
+            enemy
+            for enemy in getattr(self, "stage_wave_enemies", [])
+            if not enemy.is_dead
+        ]
+        if not active_enemies:
+            return
+        self._stage_julian_skull_timer = max(
+            0.0,
+            getattr(
+                self,
+                "_stage_julian_skull_timer",
+                STAGE_CURSE_SKULL_INITIAL_DELAY,
+            )
+            - max(0.0, dt),
+        )
+        if self._stage_julian_skull_timer > 0.0:
+            return
+
+        camera_x = self.stage.camera_x(self.fighter.x)
+        player_screen_x = self.fighter.x - camera_x
+        if player_screen_x < SCREEN_WIDTH / 2:
+            origin_x = camera_x + SCREEN_WIDTH - 120.0
+            facing = -1
+        else:
+            origin_x = camera_x + 120.0
+            facing = 1
+        origin_y = GROUND_Y + self.fighter.lane_y - 56.0
+        projectile = JulianSkullProjectile(
+            active_enemies[0],
+            self.fighter,
+            origin_x,
+            origin_y,
+            facing,
+        )
+        projectile.lane_y = float(self.fighter.lane_y)
+        self.projectiles.append(projectile)
+        self._stage_julian_skull_timer = interval
 
     def _transform_luis_if_pending(self, fighter: Fighter) -> None:
         if not fighter.luis_transform_pending:
@@ -4470,6 +5038,12 @@ class BattleScene:
                 image = _load_stage_card_image(card.key)
                 card_rect = image.get_rect(center=window.center)
                 surface.blit(image, card_rect)
+                _apply_stage_card_glow(
+                    surface,
+                    card.key,
+                    image.get_size(),
+                    destination=card_rect.topleft,
+                )
 
                 title_text = card_rank_title(card, slot.offer_ranks[index])
                 revealed_title = slot.revealed_text(index, 0)
@@ -4557,6 +5131,12 @@ class BattleScene:
                         )
                     )
                     surface.blit(image, card_rect)
+                    _apply_stage_card_glow(
+                        surface,
+                        stack_card.key,
+                        image.get_size(),
+                        destination=card_rect.topleft,
+                    )
             surface.set_clip(old_clip)
 
             if selected:
@@ -6197,6 +6777,133 @@ class BattleScene:
         self.projectiles.append(JohnBlastProjectile(fighter, origin_x, origin_y, fighter.facing))
         self.audio.play("john_blast_create")
 
+    def _spawn_ashley_blast(self, fighter: Fighter) -> None:
+        if fighter.name != "ashley" or fighter.state != "sp_move_attack_1" or not fighter.ashley_blast_pending:
+            return
+        fighter.ashley_blast_pending = False
+        fighter.attack_projectile_fired = True
+        origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.48)
+        origin_y = fighter.world_hitbox_rect().centery
+        self.projectiles.append(
+            AshleyBlastProjectile(fighter, origin_x, origin_y, fighter.facing)
+        )
+        self.projectiles.append(
+            AshleySpriteEffect(
+                "particals/blue_sparkles",
+                origin_x,
+                origin_y,
+                facing=fighter.facing,
+            )
+        )
+        self.projectiles.append(
+            AshleySpriteEffect(
+                "shared_sprites/ashley_blast/create",
+                origin_x,
+                origin_y,
+                facing=fighter.facing,
+            )
+        )
+        self.audio.play("julian_ball_create")
+
+    def _spawn_ashley_missiles(self, fighter: Fighter) -> None:
+        if fighter.name != "ashley" or fighter.state != "sp_move_attack_2" or not fighter.ashley_missiles_pending:
+            return
+        fighter.ashley_missiles_pending = False
+        fighter.attack_projectile_fired = True
+        origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.48)
+        origin_y = fighter.world_hitbox_rect().centery
+        targets = sorted(
+            (
+                target
+                for target in self._opponents_of(fighter)
+                if not target.is_dead
+                and (target.world_hitbox_rect().centerx - fighter.x) * fighter.facing >= 0.0
+            ),
+            key=lambda target: (target.lane_y, abs(target.x - fighter.x)),
+        )
+        targets_by_lane: dict[float, list[Fighter]] = {}
+        for target in targets:
+            targets_by_lane.setdefault(float(target.lane_y), []).append(target)
+        lane_order = sorted(targets_by_lane, key=lambda lane: abs(lane - fighter.lane_y))
+        targets = []
+        while any(targets_by_lane.values()):
+            for lane in lane_order:
+                if targets_by_lane[lane]:
+                    targets.append(targets_by_lane[lane].pop(0))
+        fallback_lanes = tuple(sorted({LANE_MIN_Y, fighter.lane_y, LANE_MAX_Y}))
+        for missile_index in range(3):
+            target = targets[missile_index % len(targets)] if targets else None
+            ground_target_x = None
+            if target is not None:
+                target_lane_y = target.lane_y
+            else:
+                target_lane_y = random.choice(fallback_lanes)
+                distance = random.uniform(360.0, 480.0)
+                ground_target_x = origin_x + fighter.facing * distance
+            self.projectiles.append(
+                AshleyMissileProjectile(
+                    fighter,
+                    target,
+                    origin_x,
+                    origin_y,
+                    fighter.facing,
+                    target_lane_y,
+                    missile_index,
+                    ground_target_x,
+                )
+            )
+
+    def _spawn_ashley_barrier(self, fighter: Fighter) -> None:
+        if fighter.name != "ashley":
+            return
+        if fighter.state == "sp_vert_attack_1" and fighter.ashley_barrier_pending:
+            fighter.ashley_barrier_pending = False
+            fighter.attack_projectile_fired = True
+            origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.58)
+            origin_y = fighter.world_hitbox_rect().centery
+            self.projectiles.append(
+                AshleyMagicalBarrierEffect(fighter, origin_x, origin_y, fighter.facing)
+            )
+        if fighter.state == "sp_vert_attack_1" and fighter.ashley_barrier_start_pending:
+            fighter.ashley_barrier_start_pending = False
+            barrier = next(
+                (
+                    projectile
+                    for projectile in reversed(self.projectiles)
+                    if isinstance(projectile, AshleyMagicalBarrierEffect)
+                    and projectile.owner is fighter
+                    and projectile.phase != "burst"
+                ),
+                None,
+            )
+            if barrier is not None:
+                barrier.start_moving()
+
+    def _spawn_ashley_mana_orb(self, fighter: Fighter) -> None:
+        if fighter.name != "ashley" or fighter.state != "sp_vert_attack_2" or not fighter.ashley_mana_orb_pending:
+            return
+        fighter.ashley_mana_orb_pending = False
+        fighter.attack_projectile_fired = True
+        origin_x = fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.72)
+        origin_y = fighter.world_hitbox_rect().centery
+        self.projectiles.append(AshleyManaOrbProjectile(fighter, origin_x, origin_y, fighter.facing))
+        self.audio.play("john_heal_orb")
+
+    def _spawn_ashley_attack_sparkles(self, fighter: Fighter) -> None:
+        if fighter.name != "ashley" or not fighter.ashley_sparkles_pending:
+            return
+        fighter.ashley_sparkles_pending = False
+        self.projectiles.append(
+            AshleySpriteEffect(
+                "particals/blue_sparkles",
+                fighter.x + fighter.facing * (fighter.hitbox_size[0] * 0.6),
+                fighter.world_hitbox_rect().centery,
+                facing=fighter.facing,
+                frame_prefix=random.choice(("1_", "2_")),
+                foreground=True,
+            )
+        )
+
     def _spawn_john_barrier(self, fighter: Fighter) -> None:
         is_john_barrier = fighter.name == "john" and fighter.john_barrier_pending
         is_reece_barrier = fighter.name == "reece" and fighter.reece_vape_barrier_pending
@@ -6794,7 +7501,11 @@ class BattleScene:
             self.projectiles.append(FireExplosionEffect(fighter, origin_x, origin_y))
             self.audio.play("fire_explode")
 
-    def _reflect_projectile(self, projectile, barrier: JohnBarrierEffect) -> bool:
+    def _reflect_projectile(
+        self,
+        projectile: object,
+        barrier: JohnBarrierEffect | AshleyMagicalBarrierEffect,
+    ) -> bool:
         phase = getattr(projectile, "phase", None)
         if (
             not getattr(projectile, "can_damage", False)
@@ -6804,16 +7515,34 @@ class BattleScene:
         ):
             return False
 
+        original_owner = projectile.owner
+        reflected_facing = (
+            -projectile.facing
+            if isinstance(barrier, AshleyMagicalBarrierEffect)
+            else barrier.facing
+        )
         projectile.owner = barrier.owner
-        projectile.facing = barrier.facing
-        projectile.x = barrier.x + barrier.facing * (barrier.rect().width / 2 + projectile.rect().width / 2 + 2)
+        projectile.facing = reflected_facing
+        projectile.x = barrier.x + reflected_facing * (
+            barrier.rect().width / 2 + projectile.rect().width / 2 + 2
+        )
         if hasattr(projectile, "origin_x"):
             projectile.origin_x = projectile.x
         if hasattr(projectile, "distance_travelled"):
             projectile.distance_travelled = 0.0
         if hasattr(projectile, "target"):
-            target = self._target_for(barrier.owner)
+            target = (
+                original_owner
+                if isinstance(barrier, AshleyMagicalBarrierEffect)
+                and isinstance(original_owner, Fighter)
+                and original_owner is not barrier.owner
+                and not original_owner.is_dead
+                and original_owner in self._opponents_of(barrier.owner)
+                else self._target_for(barrier.owner)
+            )
             projectile.target = target if target is not None and not target.is_dead else None
+            if projectile.target is not None and hasattr(projectile, "target_lane_y"):
+                projectile.target_lane_y = float(projectile.target.lane_y)
         if hasattr(projectile, "hit_targets"):
             projectile.hit_targets.clear()
         return True
@@ -6854,6 +7583,25 @@ class BattleScene:
         visible_right = camera_x + SCREEN_WIDTH
         for projectile in list(self.projectiles):
             projectile.update(dt)
+            if isinstance(projectile, AshleySpriteEffect):
+                if projectile.finished:
+                    self.projectiles.remove(projectile)
+                continue
+            if isinstance(projectile, AshleyManaOrbProjectile):
+                for target in self._fighters():
+                    if (
+                        target.is_dead
+                        or abs(target.lane_y - projectile.lane_y) > 24.0
+                        or not projectile.contact_rect().colliderect(target.world_hitbox_rect())
+                    ):
+                        continue
+                    target.grant_mana_regen_boost(3.0)
+                    projectile.finished = True
+                    self.audio.play("john_heal_orb_heal")
+                    break
+                if projectile.finished:
+                    self.projectiles.remove(projectile)
+                continue
             if isinstance(projectile, BuzzBallProjectile):
                 if projectile.phase == "fly":
                     target = next(
@@ -6974,6 +7722,17 @@ class BattleScene:
                 self.audio.play("summon_bats_died")
                 projectile.just_burst_sound = False
             if getattr(projectile, "just_ground_hit", False):
+                if isinstance(projectile, AshleyMissileProjectile):
+                    self.projectiles.append(
+                        AshleySpriteEffect(
+                            "shared_sprites/ashley_fire",
+                            projectile.x,
+                            GROUND_Y + projectile.target_lane_y,
+                            facing=projectile.facing,
+                            scale=1.5,
+                            ground_anchored=True,
+                        )
+                    )
                 if isinstance(projectile, ArrowProjectile) and projectile.style == "rudolf":
                     self.audio.play("rudolf_shuriken")
                     frames = self.rudolf_metal_fragments[self.rudolf_metal_fragment_index]
@@ -6995,6 +7754,52 @@ class BattleScene:
                 if projectile.finished:
                     self.projectiles.remove(projectile)
                 continue
+            if isinstance(projectile, AshleyMagicalBarrierEffect):
+                if projectile.phase == "barrier" and projectile.movement_enabled:
+                    if projectile.x <= visible_left or projectile.x >= visible_right:
+                        projectile.x = max(visible_left, min(visible_right, projectile.x))
+                        projectile._start_burst()
+                    else:
+                        heavy_object = next(
+                            (
+                                item
+                                for item in self.consumable_items
+                                if item.item_id in HEAVY_ITEM_IDS
+                                and abs(item.lane_y - projectile.lane_y) <= 24.0
+                                and projectile.rect().colliderect(item.world_rect())
+                            ),
+                            None,
+                        )
+                        if heavy_object is not None:
+                            self._break_heavy_box(heavy_object)
+                            projectile.take_damage()
+                        else:
+                            for target in self._opponents_of(projectile.owner):
+                                if (
+                                    target.is_dead
+                                    or abs(target.lane_y - projectile.lane_y) > 18.0
+                                    or not projectile.rect().colliderect(target.world_hitbox_rect())
+                                    or not projectile.hit_enemy(target)
+                                ):
+                                    continue
+                                if target.state == "block" and target.block_strength > 0:
+                                    target.block_strength = 0
+                                    target.block_hold_timer = 0.0
+                                    self.audio.play("hit_guard")
+                                elif target.state == "block":
+                                    target._start_block_break()
+                                    self.audio.play("hit_guard")
+                                else:
+                                    self._deal_damage(projectile.owner, target, 1)
+                                    if not target.is_dead:
+                                        target._start_knockdown()
+                                break
+                if projectile.finished:
+                    self.projectiles.remove(projectile)
+                continue
+            if isinstance(projectile, AshleyBlastProjectile) and projectile.just_burst:
+                self.audio.play("john_blast_hit")
+                projectile.just_burst = False
             if isinstance(projectile, (JohnBlastCreateEffect, JohnHealOrbProjectile, JohnHealOrbParticleEffect)):
                 if isinstance(projectile, JohnHealOrbProjectile) and projectile.just_heal_sound:
                     self.audio.play("john_heal_orb_heal")
@@ -7026,7 +7831,9 @@ class BattleScene:
                     self.audio.play("broken_arrow")
                 projectile.just_broke = False
             if getattr(projectile, "just_burst", False):
-                if isinstance(projectile, FireballProjectile):
+                if isinstance(projectile, AshleyBlastProjectile):
+                    self.audio.play("john_blast_hit")
+                elif isinstance(projectile, FireballProjectile):
                     self.audio.play_fireball()
                 elif not isinstance(projectile, FreezeBallProjectile):
                     self.audio.play("orb_burst")
@@ -7066,6 +7873,10 @@ class BattleScene:
                     projectile._start_burst()
                     self.audio.play("julian_ball_explode")
                     continue
+            if isinstance(projectile, AshleyBlastProjectile) and projectile.phase == "fly":
+                if projectile.x <= visible_left or projectile.x >= visible_right:
+                    projectile.x = max(visible_left, min(visible_right, projectile.x))
+                    projectile._start_burst()
             if isinstance(projectile, (BallProjectile, DavisBallProjectile, DenisOrbProjectile, DenisFollowOrbProjectile, FreezeBallProjectile, JackBlastProjectile, JohnBlastProjectile)) and projectile.phase == "fly":
                 if projectile.x <= visible_left or projectile.x >= visible_right:
                     projectile.x = max(visible_left, min(visible_right, projectile.x))
@@ -7116,15 +7927,18 @@ class BattleScene:
                     ):
                         for barrier in self.projectiles:
                             if (
-                                isinstance(barrier, JohnBarrierEffect)
+                                isinstance(barrier, (JohnBarrierEffect, AshleyMagicalBarrierEffect))
                                 and barrier.can_reflect
                                 and projectile_rect.colliderect(barrier.rect())
                                 and self._reflect_projectile(projectile, barrier)
                             ):
-                                barrier.reflect_count += 1
-                                barrier._start_reflect()
-                                barrier.just_reflect_sound = False
-                                self.audio.play("john_barrier_reflect")
+                                if isinstance(barrier, AshleyMagicalBarrierEffect):
+                                    barrier.take_damage()
+                                else:
+                                    barrier.reflect_count += 1
+                                    barrier._start_reflect()
+                                    barrier.just_reflect_sound = False
+                                    self.audio.play("john_barrier_reflect")
                                 reflected = True
                                 break
                     if reflected:
@@ -7202,6 +8016,65 @@ class BattleScene:
                             target._start_knockdown()
                         self.audio.play("arrow_hit")
                     projectile._start_burst()
+                continue
+            if isinstance(projectile, AshleyBlastProjectile):
+                if projectile.phase == "fly" and projectile.can_damage:
+                    for target in self._opponents_of(projectile.owner):
+                        target_rect = target.world_hitbox_rect()
+                        if (
+                            target.is_dead
+                            or abs(target.lane_y - projectile.lane_y) > 36.0
+                            or abs(projectile.y - target_rect.centery) > 42.0
+                            or (target_rect.centerx - projectile.origin_x) * projectile.facing < 0.0
+                            or not projectile.rect().colliderect(target_rect)
+                        ):
+                            continue
+                        if target.state == "block" and target.block_strength > 0:
+                            target.block_strength = 0
+                            target.block_hold_timer = 0.0
+                            self.audio.play("hit_guard")
+                        elif target.state == "block":
+                            target._start_block_break()
+                            self.audio.play("hit_guard")
+                        else:
+                            self._deal_damage(projectile.owner, target, projectile.damage)
+                            if not target.is_dead:
+                                target._start_knockdown()
+                        projectile._start_burst()
+                        break
+                if projectile.just_burst:
+                    self.audio.play("john_blast_hit")
+                    projectile.just_burst = False
+                if projectile.finished:
+                    self.projectiles.remove(projectile)
+                continue
+            if isinstance(projectile, AshleyMissileProjectile):
+                if projectile.phase == "fly" and projectile.can_damage:
+                    for target in self._opponents_of(projectile.owner):
+                        target_rect = target.world_hitbox_rect()
+                        if (
+                            target.is_dead
+                            or abs(target.lane_y - projectile.target_lane_y) > 36.0
+                            or abs(projectile.y - target_rect.centery) > 42.0
+                            or (target_rect.centerx - projectile.origin_x) * projectile.facing < 0.0
+                            or not projectile.rect().colliderect(target_rect)
+                        ):
+                            continue
+                        if target.state == "block" and target.block_strength > 0:
+                            target.block_strength = 0
+                            target.block_hold_timer = 0.0
+                            self.audio.play("hit_guard")
+                        elif target.state == "block":
+                            target._start_block_break()
+                            self.audio.play("hit_guard")
+                        else:
+                            self._deal_damage(projectile.owner, target, projectile.damage)
+                            if not target.is_dead:
+                                target._start_fire_knockdown()
+                        projectile._start_burst()
+                        break
+                if projectile.finished:
+                    self.projectiles.remove(projectile)
                 continue
             if isinstance(projectile, JulianBallProjectile):
                 if projectile.phase == "fly" and projectile.can_damage:
@@ -7437,7 +8310,7 @@ class BattleScene:
                     projectile.hit_targets.add(id(target))
                     target._start_knockdown()
                     continue
-                if isinstance(projectile, JulianSkullProjectile) and abs(target.lane_y - projectile.owner.lane_y) > 36:
+                if isinstance(projectile, JulianSkullProjectile) and abs(target.lane_y - projectile.lane_y) > 36:
                     continue
                 if isinstance(projectile, ArrowProjectile) and projectile.style == "rudolf":
                     if abs(target.lane_y - projectile.lane_y) > 36:
@@ -7989,6 +8862,11 @@ class BattleScene:
             self._spawn_julian_ball(fighter)
             self._spawn_julian_explosions(fighter)
             self._spawn_john_blast(fighter)
+            self._spawn_ashley_blast(fighter)
+            self._spawn_ashley_missiles(fighter)
+            self._spawn_ashley_barrier(fighter)
+            self._spawn_ashley_mana_orb(fighter)
+            self._spawn_ashley_attack_sparkles(fighter)
             self._spawn_john_barrier(fighter)
             self._spawn_john_follow_disk(fighter)
             self._spawn_john_heal_orb(fighter)
@@ -8080,6 +8958,8 @@ class BattleScene:
             else:
                 animation.update(dt)
         self._update_camera_focus(dt)
+        if self.stage_mode:
+            self._update_stage_curse_attacks(dt)
         self._update_projectiles(dt)
         self._remove_finished_rudolf_clones()
         self._handle_woody_punches()
@@ -8154,7 +9034,14 @@ class BattleScene:
         progress = max(0.0, min(1.0, progress))
         eased = progress * progress * (3.0 - 2.0 * progress)
         if eased <= 0.0:
-            return base_image, base_rect, eased
+            image = base_image.copy()
+            _apply_stage_card_glow(
+                image,
+                card.key,
+                PAUSE_CARD_SIZE,
+                angle,
+            )
+            return image, base_rect, eased
         width = round(
             PAUSE_CARD_SIZE[0]
             + (PAUSE_CARD_HOVER_SIZE[0] - PAUSE_CARD_SIZE[0]) * eased
@@ -8167,7 +9054,14 @@ class BattleScene:
             _pause_card_surface(card.key, rank, *PAUSE_CARD_SIZE),
             (width, height),
         )
-        image = pygame.transform.rotate(scaled, angle * (1.0 - eased))
+        rotation = angle * (1.0 - eased)
+        image = pygame.transform.rotate(scaled, rotation)
+        _apply_stage_card_glow(
+            image,
+            card.key,
+            (width, height),
+            rotation,
+        )
         rect = image.get_rect(
             midbottom=(
                 center_x,
@@ -8490,6 +9384,8 @@ class BattleScene:
         self.stage.draw(surface, focus_x)
 
         for projectile in self.projectiles:
+            if isinstance(projectile, AshleySpriteEffect) and projectile.foreground:
+                continue
             if not isinstance(projectile, (AxleShotProjectile, FireExplosionEffect, JulianExplosionEffect)):
                 projectile.draw(surface, camera_x)
         for item in sorted(self.consumable_items, key=lambda consumable: consumable.lane_y):
@@ -8513,6 +9409,11 @@ class BattleScene:
         for projectile in self.projectiles:
             if isinstance(projectile, (AxleShotProjectile, FireExplosionEffect, JulianExplosionEffect)):
                 projectile.draw(surface, camera_x)
+        for projectile in self.projectiles:
+            if isinstance(projectile, AshleySpriteEffect) and projectile.foreground:
+                projectile.draw(surface, camera_x)
+            elif isinstance(projectile, AshleyMagicalBarrierEffect):
+                projectile.draw_reflect_overlay(surface, camera_x)
 
         self._draw_marker(surface, self.fighter, camera_x, "P1")
         self._draw_hud(surface)

@@ -43,6 +43,7 @@ The script runs the unit tests, creates a portable `LittleFighter3` folder, veri
 - Play mode lets you choose a playable fighter and one or more opponents from the character roster
 - Fighter HP and mana use gameplay-archetype baselines; difficulty scales NPC health and combat pacing. Quick-play opponents have 4/5/6 HP on Easy/Medium/Hard. Set `stat_overrides` in a character definition for exceptions. Character select shows each fighter's archetype separately from its roster group.
 - Character showcases include move-timed projectile volleys, area effects, and summoned sprites for the roster's implemented projectile moves.
+- Ashley joins the Elementals with a blast, three-lane missiles, a reflectable magical barrier, and a mana-regeneration orb.
 - Test Mode lets you choose a fighter and practice in the arena without enemies
 - 2.5D arena movement
 - Idle, walk, run, jump, attack, defend states
@@ -56,7 +57,7 @@ The script runs the unit tests, creates a portable `LittleFighter3` folder, veri
 - Jan's healing-bird summon and homing orb, John's blast, projectile-reflecting barrier, homing disk, and healing orb, Axle's ranged shot and knockdown/launching attacks, Julian's height-guided skulls, piercing ball, and area attacks, Luis's advancing knockdown, bidirectional wind attack, and held sprinting attack, Liberated Luis's sword combos, wind knockdown, and forward dash, Mark's mana-powered charge through the first enemy until a second enemy is hurt, Monk's wind strike, and Freeze's ice-ball, ice-column, and moving tornado special attacks
 - Rudolf's four-lane shuriken volley and air-launching sword strikes
 - The City battle stage, with a parallax sunset-city backdrop, ground-aligned scenery, and a tiled fighting floor
-- Endless Stage Mode with a deterministic, difficulty-aware threat budget, progressive roster unlocks, periodic milestone fighters, queued reinforcements, recurring health-or-mana supply breaks, a run score, and collectible XP orbs worth more for stronger enemies. Stage and wave notices appear as brief compact banners without pausing combat.
+- Endless Stage Mode with a deterministic, difficulty-aware threat budget, progressive roster unlocks, periodic milestone fighters, queued reinforcements, recurring health-or-mana supply breaks, and a run score. Defeated enemies drop XP orbs; leveling offers ranked perks and curses that alter combat, while every fifth-stage clear grants bonus XP. Stage and wave notices appear as brief compact banners without pausing combat.
 - Data-driven animation timing and frame layout
 
 ## Controls

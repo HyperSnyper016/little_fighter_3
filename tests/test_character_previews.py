@@ -179,6 +179,14 @@ class CharacterPreviewEffectTests(unittest.TestCase):
             character_directory / "Reece.jpg",
         )
 
+    def test_ashley_profile_image_is_selected_when_available(self) -> None:
+        character_directory = Path(__file__).resolve().parents[1] / "assets" / "sprites" / "characters" / "ashley"
+        scene = CharacterSelectScene.__new__(CharacterSelectScene)
+        self.assertEqual(
+            scene._resolve_profile_path(character_directory),
+            character_directory / "ashley.png",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
