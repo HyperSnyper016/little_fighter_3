@@ -46,6 +46,13 @@ WOODY_VERT_ATTACK_JUMP_MULTIPLIER = 1.1
 WOODY_VERT_ATTACK_DASH_SPEED_MULTIPLIER = 2.5
 JULIAN_SP_VERT_ATTACK_2_EXPLODE_SOUND_FRAME = 3
 SPECIAL_INPUT_BUFFER_DURATION = 0.18
+ACTION_INPUT_BUFFER_DURATION = 0.12
+BLOCK_DODGE_DURATION = 0.22
+BLOCK_DODGE_COOLDOWN = 0.5
+DEFAULT_BASIC_ATTACK_CANCELS = frozenset({"basic_attack", "block", "jump", "special"})
+DEFAULT_BASIC_ATTACK_FORWARD_REACH = 64.0
+DEFAULT_BASIC_ATTACK_REAR_REACH = 8.0
+DEFAULT_BASIC_ATTACK_LANE_TOLERANCE = 36.0
 BAT_SP_VERT_ATTACK_1_SHADOW_STEP_FRAME = 2
 HENRY_SP_MOVE_ATTACK_1_SHOT_FRAME = 4
 # Animation frame indices are zero-based; index 6 is sprite/frame 7.
@@ -68,6 +75,18 @@ WEAPON_CARRY_FRAME_DURATION_SOURCES = {
 
 def _natural_sort_key(path: Path) -> list[str | int]:
     return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", path.name)]
+
+
+def _cap_movement_velocity(
+    horizontal_velocity: float,
+    lane_velocity: float,
+    max_speed: float,
+) -> tuple[float, float]:
+    combined_speed = math.hypot(horizontal_velocity, lane_velocity)
+    if combined_speed <= max_speed or combined_speed == 0.0:
+        return horizontal_velocity, lane_velocity
+    scale = max_speed / combined_speed
+    return horizontal_velocity * scale, lane_velocity * scale
 
 
 def _heavy_carry_files(carry_root: Path, folder_names: tuple[str, ...]) -> list[Path]:
@@ -148,6 +167,23 @@ class FighterInput:
     test_spawn_xp_orb_just_pressed: bool = False
 
 
+@dataclass(frozen=True)
+class BasicAttackTiming:
+    animation_name: str
+    startup_frames: int
+    active_frames: int
+    recovery_frames: int
+    frame_duration: float
+    startup_duration: float
+    active_duration: float
+    recovery_duration: float
+    total_duration: float
+    forward_reach: float
+    rear_reach: float
+    lane_tolerance: float
+    cancel_into: frozenset[str]
+
+
 @dataclass
 class FighterSnapshot:
     x: float
@@ -175,6 +211,10 @@ class Fighter:
         self.facing = 1
         self.state = "idle"
         self.attack_timer = 0.0
+        self.attack_elapsed = 0.0
+        self.basic_attack_timing: BasicAttackTiming | None = None
+        self.attack_input_buffer_timer = 0.0
+        self.jump_input_buffer_timer = 0.0
         self.state_timer = 0.0
         self.knock_hold_timer = 0.0
         self.whiskey_sleep_hold = False
@@ -579,6 +619,108 @@ class Fighter:
         ) % len(self.weapon_basic_attack_cycle)
         return animation
 
+    def _resolve_basic_attack_timing(self, animation_name: str) -> BasicAttackTiming:
+        animation = self.animations[animation_name]
+        frame_duration = float(animation["frame_duration"])
+        frame_count = max(1, len(animation["surfaces"]))
+        profiles = self.combat.get("basic_attack_profiles", {})
+        profile = profiles.get(animation_name, {}) if isinstance(profiles, dict) else {}
+        default_startup_frames = 1 if frame_count > 1 else 0
+        startup_frames = min(
+            frame_count - 1,
+            max(0, int(profile.get("startup_frames", default_startup_frames))),
+        )
+        active_frames = min(
+            frame_count - startup_frames,
+            max(1, int(profile.get("active_frames", 1))),
+        )
+        recovery_frames = max(
+            0,
+            int(
+                profile.get(
+                    "recovery_frames",
+                    frame_count - startup_frames - active_frames,
+                )
+            ),
+        )
+        configured_total = frame_duration * (
+            startup_frames + active_frames + recovery_frames
+        )
+        total_duration = max(
+            float(self.combat["attack_duration"]),
+            frame_duration * frame_count,
+            configured_total,
+        )
+        startup_duration = frame_duration * startup_frames
+        active_duration = min(
+            frame_duration * active_frames,
+            max(0.0, total_duration - startup_duration),
+        )
+        recovery_duration = max(
+            0.0,
+            total_duration - startup_duration - active_duration,
+        )
+        cancel_into = frozenset(profile.get("cancel_into", DEFAULT_BASIC_ATTACK_CANCELS))
+        return BasicAttackTiming(
+            animation_name=animation_name,
+            startup_frames=startup_frames,
+            active_frames=active_frames,
+            recovery_frames=recovery_frames,
+            frame_duration=frame_duration,
+            startup_duration=startup_duration,
+            active_duration=active_duration,
+            recovery_duration=recovery_duration,
+            total_duration=total_duration,
+            forward_reach=float(
+                profile.get("forward_reach", DEFAULT_BASIC_ATTACK_FORWARD_REACH)
+            ),
+            rear_reach=float(
+                profile.get("rear_reach", DEFAULT_BASIC_ATTACK_REAR_REACH)
+            ),
+            lane_tolerance=float(
+                profile.get("lane_tolerance", DEFAULT_BASIC_ATTACK_LANE_TOLERANCE)
+            ),
+            cancel_into=cancel_into,
+        )
+
+    def _is_timed_basic_attack_state(self) -> bool:
+        return (
+            self.state in {"basic_attack", "sprint_punch"}
+            or (self.state == "jump_throw" and self.jump_attack_active)
+        )
+
+    @property
+    def basic_attack_is_active(self) -> bool:
+        timing = self.basic_attack_timing
+        return (
+            timing is not None
+            and self._is_timed_basic_attack_state()
+            and timing.startup_duration <= self.attack_elapsed
+            < timing.startup_duration + timing.active_duration
+        )
+
+    @property
+    def basic_attack_is_recovering(self) -> bool:
+        timing = self.basic_attack_timing
+        return (
+            timing is not None
+            and self._is_timed_basic_attack_state()
+            and self.attack_elapsed
+            >= timing.startup_duration + timing.active_duration
+        )
+
+    def _clear_basic_attack_timing(self) -> None:
+        self.basic_attack_timing = None
+        self.attack_elapsed = 0.0
+
+    def _cancel_basic_attack(self) -> None:
+        if self.basic_attack_timing is None:
+            return
+        self.attack_timer = 0.0
+        self.attack_started = False
+        self.has_applied_attack_damage = True
+        self._clear_basic_attack_timing()
+
     def _queue_rudolf_blade_sound(self) -> None:
         self.rudolf_sounds_pending.append(self.rudolf_next_blade_sound)
         self.rudolf_next_blade_sound = (
@@ -599,6 +741,28 @@ class Fighter:
     def _start_attack_state(self, state: str, push_velocity_x: float = 0.0) -> None:
         self.state = state
         self.attack_timer = self.combat["attack_duration"]
+        self.attack_elapsed = 0.0
+        self.basic_attack_timing = None
+        if state == "basic_attack":
+            animation_name = self.attack_animation
+        elif state == "sprint_punch":
+            if self._is_holding_weapon():
+                candidates = ("weapon_sprint_basic_attack", "sprint_punch")
+            elif self.name == "luis_liberated":
+                candidates = ("sprint_basic_attack", "sprint_punch")
+            else:
+                candidates = ("sprint_punch",)
+            animation_name = next(
+                (name for name in candidates if name in self.animations),
+                None,
+            )
+        else:
+            animation_name = None
+        if animation_name is not None:
+            self.basic_attack_timing = self._resolve_basic_attack_timing(animation_name)
+            self.attack_timer = self.basic_attack_timing.total_duration
+        self.attack_input_buffer_timer = 0.0
+        self.jump_input_buffer_timer = 0.0
         self.has_applied_attack_damage = False
         self.attack_started = True
         self.attack_projectile_fired = False
@@ -1238,6 +1402,9 @@ class Fighter:
 
     def _start_jump(self) -> None:
         self.state = "jump_throw"
+        self.jump_input_buffer_timer = 0.0
+        self.attack_input_buffer_timer = 0.0
+        self._clear_basic_attack_timing()
         self.current_jump_animation = "jump_normal"
         self.jump_stage = 1
         self.jump_horizontal_velocity = 0.0
@@ -1249,6 +1416,9 @@ class Fighter:
 
     def _start_second_jump(self) -> None:
         self.state = "jump_throw"
+        self.jump_input_buffer_timer = 0.0
+        self.attack_input_buffer_timer = 0.0
+        self._clear_basic_attack_timing()
         self.current_jump_animation = "jump_second"
         self.jump_stage = 2
         self.jump_horizontal_velocity = (
@@ -1288,6 +1458,13 @@ class Fighter:
             self.current_jump_animation = "jump_attack" if "jump_attack" in self.animations else ("jump_second" if self.jump_stage == 2 else "jump_normal")
 
         self.state = "jump_throw"
+        self.attack_input_buffer_timer = 0.0
+        self.jump_input_buffer_timer = 0.0
+        self.attack_elapsed = 0.0
+        self.basic_attack_timing = self._resolve_basic_attack_timing(
+            self.current_jump_animation
+        )
+        self.attack_timer = self.basic_attack_timing.total_duration
         self.jump_attack_active = True
         if self.name == "ashley":
             self.ashley_sparkles_pending = False
@@ -1333,6 +1510,14 @@ class Fighter:
 
     def update(self, dt: float, inputs: FighterInput, target: Fighter | None = None, controlled: bool = True) -> None:
         previous_state = self.state
+        if self.basic_attack_timing is not None:
+            if self._is_timed_basic_attack_state():
+                self.attack_elapsed = min(
+                    self.basic_attack_timing.total_duration,
+                    self.attack_elapsed + dt,
+                )
+            else:
+                self._clear_basic_attack_timing()
         weapon_held = self._is_holding_weapon()
         can_attack = self.held_item is None or (
             weapon_held
@@ -1352,6 +1537,25 @@ class Fighter:
         break_block_just_pressed = controlled and inputs.break_block_just_pressed
         jump_pressed = controlled and inputs.jump_pressed
         jump_just_pressed = controlled and inputs.jump_just_pressed
+        if self.attack_input_buffer_timer > 0.0:
+            self.attack_input_buffer_timer = max(0.0, self.attack_input_buffer_timer - dt)
+        if self.jump_input_buffer_timer > 0.0:
+            self.jump_input_buffer_timer = max(0.0, self.jump_input_buffer_timer - dt)
+        can_buffer_actions = (
+            controlled
+            and self.controls_enabled
+            and self.state not in {"die", "dead", "grapple", "grappled"}
+        )
+        if not can_buffer_actions:
+            self.attack_input_buffer_timer = 0.0
+            self.jump_input_buffer_timer = 0.0
+        else:
+            if attack_just_pressed:
+                self.attack_input_buffer_timer = ACTION_INPUT_BUFFER_DURATION
+            if jump_just_pressed:
+                self.jump_input_buffer_timer = ACTION_INPUT_BUFFER_DURATION
+        buffered_attack_just_pressed = self.attack_input_buffer_timer > 0.0
+        buffered_jump_just_pressed = self.jump_input_buffer_timer > 0.0
         drink_just_pressed = controlled and inputs.drink_just_pressed
         fire_knock_just_pressed = controlled and inputs.fire_knock_just_pressed
         ice_knock_just_pressed = controlled and inputs.ice_knock_just_pressed
@@ -1613,9 +1817,21 @@ class Fighter:
                     self.freeze_timer = 1.0
                     self.ice_launch_freeze_break_pending = True
 
+        basic_attack_timing = self.basic_attack_timing
+        basic_attack_recovery_cancel = (
+            basic_attack_timing is not None
+            and self.basic_attack_is_recovering
+            and bool(basic_attack_timing.cancel_into)
+        )
+        basic_attack_cancel_into = (
+            basic_attack_timing.cancel_into
+            if basic_attack_recovery_cancel and basic_attack_timing is not None
+            else frozenset()
+        )
         special_from_basic_attack = (
-            self.state == "basic_attack"
-            and self.attack_timer > 0.0
+            self.state in {"basic_attack", "sprint_punch"}
+            and self.basic_attack_is_recovering
+            and "special" in basic_attack_cancel_into
             and self.special_attack_lock is None
             and (
                 (move_special_1_chord and "sp_move_attack_1" in self.animations)
@@ -1646,6 +1862,7 @@ class Fighter:
         elif (
             self.state not in (COMBAT_ATTACK_STATES | {"fall", "henry_float", "knocked_fire", "knocked_freeze", "lift_heavy", "get_up", "die", "dead", "block_break", "block_dodge", "grapple", "grappled", "grapple_hit", "jump_throw", "item_throw", "drink", "hurt"})
             or special_from_basic_attack
+            or basic_attack_recovery_cancel
         ) and self.z == 0 and self.velocity_z == 0:
             special_attack_started = False
             can_move_special_1 = self._has_animation("sp_move_attack_1")
@@ -1709,30 +1926,51 @@ class Fighter:
                     self.special_attack_lock = "sp_move_attack_1"
                 else:
                     self.special_move_followup_state = None
+            if special_attack_started:
+                self.attack_input_buffer_timer = 0.0
+                self.jump_input_buffer_timer = 0.0
             if not special_attack_started:
-                self.is_defending = controlled and self.controls_enabled and block_pressed and self.z == 0
+                can_cancel_to_block = (
+                    not basic_attack_recovery_cancel
+                    or "block" in basic_attack_cancel_into
+                )
+                self.is_defending = (
+                    controlled
+                    and self.controls_enabled
+                    and block_pressed
+                    and self.z == 0
+                    and can_cancel_to_block
+                )
                 self.dodge_invulnerable = False
 
-                if self.is_defending and block_just_pressed and (move_x or move_y) and self.defense_cooldown == 0.0:
+                if (
+                    self.is_defending
+                    and block_just_pressed
+                    and (move_x or move_y)
+                    and self.defense_cooldown == 0.0
+                ):
+                    self._cancel_basic_attack()
                     self.state = "block_dodge"
-                    self.state_timer = 0.22
+                    self.state_timer = BLOCK_DODGE_DURATION
                     self.dodge_invulnerable = True
                     if self.name == "rudolf":
                         self.rudolf_sounds_pending.append("rudolf_shadow_step")
                     self.block_hold_timer = 0.0
-                    self.defense_cooldown = 0.5
+                    self.defense_cooldown = BLOCK_DODGE_COOLDOWN
                     self.block_dodge_animation = self.block_dodge_cycle[self.block_dodge_index] if self.block_dodge_cycle else "block_dodge"
                     self.block_dodge_index = (self.block_dodge_index + 1) % len(self.block_dodge_cycle)
                     self.next_block_dodge_animation = self.block_dodge_animation
                     if move_x != 0:
                         self.push_velocity_x = move_x * 320.0
                 elif self.is_defending:
+                    self._cancel_basic_attack()
                     if self.state != "block":
                         self.block_hold_timer = 1.0
                         self.block_strength = 1
                     self.state = "block"
                     if attack_just_pressed and self.block_strength > 0:
                         self.block_strength = 0
+                        self.attack_input_buffer_timer = 0.0
                     if self.block_strength == 0 and break_block_just_pressed:
                         self._start_block_break()
                 elif not self.is_defending and self.state == "block":
@@ -1740,15 +1978,35 @@ class Fighter:
                     self.state = "idle"
                     self.block_hold_timer = 0.0
                     self.block_strength = 1
-                elif lift_just_pressed and self.z == 0:
+                elif lift_just_pressed and self.z == 0 and (
+                    not basic_attack_recovery_cancel
+                    or "lift" in basic_attack_cancel_into
+                ):
                     self.state = "lift_heavy"
                     self.state_timer = 0.48
-                elif attack_pressed and self.block_broken and self.z == 0 and self.try_start_grapple(target, attack_pressed):
+                elif (
+                    attack_pressed
+                    and self.block_broken
+                    and self.z == 0
+                    and (
+                        not basic_attack_recovery_cancel
+                        or "grapple" in basic_attack_cancel_into
+                    )
+                    and self.try_start_grapple(target, attack_pressed)
+                ):
                     pass
                 elif self.state == "lift_heavy" and attack_just_pressed:
                     self.state = "throw_heavy"
                     self._start_attack_state("throw_heavy")
-                elif attack_just_pressed and self.z == 0 and move_x != 0 and running and not block_pressed and self.state in {"run", "walk"}:
+                elif (
+                    buffered_attack_just_pressed
+                    and (not basic_attack_recovery_cancel or "basic_attack" in basic_attack_cancel_into)
+                    and self.z == 0
+                    and move_x != 0
+                    and running
+                    and not block_pressed
+                    and self.state in {"run", "walk"}
+                ):
                     sprint_attack_push = 0.0 if self.name == "julian" else self.facing * 160.0
                     if weapon_held:
                         if "weapon_sprint_basic_attack" in self.animations:
@@ -1757,7 +2015,12 @@ class Fighter:
                     else:
                         self.state = "sprint_punch"
                         self._start_attack_state("sprint_punch", push_velocity_x=sprint_attack_push)
-                elif attack_just_pressed and self.z == 0 and (move_x or move_y):
+                elif (
+                    buffered_attack_just_pressed
+                    and (not basic_attack_recovery_cancel or "basic_attack" in basic_attack_cancel_into)
+                    and self.z == 0
+                    and (move_x or move_y)
+                ):
                     if weapon_held:
                         if self.weapon_basic_attack_cycle or "weapon_basic_attack" in self.animations:
                             self.state = "basic_attack"
@@ -1767,7 +2030,11 @@ class Fighter:
                         self.state = "basic_attack"
                         self.attack_animation = self._next_basic_attack_animation()
                         self._start_attack_state("basic_attack")
-                elif attack_just_pressed and self.z == 0:
+                elif (
+                    buffered_attack_just_pressed
+                    and (not basic_attack_recovery_cancel or "basic_attack" in basic_attack_cancel_into)
+                    and self.z == 0
+                ):
                     if weapon_held:
                         if self.weapon_basic_attack_cycle or "weapon_basic_attack" in self.animations:
                             self.state = "basic_attack"
@@ -1777,27 +2044,34 @@ class Fighter:
                         self.state = "basic_attack"
                         self.attack_animation = self._next_basic_attack_animation()
                         self._start_attack_state("basic_attack")
-                elif jump_just_pressed and self.z == 0:
+                elif (
+                    buffered_jump_just_pressed
+                    and (not basic_attack_recovery_cancel or "jump" in basic_attack_cancel_into)
+                    and self.z == 0
+                ):
                     if running:
                         self._start_second_jump()
                         self.just_jumped = True
                     else:
                         self._start_jump()
                         self.just_jumped = True
+                elif basic_attack_recovery_cancel:
+                    pass
                 elif move_x or move_y:
                     self.state = "run" if running else "walk"
                 elif self.z == 0:
                     self.state = "idle"
-        elif self.state == "jump_throw" and self.item_throw_animation is None and attack_just_pressed and self.attack_timer == 0:
+        elif self.state == "jump_throw" and self.item_throw_animation is None and buffered_attack_just_pressed and self.attack_timer == 0:
             self._start_jump_attack()
             if not weapon_held:
                 self._queue_hunter_air_arrow()
 
-        if jump_just_pressed and was_airborne and self.state == "jump_throw" and self.jump_stage == 1:
+        if buffered_jump_just_pressed and was_airborne and self.state == "jump_throw" and self.jump_stage == 1:
             self._start_second_jump()
             self.just_jumped = True
-        elif jump_just_pressed and was_airborne and self.state == "jump_throw" and self.jump_stage == 2 and self.name == "dark_bat":
+        elif buffered_jump_just_pressed and was_airborne and self.state == "jump_throw" and self.jump_stage == 2 and self.name == "dark_bat":
             self._cancel_dark_bat_flight()
+            self.jump_input_buffer_timer = 0.0
             self.just_jumped = True
 
         if self.name == "dark_bat" and self.state == "jump_throw" and self.jump_stage == 2 and self.dark_bat_flight_timer > 0.0:
@@ -1813,12 +2087,24 @@ class Fighter:
             speed = self.movement["run_speed"] if self.state == "run" else self.movement["walk_speed"]
             if self.state == "run":
                 speed *= 1.25
-            self.x += move_x * speed * dt
-            self.lane_y += move_y * self.movement["lane_speed"] * dt
+            lane_speed = self.movement["lane_speed"]
+            horizontal_velocity, lane_velocity = _cap_movement_velocity(
+                move_x * speed,
+                move_y * lane_speed,
+                max(speed, lane_speed),
+            )
+            self.x += horizontal_velocity * dt
+            self.lane_y += lane_velocity * dt
         elif self.name == "bat" and self.state == "sp_vert_attack_1":
             speed = self.movement["walk_speed"]
-            self.x += self.facing * speed * dt
-            self.lane_y += move_y * self.movement["lane_speed"] * dt
+            lane_speed = self.movement["lane_speed"]
+            horizontal_velocity, lane_velocity = _cap_movement_velocity(
+                self.facing * speed,
+                move_y * lane_speed,
+                max(speed, lane_speed),
+            )
+            self.x += horizontal_velocity * dt
+            self.lane_y += lane_velocity * dt
         elif self.name == "davis" and self.state == "sp_vert_attack_1":
             self.x += self.facing * self.movement["walk_speed"] * 0.5 * dt
         elif self.name == "deep" and self.state == "sp_vert_attack_2":
@@ -1854,8 +2140,14 @@ class Fighter:
                 horizontal_drag = 1.5 if self.jump_stage == 2 else 4.5
                 self.jump_horizontal_velocity *= max(0.0, 1.0 - (horizontal_drag * dt))
 
+            lane_speed = self.movement["lane_speed"]
+            self.jump_horizontal_velocity, lane_velocity = _cap_movement_velocity(
+                self.jump_horizontal_velocity,
+                move_y * lane_speed,
+                max(air_horizontal_speed, lane_speed),
+            )
             self.x += self.jump_horizontal_velocity * dt
-            self.lane_y += move_y * self.movement["lane_speed"] * dt
+            self.lane_y += lane_velocity * dt
         if self.name == "deep" and self.state == "sp_move_attack_2":
             self.x += self.facing * 220.0 * dt
         if (

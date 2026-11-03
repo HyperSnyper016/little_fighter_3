@@ -181,7 +181,6 @@ ENDLESS_STAGE_MILESTONES = (
 )
 
 ENDLESS_REINFORCEMENT_INTERVAL = 4
-ENDLESS_SUPPLY_BREAK_INTERVAL = 3
 ENDLESS_MILESTONE_INTERVAL = 5
 ENDLESS_ENEMY_THREAT = {
     "bandit": 1.0,
@@ -299,8 +298,8 @@ def get_endless_encounter(
 
     The budget rises by 0.9 threat per stage. Difficulty adjusts the budget,
     while fixed enemy threat values keep fighter stats stable. Every fifth
-    stage is a deterministic milestone; every fourth stage splits its squad
-    into an opening wave and reinforcements.
+    stage is a deterministic milestone; every fourth stage and every squad
+    of five or more split into an opening wave and reinforcements.
     """
     if stage_number < 1:
         raise ValueError("stage_number must be positive")
@@ -380,7 +379,10 @@ def get_endless_encounter(
 
     squad = tuple((character, 1) for character in squad_names)
     squad_threat = sum(_enemy_threat(character) for character in squad_names)
-    if stage_number > 1 and stage_number % ENDLESS_REINFORCEMENT_INTERVAL == 0:
+    if stage_number > 1 and (
+        stage_number % ENDLESS_REINFORCEMENT_INTERVAL == 0
+        or len(squad) >= 5
+    ):
         split_at = (len(squad) + 1) // 2
         if split_at < len(squad):
             opening, reinforcement = squad[:split_at], squad[split_at:]

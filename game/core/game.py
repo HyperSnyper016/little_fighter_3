@@ -14,6 +14,7 @@ from game.scenes.main_menu_scene import MainMenuScene
 from game.scenes.map_select_scene import MapSelectScene
 from game.systems.audio import AudioBank
 from game.systems.keybindings import KEY_BINDINGS
+from game.systems.timing import clamp_frame_delta
 
 
 class Game:
@@ -35,7 +36,8 @@ class Game:
 
     def run(self) -> None:
         while True:
-            dt = self.clock.tick(FPS) / 1000.0
+            frame_dt = self.clock.tick(FPS) / 1000.0
+            dt = clamp_frame_delta(frame_dt)
             pressed_actions = set()
             pressed_key_events: list[int] = []
             mouse_click = None
@@ -72,8 +74,8 @@ class Game:
             keys = pygame.key.get_pressed()
             left_pressed = KEY_BINDINGS.is_pressed("move_left", keys)
             right_pressed = KEY_BINDINGS.is_pressed("move_right", keys)
-            self.left_tap_time += dt
-            self.right_tap_time += dt
+            self.left_tap_time += frame_dt
+            self.right_tap_time += frame_dt
             test_mode = isinstance(self.scene, BattleScene) and self.scene.test_mode
             self.input_state = FighterInput(
                 left=left_pressed,

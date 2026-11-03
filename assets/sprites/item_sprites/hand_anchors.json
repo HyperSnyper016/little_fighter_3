@@ -4046,6 +4046,286 @@
           -0.0625
         ]
       ]
+    },
+    "ashley": {
+      "idle": [
+        [
+          0.375,
+          0.71875
+        ],
+        [
+          0.38125,
+          0.7
+        ],
+        [
+          0.38125,
+          0.7125
+        ],
+        [
+          0.38125,
+          0.71875
+        ]
+      ],
+      "walk": [
+        [
+          0.35625,
+          0.725
+        ],
+        [
+          0.3625,
+          0.70625
+        ],
+        [
+          0.36875,
+          0.71875
+        ]
+      ],
+      "run": [
+        [
+          0.3875,
+          0.60625
+        ],
+        [
+          0.69375,
+          0.71875
+        ],
+        [
+          0.8125,
+          0.54375
+        ]
+      ],
+      "drink": [
+        [
+          0.44375,
+          0.4
+        ],
+        [
+          0.4375,
+          0.38125
+        ],
+        [
+          0.4125,
+          0.35625
+        ]
+      ],
+      "spawn": [
+        [
+          0.1375,
+          0.55
+        ],
+        [
+          0.675,
+          0.39375
+        ],
+        [
+          1.09375,
+          0.66875
+        ]
+      ],
+      "jump_throw": [
+        [
+          0.08125,
+          0.45
+        ],
+        [
+          0.61875,
+          0.29375
+        ],
+        [
+          0.98125,
+          0.5125
+        ]
+      ],
+      "get_up": [
+        [
+          0.5125,
+          0.9375
+        ]
+      ],
+      "heavy_carry_walk": [
+        [
+          0.59375,
+          0.08125
+        ],
+        [
+          0.59375,
+          0.075
+        ],
+        [
+          0.59375,
+          0.075
+        ],
+        [
+          0.5875,
+          0.075
+        ]
+      ],
+      "heavy_carry_sprint": [
+        [
+          0.49375,
+          0.075
+        ],
+        [
+          0.51875,
+          0.1
+        ],
+        [
+          0.51875,
+          0.08125
+        ]
+      ],
+      "heavy_carry_throw": [
+        [
+          0.33125,
+          0.1
+        ],
+        [
+          1.16875,
+          0.20625
+        ]
+      ]
+    },
+    "reece": {
+      "idle": [
+        [
+          0.275,
+          0.6375
+        ],
+        [
+          0.275,
+          0.63125
+        ],
+        [
+          0.2875,
+          0.64375
+        ],
+        [
+          0.26875,
+          0.65
+        ]
+      ],
+      "walk": [
+        [
+          0.31875,
+          0.66875
+        ],
+        [
+          0.3375,
+          0.65
+        ],
+        [
+          0.35,
+          0.675
+        ],
+        [
+          0.35,
+          0.68125
+        ]
+      ],
+      "run": [
+        [
+          0.3,
+          0.49375
+        ],
+        [
+          0.5875,
+          0.6625
+        ],
+        [
+          0.725,
+          0.55
+        ]
+      ],
+      "drink": [
+        [
+          0.625,
+          0.34375
+        ],
+        [
+          0.61875,
+          0.3125
+        ],
+        [
+          0.61875,
+          0.3
+        ]
+      ],
+      "spawn": [
+        [
+          0.28125,
+          0.19375
+        ],
+        [
+          0.4375,
+          0.1875
+        ],
+        [
+          1.0875,
+          0.59375
+        ]
+      ],
+      "jump_throw": [
+        [
+          0.26875,
+          0.13125
+        ],
+        [
+          0.4,
+          0.125
+        ],
+        [
+          1.0625,
+          0.56875
+        ]
+      ],
+      "get_up": [
+        [
+          0.55,
+          0.9
+        ]
+      ],
+      "heavy_carry_walk": [
+        [
+          0.65,
+          -0.00625
+        ],
+        [
+          0.68125,
+          0.00625
+        ],
+        [
+          0.69375,
+          -0.01875
+        ],
+        [
+          0.7,
+          -0.00625
+        ]
+      ],
+      "heavy_carry_sprint": [
+        [
+          0.575,
+          0.04375
+        ],
+        [
+          0.6,
+          0.01875
+        ],
+        [
+          0.60625,
+          0.05625
+        ]
+      ],
+      "heavy_carry_throw": [
+        [
+          0.38125,
+          0.025
+        ],
+        [
+          1.2,
+          0.1875
+        ]
+      ]
     }
   },
   "weapons": {
@@ -7427,6 +7707,306 @@
             0.70625
           ]
         ]
+      },
+      "ashley": {
+        "weapon_idle": [
+          [
+            0.375,
+            0.69375
+          ],
+          [
+            0.3875,
+            0.6875
+          ],
+          [
+            0.38125,
+            0.6875
+          ],
+          [
+            0.36875,
+            0.68125
+          ]
+        ],
+        "weapon_jump_normal": [
+          [
+            0.3625,
+            0.7125
+          ],
+          [
+            0.2,
+            0.48125
+          ]
+        ],
+        "weapon_jump_second": [
+          [
+            0.3625,
+            0.48125
+          ]
+        ],
+        "weapon_ground_throw": [
+          [
+            0.125,
+            0.54375
+          ],
+          [
+            0.68125,
+            0.3875
+          ],
+          [
+            1.05625,
+            0.61875
+          ]
+        ],
+        "weapon_jump_throw": [
+          [
+            0.08125,
+            0.44375
+          ],
+          [
+            0.625,
+            0.29375
+          ],
+          [
+            0.95625,
+            0.575
+          ]
+        ],
+        "weapon_basic_attack": [
+          [
+            0.1375,
+            0.21875
+          ],
+          [
+            0.7,
+            0.36875
+          ],
+          [
+            0.4875,
+            0.5625
+          ],
+          [
+            0.45625,
+            0.41875
+          ],
+          [
+            0.63125,
+            0.3875
+          ],
+          [
+            0.70625,
+            0.45
+          ],
+          [
+            0.35,
+            0.725
+          ]
+        ],
+        "weapon_jump_attack": [
+          [
+            0.15,
+            0.2875
+          ],
+          [
+            0.50625,
+            0.14375
+          ],
+          [
+            0.75,
+            0.46875
+          ],
+          [
+            0.725,
+            0.5625
+          ]
+        ],
+        "weapon_sprint_basic_attack": [
+          [
+            0.09375,
+            0.31875
+          ],
+          [
+            0.86875,
+            0.4125
+          ],
+          [
+            0.9125,
+            0.63125
+          ]
+        ],
+        "weapon_sprint_jump_basic_attack": [
+          [
+            0.125,
+            0.3
+          ],
+          [
+            0.48125,
+            0.14375
+          ],
+          [
+            0.76875,
+            0.54375
+          ],
+          [
+            0.71875,
+            0.58125
+          ]
+        ],
+        "weapon_get_up": [
+          [
+            0.7125,
+            0.90625
+          ]
+        ]
+      },
+      "reece": {
+        "weapon_idle": [
+          [
+            0.43125,
+            0.5
+          ],
+          [
+            0.425,
+            0.4625
+          ],
+          [
+            0.425,
+            0.4875
+          ],
+          [
+            0.43125,
+            0.4625
+          ]
+        ],
+        "weapon_jump_normal": [
+          [
+            0.65625,
+            0.79375
+          ],
+          [
+            0.56875,
+            0.40625
+          ]
+        ],
+        "weapon_jump_second": [
+          [
+            0.66875,
+            0.48125
+          ]
+        ],
+        "weapon_ground_throw": [
+          [
+            0.1,
+            0.3
+          ],
+          [
+            0.1625,
+            0.15
+          ],
+          [
+            1.15,
+            0.5625
+          ]
+        ],
+        "weapon_jump_throw": [
+          [
+            0.09375,
+            0.25
+          ],
+          [
+            0.15,
+            0.13125
+          ],
+          [
+            1.14375,
+            0.50625
+          ]
+        ],
+        "weapon_basic_attack": [
+          [
+            0.08125,
+            0.31875
+          ],
+          [
+            0.125,
+            0.18125
+          ],
+          [
+            0.775,
+            0.5
+          ],
+          [
+            0.7875,
+            0.575
+          ],
+          [
+            0.4375,
+            0.31875
+          ],
+          [
+            0.775,
+            0.31875
+          ],
+          [
+            0.8,
+            0.44375
+          ],
+          [
+            0.23125,
+            0.75625
+          ]
+        ],
+        "weapon_jump_attack": [
+          [
+            0.09375,
+            0.1375
+          ],
+          [
+            0.1375,
+            0.05
+          ],
+          [
+            0.7875,
+            0.3875
+          ],
+          [
+            0.7875,
+            0.525
+          ]
+        ],
+        "weapon_sprint_basic_attack": [
+          [
+            0.21875,
+            0.15625
+          ],
+          [
+            0.8375,
+            0.45
+          ],
+          [
+            0.88125,
+            0.5625
+          ]
+        ],
+        "weapon_sprint_jump_basic_attack": [
+          [
+            0.15625,
+            0.30625
+          ],
+          [
+            0.43125,
+            0.25625
+          ],
+          [
+            0.775,
+            0.53125
+          ]
+        ],
+        "weapon_get_up": [
+          [
+            0.7,
+            0.79375
+          ]
+        ]
       }
     }
   },
@@ -8661,6 +9241,114 @@
           "weapons/ice_sword/throw/row-4-column-6.png",
           "weapons/ice_sword/throw/row-3-column-1.png",
           "weapons/ice_sword/throw/row-3-column-5.png"
+        ],
+        "weapon_get_up": [
+          "weapons/ice_sword/holding/swing/4.png"
+        ]
+      },
+      "ashley": {
+        "weapon_idle": [
+          "weapons/ice_sword/holding/idle/row-1-column-3.png",
+          "weapons/ice_sword/holding/idle/row-1-column-3.png",
+          "weapons/ice_sword/holding/idle/row-1-column-3.png",
+          "weapons/ice_sword/holding/idle/row-1-column-3.png"
+        ],
+        "weapon_jump_normal": [
+          "weapons/ice_sword/holding/swing/1.png",
+          "weapons/ice_sword/holding/swing/16.png"
+        ],
+        "weapon_jump_second": [
+          "weapons/ice_sword/holding/swing/1.png"
+        ],
+        "weapon_ground_throw": [
+          "weapons/ice_sword/throw/row-3-column-1.png",
+          "weapons/ice_sword/throw/row-3-column-9.png",
+          "weapons/ice_sword/throw/row-4-column-6.png"
+        ],
+        "weapon_jump_throw": [
+          "weapons/ice_sword/throw/row-3-column-1.png",
+          "weapons/ice_sword/throw/row-3-column-9.png",
+          "weapons/ice_sword/throw/row-4-column-6.png"
+        ],
+        "weapon_basic_attack": [
+          "weapons/ice_sword/holding/swing/13.png",
+          "weapons/ice_sword/holding/swing/2.png",
+          "weapons/ice_sword/holding/swing/4.png",
+          "weapons/ice_sword/holding/swing/14.png",
+          "weapons/ice_sword/holding/swing/15.png",
+          "weapons/ice_sword/holding/swing/2.png",
+          "weapons/ice_sword/holding/swing/6.png"
+        ],
+        "weapon_jump_attack": [
+          "weapons/ice_sword/holding/swing/11.png",
+          "weapons/ice_sword/holding/swing/14.png",
+          "weapons/ice_sword/holding/swing/3.png",
+          "weapons/ice_sword/holding/swing/4.png"
+        ],
+        "weapon_sprint_basic_attack": [
+          "weapons/ice_sword/holding/swing/12.png",
+          "weapons/ice_sword/holding/swing/2.png",
+          "weapons/ice_sword/holding/swing/4.png"
+        ],
+        "weapon_sprint_jump_basic_attack": [
+          "weapons/ice_sword/holding/swing/11.png",
+          "weapons/ice_sword/holding/swing/14.png",
+          "weapons/ice_sword/holding/swing/4.png",
+          "weapons/ice_sword/holding/swing/4.png"
+        ],
+        "weapon_get_up": [
+          "weapons/ice_sword/holding/swing/5.png"
+        ]
+      },
+      "reece": {
+        "weapon_idle": [
+          "weapons/ice_sword/holding/idle/row-1-column-3.png",
+          "weapons/ice_sword/holding/idle/row-1-column-3.png",
+          "weapons/ice_sword/holding/idle/row-1-column-3.png",
+          "weapons/ice_sword/holding/idle/row-1-column-3.png"
+        ],
+        "weapon_jump_normal": [
+          "weapons/ice_sword/holding/swing/4.png",
+          "weapons/ice_sword/holding/swing/3.png"
+        ],
+        "weapon_jump_second": [
+          "weapons/ice_sword/holding/swing/4.png"
+        ],
+        "weapon_ground_throw": [
+          "weapons/ice_sword/throw/row-4-column-1.png",
+          "weapons/ice_sword/throw/row-4-column-3.png",
+          "weapons/ice_sword/throw/row-3-column-3.png"
+        ],
+        "weapon_jump_throw": [
+          "weapons/ice_sword/throw/row-4-column-1.png",
+          "weapons/ice_sword/throw/row-4-column-2.png",
+          "weapons/ice_sword/throw/row-3-column-4.png"
+        ],
+        "weapon_basic_attack": [
+          "weapons/ice_sword/holding/swing/11.png",
+          "weapons/ice_sword/holding/swing/12.png",
+          "weapons/ice_sword/holding/swing/4.png",
+          "weapons/ice_sword/holding/swing/4.png",
+          "weapons/ice_sword/holding/swing/15.png",
+          "weapons/ice_sword/holding/swing/2.png",
+          "weapons/ice_sword/holding/swing/4.png",
+          "weapons/ice_sword/holding/swing/7.png"
+        ],
+        "weapon_jump_attack": [
+          "weapons/ice_sword/holding/swing/12.png",
+          "weapons/ice_sword/holding/swing/13.png",
+          "weapons/ice_sword/holding/swing/3.png",
+          "weapons/ice_sword/holding/swing/4.png"
+        ],
+        "weapon_sprint_basic_attack": [
+          "weapons/ice_sword/holding/swing/12.png",
+          "weapons/ice_sword/holding/swing/3.png",
+          "weapons/ice_sword/holding/swing/4.png"
+        ],
+        "weapon_sprint_jump_basic_attack": [
+          "weapons/ice_sword/holding/swing/12.png",
+          "weapons/ice_sword/holding/swing/14.png",
+          "weapons/ice_sword/holding/swing/4.png"
         ],
         "weapon_get_up": [
           "weapons/ice_sword/holding/swing/4.png"

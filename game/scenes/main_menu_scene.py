@@ -13,6 +13,11 @@ from game.systems.audio import AudioBank
 from game.systems.keybindings import KEY_BINDINGS, KEYBINDING_ROWS
 
 
+KEYBINDING_LABELS = {
+    action: label for label, action, _ in KEYBINDING_ROWS
+}
+
+
 @dataclass
 class UpdateHistoryRelease:
     version: str
@@ -467,8 +472,22 @@ class MainMenuScene:
                 if key_code == pygame.K_ESCAPE:
                     self.keybinding_notice = "Rebinding cancelled."
                 else:
-                    KEY_BINDINGS.set_binding(self.keybinding_capture, key_code)
-                    self.keybinding_notice = "Key binding saved."
+                    action = self.keybinding_capture
+                    KEY_BINDINGS.set_binding(action, key_code)
+                    conflicts = KEY_BINDINGS.conflicting_actions(action)
+                    if conflicts:
+                        conflict_labels = [
+                            label
+                            for label, other_action, _ in KEYBINDING_ROWS
+                            if other_action in conflicts
+                        ]
+                        self.keybinding_notice = (
+                            "Warning: this key is also assigned to "
+                            + ", ".join(conflict_labels)
+                            + "."
+                        )
+                    else:
+                        self.keybinding_notice = "Key binding saved."
                 self.keybinding_capture = None
             return
 
@@ -630,11 +649,38 @@ class MainMenuScene:
         pygame.draw.rect(surface, (18, 23, 32), panel, border_radius=16)
         pygame.draw.rect(surface, (108, 132, 156), panel, 2, border_radius=16)
 
-        instruction_text = (
-            self.keybinding_notice
-            or "Select a row and press a key to rebind. Changes save automatically."
+        selected_action = KEYBINDING_ROWS[self.keybinding_selected_index][1]
+        selected_conflicts = KEY_BINDINGS.conflicting_actions(selected_action)
+        if self.keybinding_notice:
+            instruction_text = self.keybinding_notice
+            instruction_color = (
+                (255, 143, 125)
+                if self.keybinding_notice.startswith("Warning:")
+                else (174, 188, 204)
+            )
+        elif selected_conflicts:
+            conflict_labels = [
+                label
+                for label, action, _ in KEYBINDING_ROWS
+                if action in selected_conflicts
+            ]
+            instruction_text = (
+                f"Warning: {KEYBINDING_LABELS[selected_action]} shares a key with "
+                + ", ".join(conflict_labels)
+                + "."
+            )
+            instruction_color = (255, 143, 125)
+        else:
+            instruction_text = (
+                "Select a row and press a key to rebind. "
+                "[!] marks conflicting bindings."
+            )
+            instruction_color = (174, 188, 204)
+        instruction = self.history_hint_font.render(
+            instruction_text,
+            True,
+            instruction_color,
         )
-        instruction = self.history_hint_font.render(instruction_text, True, (174, 188, 204))
         surface.blit(instruction, instruction.get_rect(midtop=(viewport.centerx, viewport.top - 26)))
 
         old_clip = surface.get_clip()
@@ -657,7 +703,11 @@ class MainMenuScene:
                 if self.keybinding_capture == action
                 else KEY_BINDINGS.label(action)
             )
-            binding = self.history_button_font.render(binding_text, True, (255, 207, 122))
+            conflicts = KEY_BINDINGS.conflicting_actions(action)
+            if conflicts:
+                binding_text += " [!]"
+            binding_color = (255, 143, 125) if conflicts else (255, 207, 122)
+            binding = self.history_button_font.render(binding_text, True, binding_color)
             surface.blit(binding, binding.get_rect(midright=(row_rect.right - 16, row_rect.centery)))
         surface.set_clip(old_clip)
 

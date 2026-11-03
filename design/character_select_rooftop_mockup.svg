@@ -1,0 +1,257 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <title>Character select — nighttime rooftop arena concept</title>
+  <desc>A game UI concept with pixel-art city silhouettes, cinematic rooftop lighting, a featured fighter, and roster panels.</desc>
+  <defs>
+    <linearGradient id="sky" x2="0" y2="1">
+      <stop stop-color="#101c35"/>
+      <stop offset=".58" stop-color="#182a43"/>
+      <stop offset="1" stop-color="#101923"/>
+    </linearGradient>
+    <linearGradient id="horizon" x2="0" y2="1">
+      <stop stop-color="#6084a0" stop-opacity=".04"/>
+      <stop offset=".55" stop-color="#78a8c0" stop-opacity=".28"/>
+      <stop offset="1" stop-color="#d89a64" stop-opacity=".06"/>
+    </linearGradient>
+    <linearGradient id="beam" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#ffe2a0" stop-opacity=".25"/>
+      <stop offset="1" stop-color="#f2bc74" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="fighterLight">
+      <stop stop-color="#f1bb78" stop-opacity=".38"/>
+      <stop offset=".44" stop-color="#cc9566" stop-opacity=".12"/>
+      <stop offset="1" stop-color="#cc9566" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="panel" x2="0" y2="1">
+      <stop stop-color="#101b2c" stop-opacity=".96"/>
+      <stop offset="1" stop-color="#08111f" stop-opacity=".96"/>
+    </linearGradient>
+    <linearGradient id="activeCard" x2="0" y2="1">
+      <stop stop-color="#513c34"/>
+      <stop offset="1" stop-color="#282d36"/>
+    </linearGradient>
+    <linearGradient id="roof" x2="0" y2="1">
+      <stop stop-color="#293b4b"/>
+      <stop offset="1" stop-color="#111a24"/>
+    </linearGradient>
+    <filter id="softGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="12"/>
+    </filter>
+    <filter id="smallGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+    <pattern id="windowPattern" width="34" height="42" patternUnits="userSpaceOnUse">
+      <rect x="7" y="8" width="9" height="15" rx="1" fill="#9ab4c3" opacity=".17"/>
+      <rect x="22" y="8" width="6" height="15" rx="1" fill="#e1ae78" opacity=".2"/>
+      <rect x="7" y="30" width="9" height="5" rx="1" fill="#9ab4c3" opacity=".1"/>
+    </pattern>
+    <clipPath id="sceneClip">
+      <rect width="1920" height="1080"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#sceneClip)">
+    <rect width="1920" height="1080" fill="url(#sky)"/>
+    <circle cx="980" cy="370" r="430" fill="url(#fighterLight)"/>
+
+    <g fill="#c6d9e3" opacity=".5">
+      <circle cx="178" cy="215" r="2"/><circle cx="335" cy="174" r="1.5"/>
+      <circle cx="522" cy="236" r="1.5"/><circle cx="745" cy="156" r="1.5"/>
+      <circle cx="1150" cy="193" r="2"/><circle cx="1330" cy="238" r="1.5"/>
+      <circle cx="1580" cy="160" r="1.5"/><circle cx="1758" cy="224" r="2"/>
+      <circle cx="895" cy="240" r="1"/><circle cx="1460" cy="194" r="1"/>
+    </g>
+    <path d="M0 365 C260 315 420 385 700 342 S1190 362 1450 322 S1740 365 1920 315 L1920 570 L0 570Z" fill="#273a52" opacity=".22"/>
+    <path d="M0 430 C260 390 475 430 710 405 S1150 445 1410 392 S1700 410 1920 384 L1920 630 L0 630Z" fill="url(#horizon)"/>
+
+    <g fill="#111e2c">
+      <path d="M0 566V416H74V379H124V429H162V337H244V402H291V354H344V418H387V376H458V558Z"/>
+      <path d="M1920 564V375H1852V326H1800V386H1743V354H1690V420H1648V337H1579V398H1520V371H1470V558Z"/>
+      <path d="M424 559V468H483V417H543V453H593V387H646V444H711V421H773V560Z"/>
+      <path d="M1155 560V438H1213V396H1273V432H1324V379H1390V440H1443V417H1500V560Z"/>
+    </g>
+    <g fill="url(#windowPattern)" opacity=".8">
+      <path d="M0 566V416H74V379H124V429H162V337H244V402H291V354H344V418H387V376H458V558Z"/>
+      <path d="M1920 564V375H1852V326H1800V386H1743V354H1690V420H1648V337H1579V398H1520V371H1470V558Z"/>
+      <path d="M424 559V468H483V417H543V453H593V387H646V444H711V421H773V560Z"/>
+      <path d="M1155 560V438H1213V396H1273V432H1324V379H1390V440H1443V417H1500V560Z"/>
+    </g>
+
+    <path d="M137 0 L526 0 L901 766 L608 766Z" fill="url(#beam)" opacity=".5"/>
+    <path d="M1640 0 L1817 0 L1268 756 L1125 756Z" fill="url(#beam)" opacity=".42"/>
+    <g stroke="#d7a56f" stroke-opacity=".48" fill="none">
+      <path d="M108 0V153H530"/>
+      <path d="M1813 0V126H1470"/>
+      <path d="M109 153L94 173M530 153L545 173M1813 126L1798 146M1470 126L1485 146"/>
+    </g>
+    <g fill="#ffe2aa">
+      <circle cx="530" cy="154" r="7"/>
+      <circle cx="1470" cy="127" r="7"/>
+    </g>
+    <g fill="#ffe2aa" opacity=".78" filter="url(#smallGlow)">
+      <circle cx="530" cy="154" r="13"/>
+      <circle cx="1470" cy="127" r="13"/>
+    </g>
+
+    <g fill="#c5d5db" opacity=".35">
+      <circle cx="260" cy="705" r="2"/><circle cx="429" cy="644" r="1.5"/>
+      <circle cx="720" cy="710" r="1.5"/><circle cx="1195" cy="675" r="2"/>
+      <circle cx="1448" cy="728" r="1.5"/><circle cx="1690" cy="656" r="2"/>
+      <circle cx="890" cy="622" r="1.5"/><circle cx="1044" cy="752" r="1"/>
+    </g>
+    <g fill="#e5b885" opacity=".52">
+      <circle cx="385" cy="753" r="2"/><circle cx="1544" cy="620" r="1.5"/>
+      <circle cx="1290" cy="770" r="2"/><circle cx="584" cy="680" r="1"/>
+    </g>
+
+    <ellipse cx="960" cy="786" rx="366" ry="76" fill="#d2a06b" opacity=".2" filter="url(#softGlow)"/>
+    <path d="M0 766 L193 722 H1727 L1920 766V1080H0Z" fill="url(#roof)"/>
+    <path d="M0 765H1920" stroke="#b8c2c7" stroke-opacity=".45" stroke-width="2"/>
+    <path d="M0 779H1920" stroke="#e0b281" stroke-opacity=".42" stroke-width="2"/>
+    <path d="M0 780L190 740H1730L1920 780" fill="none" stroke="#d4dfe2" stroke-opacity=".18" stroke-width="2"/>
+    <path d="M92 802H412M1510 802H1827" stroke="#c3d0d5" stroke-opacity=".16" stroke-width="3"/>
+    <path d="M112 816H295M1610 816H1806" stroke="#d7a56f" stroke-opacity=".25" stroke-width="2"/>
+
+    <ellipse cx="960" cy="768" rx="228" ry="32" fill="#f0bd7d" opacity=".24" filter="url(#softGlow)"/>
+    <path d="M826 777H1094" stroke="#ffdaa3" stroke-opacity=".65" stroke-width="3"/>
+
+    <g aria-label="Featured fighter placeholder">
+      <ellipse cx="960" cy="770" rx="66" ry="12" fill="#080d15" opacity=".66"/>
+      <path d="M944 465Q960 447 978 465L991 483L982 503L938 503L928 484Z" fill="#d7b18b"/>
+      <path d="M936 473Q959 443 982 469L981 482Q959 470 935 486Z" fill="#263544"/>
+      <path d="M937 501L983 501L1000 536L989 576L1007 656L1026 748L989 758L957 672L940 757L896 757L917 654L916 572L901 536Z" fill="#182531"/>
+      <path d="M938 502L962 512L984 501L998 536L980 568L939 567L918 538Z" fill="#34495a"/>
+      <path d="M918 525L889 552L865 609L882 617L921 576L940 547Z" fill="#263947"/>
+      <path d="M987 522L1016 546L1035 600L1017 608L984 568L972 544Z" fill="#263947"/>
+      <path d="M894 747L940 747L935 766L886 766Q879 759 894 747Z" fill="#101821"/>
+      <path d="M989 747L1027 744L1047 762Q1048 768 1039 768H995Z" fill="#101821"/>
+      <path d="M949 509L964 516L976 509L973 552L950 552Z" fill="#d19a65" opacity=".9"/>
+      <path d="M921 550L940 563M983 551L1000 562" stroke="#e7bc8d" stroke-opacity=".54" stroke-width="4"/>
+    </g>
+
+    <rect width="1920" height="1080" fill="#050b13" opacity=".16"/>
+
+    <text x="64" y="72" fill="#f6f1e7" font-family="Segoe UI, Arial, sans-serif" font-size="38" font-weight="800" letter-spacing="2">CHOOSE YOUR FIGHTER</text>
+    <text x="66" y="106" fill="#aebfce" font-family="Segoe UI, Arial, sans-serif" font-size="16" letter-spacing="1.3">A NEW CHALLENGER STEPS INTO THE LIGHT</text>
+    <rect x="1515" y="42" width="337" height="62" rx="12" fill="#704a34" stroke="#ffd28a" stroke-width="2"/>
+    <text x="1683" y="81" text-anchor="middle" fill="#fff5df" font-family="Segoe UI, Arial, sans-serif" font-size="21" font-weight="800" letter-spacing="1">CONFIRM FIGHTER</text>
+    <text x="1484" y="82" text-anchor="end" fill="#f2c983" font-family="Segoe UI, Arial, sans-serif" font-size="15" font-weight="700" letter-spacing="1.4">STAGE MODE</text>
+
+    <g font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="700" letter-spacing="1">
+      <rect x="68" y="132" width="156" height="44" rx="9" fill="#6d4937" stroke="#ffd28a" stroke-width="2"/>
+      <text x="146" y="160" text-anchor="middle" fill="#fff0d2">HEROES</text>
+      <rect x="236" y="132" width="156" height="44" rx="9" fill="#111d2b" stroke="#607488"/>
+      <text x="314" y="160" text-anchor="middle" fill="#bdcad5">VILLAINS</text>
+      <rect x="404" y="132" width="156" height="44" rx="9" fill="#111d2b" stroke="#607488"/>
+      <text x="482" y="160" text-anchor="middle" fill="#bdcad5">OTHERS</text>
+    </g>
+
+    <g>
+      <rect x="68" y="286" width="430" height="430" rx="16" fill="url(#panel)" stroke="#8193a5" stroke-opacity=".7"/>
+      <text x="96" y="332" fill="#f1c47f" font-family="Segoe UI, Arial, sans-serif" font-size="15" font-weight="800" letter-spacing="1.5">HERO  |  BALANCED</text>
+      <text x="94" y="383" fill="#f7f4ed" font-family="Segoe UI, Arial, sans-serif" font-size="36" font-weight="900" letter-spacing="1">DAVIS</text>
+      <path d="M94 403H472" stroke="#d79859" stroke-width="2"/>
+      <text x="96" y="453" fill="#e6edf2" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">HP  100</text>
+      <rect x="96" y="465" width="374" height="13" rx="6" fill="#07101b"/>
+      <rect x="96" y="465" width="344" height="13" rx="6" fill="#cf5c5b"/>
+      <text x="96" y="510" fill="#e6edf2" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">MP  100</text>
+      <rect x="96" y="522" width="374" height="13" rx="6" fill="#07101b"/>
+      <rect x="96" y="522" width="304" height="13" rx="6" fill="#5898d5"/>
+      <text x="96" y="584" fill="#9fb4c5" font-family="Segoe UI, Arial, sans-serif" font-size="15" font-weight="700" letter-spacing="1.3">MOBILITY</text>
+      <text x="96" y="617" fill="#e0e8ed" font-family="Segoe UI, Arial, sans-serif" font-size="19">WALK  4     RUN  8</text>
+      <text x="96" y="682" fill="#91a4b5" font-family="Segoe UI, Arial, sans-serif" font-size="14" letter-spacing="1">FIGHTER  01 / 12</text>
+    </g>
+
+    <g>
+      <rect x="1422" y="286" width="430" height="430" rx="16" fill="url(#panel)" stroke="#8193a5" stroke-opacity=".7"/>
+      <text x="1450" y="331" fill="#f7f4ed" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="800" letter-spacing="1.2">MOVESET</text>
+      <text x="1450" y="366" fill="#f1c47f" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="700" letter-spacing="1">PREVIEW: SPECIAL</text>
+      <path d="M1450 386H1824" stroke="#52677b"/>
+      <text x="1450" y="425" fill="#f1c47f" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="800" letter-spacing="1.2">BASIC</text>
+      <text x="1450" y="453" fill="#e8edf1" font-family="Segoe UI, Arial, sans-serif" font-size="19">Punch / Kick / Uppercut</text>
+      <text x="1450" y="493" fill="#f1c47f" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="800" letter-spacing="1.2">SPECIAL</text>
+      <text x="1450" y="521" fill="#e8edf1" font-family="Segoe UI, Arial, sans-serif" font-size="19">Rising Strike</text>
+      <text x="1450" y="561" fill="#f1c47f" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="800" letter-spacing="1.2">SPECIAL</text>
+      <text x="1450" y="589" fill="#e8edf1" font-family="Segoe UI, Arial, sans-serif" font-size="19">Meteor Dash</text>
+      <text x="1450" y="629" fill="#f1c47f" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="800" letter-spacing="1.2">SPECIAL</text>
+      <text x="1450" y="657" fill="#e8edf1" font-family="Segoe UI, Arial, sans-serif" font-size="19">Skybreaker</text>
+    </g>
+
+    <g>
+      <rect x="42" y="842" width="1836" height="220" rx="16" fill="#08111e" fill-opacity=".95" stroke="#91a2b3" stroke-opacity=".72"/>
+      <text x="62" y="871" fill="#d2dce4" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="800" letter-spacing="1.2">ROSTER  /  HEROES</text>
+      <text x="1855" y="871" text-anchor="end" fill="#9eb1c1" font-family="Segoe UI, Arial, sans-serif" font-size="13">← / → FIGHTER    ↑ / ↓ CATEGORY    ENTER CONFIRM</text>
+      <g font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">
+        <g>
+          <rect x="64" y="884" width="166" height="156" rx="12" fill="url(#activeCard)" stroke="#ffd078" stroke-width="3"/>
+          <rect x="60" y="880" width="174" height="164" rx="15" fill="none" stroke="#ffca72" stroke-opacity=".35" stroke-width="7" filter="url(#smallGlow)"/>
+          <circle cx="147" cy="946" r="39" fill="#d5aa80" opacity=".2"/>
+          <path d="M130 952Q147 919 164 952L172 978H122Z" fill="#b9c9d0" opacity=".78"/>
+          <circle cx="147" cy="931" r="14" fill="#e3c2a0"/>
+          <text x="147" y="1024" fill="#fff3dc" font-size="14" font-weight="800" letter-spacing=".8">DAVIS</text>
+        </g>
+        <g>
+          <rect x="246" y="884" width="166" height="156" rx="12" fill="#1d2b3a" stroke="#5d7185"/>
+          <circle cx="329" cy="946" r="39" fill="#73a1b5" opacity=".22"/>
+          <path d="M312 952Q329 919 346 952L354 978H304Z" fill="#84aebd" opacity=".72"/>
+          <circle cx="329" cy="931" r="14" fill="#cfac8e"/>
+          <text x="329" y="1024" fill="#dce5eb" font-size="14" font-weight="800" letter-spacing=".8">DENIS</text>
+        </g>
+        <g>
+          <rect x="428" y="884" width="166" height="156" rx="12" fill="#1d2b3a" stroke="#5d7185"/>
+          <circle cx="511" cy="946" r="39" fill="#9f775e" opacity=".24"/>
+          <path d="M494 952Q511 919 528 952L536 978H486Z" fill="#bea187" opacity=".75"/>
+          <circle cx="511" cy="931" r="14" fill="#dbba99"/>
+          <text x="511" y="1024" fill="#dce5eb" font-size="14" font-weight="800" letter-spacing=".8">HENRY</text>
+        </g>
+        <g>
+          <rect x="610" y="884" width="166" height="156" rx="12" fill="#1d2b3a" stroke="#5d7185"/>
+          <circle cx="693" cy="946" r="39" fill="#d9a85d" opacity=".2"/>
+          <path d="M676 952Q693 919 710 952L718 978H668Z" fill="#b19b7c" opacity=".75"/>
+          <circle cx="693" cy="931" r="14" fill="#e1bf9c"/>
+          <text x="693" y="1024" fill="#dce5eb" font-size="14" font-weight="800" letter-spacing=".8">RUDOLF</text>
+        </g>
+        <g>
+          <rect x="792" y="884" width="166" height="156" rx="12" fill="#1d2b3a" stroke="#5d7185"/>
+          <circle cx="875" cy="946" r="39" fill="#8061a3" opacity=".23"/>
+          <path d="M858 952Q875 919 892 952L900 978H850Z" fill="#9388a8" opacity=".75"/>
+          <circle cx="875" cy="931" r="14" fill="#d0b19a"/>
+          <text x="875" y="1024" fill="#dce5eb" font-size="14" font-weight="800" letter-spacing=".8">WOODY</text>
+        </g>
+        <g>
+          <rect x="974" y="884" width="166" height="156" rx="12" fill="#1d2b3a" stroke="#5d7185"/>
+          <circle cx="1057" cy="946" r="39" fill="#a45548" opacity=".24"/>
+          <path d="M1040 952Q1057 919 1074 952L1082 978H1032Z" fill="#bb7967" opacity=".75"/>
+          <circle cx="1057" cy="931" r="14" fill="#dbad8d"/>
+          <text x="1057" y="1024" fill="#dce5eb" font-size="14" font-weight="800" letter-spacing=".8">JOHN</text>
+        </g>
+        <g>
+          <rect x="1156" y="884" width="166" height="156" rx="12" fill="#1d2b3a" stroke="#5d7185"/>
+          <circle cx="1239" cy="946" r="39" fill="#457c9a" opacity=".25"/>
+          <path d="M1222 952Q1239 919 1256 952L1264 978H1214Z" fill="#7899a9" opacity=".75"/>
+          <circle cx="1239" cy="931" r="14" fill="#d5b39a"/>
+          <text x="1239" y="1024" fill="#dce5eb" font-size="14" font-weight="800" letter-spacing=".8">FREEZE</text>
+        </g>
+        <g>
+          <rect x="1338" y="884" width="166" height="156" rx="12" fill="#1d2b3a" stroke="#5d7185"/>
+          <circle cx="1421" cy="946" r="39" fill="#84a274" opacity=".22"/>
+          <path d="M1404 952Q1421 919 1438 952L1446 978H1396Z" fill="#9bae8d" opacity=".72"/>
+          <circle cx="1421" cy="931" r="14" fill="#d7b99b"/>
+          <text x="1421" y="1024" fill="#dce5eb" font-size="14" font-weight="800" letter-spacing=".8">JAN</text>
+        </g>
+        <g>
+          <rect x="1520" y="884" width="166" height="156" rx="12" fill="#1d2b3a" stroke="#5d7185"/>
+          <circle cx="1603" cy="946" r="39" fill="#ad8f56" opacity=".22"/>
+          <path d="M1586 952Q1603 919 1620 952L1628 978H1578Z" fill="#aa9b78" opacity=".72"/>
+          <circle cx="1603" cy="931" r="14" fill="#d5b59a"/>
+          <text x="1603" y="1024" fill="#dce5eb" font-size="14" font-weight="800" letter-spacing=".8">BAT</text>
+        </g>
+        <g>
+          <rect x="1702" y="884" width="150" height="156" rx="12" fill="#1d2b3a" stroke="#5d7185"/>
+          <circle cx="1777" cy="946" r="39" fill="#a65368" opacity=".25"/>
+          <path d="M1760 952Q1777 919 1794 952L1802 978H1752Z" fill="#ae7f91" opacity=".75"/>
+          <circle cx="1777" cy="931" r="14" fill="#d8b49a"/>
+          <text x="1777" y="1024" fill="#dce5eb" font-size="14" font-weight="800" letter-spacing=".8">FIRZEN</text>
+        </g>
+      </g>
+    </g>
+  </g>
+</svg>

@@ -41,6 +41,14 @@ KEYBINDING_ROWS = (
     ("Spawn XP Orb", "test_spawn_xp_orb", True),
 )
 
+CONTEXTUAL_BINDING_PAIRS = frozenset(
+    {
+        frozenset(("attack", "menu_confirm")),
+        frozenset(("main_menu_confirm_space", "toggle_opponent")),
+        frozenset(("return_to_menu", "revive")),
+    }
+)
+
 
 class KeyBindings:
     DEFAULTS = {
@@ -142,6 +150,18 @@ class KeyBindings:
             pygame.key.name(key_code).replace("kp ", "numpad ").title()
             for key_code in self.bindings[action]
         )
+
+    def conflicting_actions(self, action: str) -> tuple[str, ...]:
+        action_codes = set(self.bindings[action])
+        conflicts = []
+        for _, other_action, _ in KEYBINDING_ROWS:
+            if other_action == action:
+                continue
+            if frozenset((action, other_action)) in CONTEXTUAL_BINDING_PAIRS:
+                continue
+            if action_codes.intersection(self.bindings[other_action]):
+                conflicts.append(other_action)
+        return tuple(conflicts)
 
 
 if (

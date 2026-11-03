@@ -8,7 +8,6 @@ from game.data.campaign import (
     ENDLESS_MILESTONE_INTERVAL,
     ENDLESS_REINFORCEMENT_INTERVAL,
     ENDLESS_STAGE_MILESTONES,
-    ENDLESS_SUPPLY_BREAK_INTERVAL,
     get_endless_encounter,
 )
 from game.data.characters import CHARACTERS
@@ -134,9 +133,24 @@ class EndlessStageDataTests(unittest.TestCase):
         self.assertIn("ashley", ENDLESS_STAGE_MILESTONES[-1].roster)
 
         self.assertEqual(len(get_endless_encounter(ENDLESS_REINFORCEMENT_INTERVAL).waves), 2)
-        self.assertEqual(ENDLESS_SUPPLY_BREAK_INTERVAL, 3)
         with self.assertRaises(ValueError):
             get_endless_encounter(0)
+
+    def test_large_squads_split_into_two_waves_without_changing_threat(self) -> None:
+        for stage_number in (6, 7, 10, 23):
+            with self.subTest(stage_number=stage_number):
+                encounter = get_endless_encounter(stage_number)
+                wave_counts = tuple(
+                    sum(count for _, count in wave.enemies)
+                    for wave in encounter.waves
+                )
+
+                self.assertEqual(len(wave_counts), 2)
+                self.assertGreaterEqual(sum(wave_counts), 5)
+                self.assertAlmostEqual(
+                    sum(wave.threat_budget for wave in encounter.waves),
+                    encounter.threat_budget,
+                )
 
 
 class EndlessStageFlowTests(unittest.TestCase):
@@ -146,8 +160,6 @@ class EndlessStageFlowTests(unittest.TestCase):
         scene.stage_mode = True
         scene.stage_mode_failed = False
         scene.paused = False
-        scene.stage_intermission = False
-        scene.stage_intermission_choice = 0
         scene.stage_index = stage_index
         scene.stage_wave_index = 0
         scene.stage_wave_clear_timer = None
@@ -177,42 +189,30 @@ class EndlessStageFlowTests(unittest.TestCase):
         self.assertEqual(scene.stage_wave_index, 1)
         self.assertEqual(scene.stage_card_mode, "wave")
         self.assertEqual(scene.stage_card_timer, STAGE_CARD_DURATION)
-        self.assertFalse(scene.stage_intermission)
-
         scene._advance_stage_mode()
         self.assertEqual(scene.campaign_score, 200)
         self.assertEqual(scene.stage_index, 4)
         self.assertEqual(scene.stage_wave_index, 0)
-        self.assertFalse(scene.stage_intermission)
 
-    def test_supply_break_choice_restores_a_capped_resource_and_advances(self) -> None:
+    def test_third_stage_clear_advances_without_recovery(self) -> None:
         scene = self._battle_scene(stage_index=2)
-        scene.stage_intermission = True
-        scene.stage_intermission_choice = 1
+        scene.fighter.health = 25
+        scene.fighter.mana = 40
 
-        scene._confirm_recovery_choice()
+        scene._advance_stage_mode()
 
-        self.assertEqual(scene.fighter.mana, 100)
-        self.assertEqual(scene.fighter.health, 50)
-        self.assertFalse(scene.stage_intermission)
+        self.assertEqual(scene.fighter.mana, 40)
+        self.assertEqual(scene.fighter.health, 25)
         self.assertEqual(scene.stage_index, 3)
         self.assertEqual(scene.stage_wave_index, 0)
         self.assertEqual(scene.stage_card_mode, "stage")
 
-    def test_intermission_controls_change_choice_and_confirm(self) -> None:
-        scene = self._battle_scene(stage_index=2)
-        scene.stage_intermission = True
-
-        scene.update(0.016, FighterInput(right_just_pressed=True))
-        self.assertEqual(scene.stage_intermission_choice, 1)
-        self.assertEqual(scene.stage_index, 2)
-
-        scene.update(0.016, FighterInput(attack_just_pressed=True))
-        self.assertEqual(scene.stage_index, 3)
-        self.assertFalse(scene.stage_intermission)
-
     def test_stage_mode_continues_after_former_tenth_encounter(self) -> None:
         scene = self._battle_scene(stage_index=9)
+
+        scene._advance_stage_mode()
+        self.assertEqual(scene.stage_index, 9)
+        self.assertEqual(scene.stage_wave_index, 1)
 
         scene._advance_stage_mode()
         self.assertEqual(scene.stage_index, 10)
@@ -378,8 +378,6 @@ class EndlessStageFlowTests(unittest.TestCase):
         scene.stage_mode = True
         scene.stage_mode_failed = False
         scene.paused = False
-        scene.stage_intermission = False
-        scene.stage_intermission_choice = 0
         scene.stage_index = 0
         scene.stage_wave_index = 0
         scene.stage_wave_clear_timer = None
@@ -458,7 +456,6 @@ class EndlessStageFlowTests(unittest.TestCase):
         scene = BattleScene.__new__(BattleScene)
         scene.stage_mode = True
         scene.stage_card_timer = STAGE_CARD_DURATION
-        scene.stage_intermission = False
         scene.stage_mode_failed = False
         scene.stage_card_mode = "stage"
         scene.stage_index = 0

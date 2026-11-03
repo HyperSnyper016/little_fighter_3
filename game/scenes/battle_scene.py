@@ -23,7 +23,6 @@ from game.constants import (
 )
 from game.data.characters import CHARACTERS
 from game.data.campaign import (
-    ENDLESS_SUPPLY_BREAK_INTERVAL,
     get_endless_encounter,
 )
 from game.data.difficulty import DEFAULT_DIFFICULTY, DifficultyProfile, get_difficulty_profile
@@ -31,6 +30,7 @@ from game.data.stage_progression import StageProgression
 from game.data.xp_rewards import enemy_xp_reward
 from game.entities.fighter import (
     COMBAT_ATTACK_STATES,
+    DEFAULT_BASIC_ATTACK_LANE_TOLERANCE,
     HENRY_FLOAT_DURATION,
     HENRY_FLOAT_HEIGHT,
     Fighter,
@@ -73,6 +73,10 @@ REECE_SP_MOVE_ATTACK_1_CHEST_ANCHOR = (0.5, 0.53)
 STAGE_CARD_DURATION = 2.4
 STAGE_WAVE_GRACE_DURATION = 4.0
 STAGE_MILESTONE_XP_PER_STAGE = 10
+HIT_STOP_ON_HIT = 0.045
+HIT_STOP_ON_BLOCK = 0.025
+IMPACT_FEEDBACK_DURATION = 0.12
+MAX_IMPACT_FEEDBACK_EFFECTS = 6
 STAGE_SLOT_CANVAS_SIZE = (1_040, 598)
 STAGE_SLOT_SCALE = min(
     SCREEN_WIDTH * 0.9 / STAGE_SLOT_CANVAS_SIZE[0],
@@ -95,6 +99,48 @@ STAGE_CARD_WINDOWS = (
     pygame.Rect(416, 184, 216, 281),
     pygame.Rect(694, 184, 221, 281),
 )
+
+
+@dataclass(slots=True)
+class ImpactFeedbackEffect:
+    x: float
+    y: float
+    blocked: bool
+    age: float = 0.0
+
+    def update(self, dt: float) -> bool:
+        self.age += dt
+        return self.age >= IMPACT_FEEDBACK_DURATION
+
+    def draw(self, surface: pygame.Surface, camera_x: float) -> None:
+        progress = min(1.0, self.age / IMPACT_FEEDBACK_DURATION)
+        alpha = round(190 * (1.0 - progress))
+        radius = 5 + round(progress * 9)
+        color = (112, 214, 255) if self.blocked else (255, 235, 190)
+        impact = pygame.Surface((44, 44), pygame.SRCALPHA)
+        center = (22, 22)
+        if self.blocked:
+            pygame.draw.polygon(
+                impact,
+                (*color, alpha),
+                (
+                    (center[0], center[1] - radius),
+                    (center[0] + radius, center[1]),
+                    (center[0], center[1] + radius),
+                    (center[0] - radius, center[1]),
+                ),
+                width=2,
+            )
+        else:
+            pygame.draw.circle(impact, (*color, alpha), center, radius, width=2)
+            for dx, dy in ((0, -1), (1, 0), (0, 1), (-1, 0)):
+                start = (center[0] + dx * (radius + 2), center[1] + dy * (radius + 2))
+                end = (center[0] + dx * (radius + 5), center[1] + dy * (radius + 5))
+                pygame.draw.line(impact, (*color, alpha), start, end, width=2)
+        surface.blit(
+            impact,
+            (round(self.x - camera_x) - center[0], round(self.y) - center[1]),
+        )
 
 
 @lru_cache(maxsize=12)
@@ -4373,8 +4419,9 @@ class BattleScene:
         self.stage_subtitle_font = pygame.font.Font(None, 26)
         self.stage_banner_heading_font = pygame.font.Font(None, 38)
         self.stage_banner_subtitle_font = pygame.font.Font(None, 24)
-        self.stage_choice_font = pygame.font.Font(None, 30)
         self.projectiles: list[object] = []
+        self.impact_feedback_effects: list[ImpactFeedbackEffect] = []
+        self.hit_stop_timer = 0.0
         self.consumable_items: list[SpawnedConsumable | ThrownItem] = []
         self.paused = False
         self._pause_hover_candidate_key: str | None = None
@@ -4402,8 +4449,6 @@ class BattleScene:
         self._reset_stage_progression()
         self.stage_level_up_slot = StageLevelUpSlot()
         self.campaign_score = 0
-        self.stage_intermission = False
-        self.stage_intermission_choice = 0
         self.stage_card_mode = "stage"
         self.stage_card_timer = STAGE_CARD_DURATION if stage_mode else 0.0
         self.stage_milestone_reward_xp = 0
@@ -4891,10 +4936,7 @@ class BattleScene:
             not (self.stage_mode or getattr(self, "test_mode", False))
             or (
                 self.stage_mode
-                and (
-                    getattr(self, "stage_mode_failed", False)
-                    or getattr(self, "stage_intermission", False)
-                )
+                and getattr(self, "stage_mode_failed", False)
             )
         ):
             return
@@ -4982,7 +5024,6 @@ class BattleScene:
             or not slot.active
             or self.paused
             or self.stage_mode_failed
-            or self.stage_intermission
         ):
             return
 
@@ -5233,11 +5274,6 @@ class BattleScene:
             self.victory_played = False
             return
 
-        if (self.stage_index + 1) % ENDLESS_SUPPLY_BREAK_INTERVAL == 0:
-            self.stage_intermission = True
-            self.stage_intermission_choice = 0
-            return
-
         self._start_next_campaign_stage()
 
     def _start_next_campaign_stage(self) -> None:
@@ -5259,22 +5295,6 @@ class BattleScene:
         self.stage_card_mode = "stage"
         self.stage_card_timer = STAGE_CARD_DURATION
         self.victory_played = False
-
-    def _confirm_recovery_choice(self) -> None:
-        if self.stage_intermission_choice == 0:
-            recovery = min(
-                max(0, self.fighter.max_health - self.fighter.health),
-                max(1, self.fighter.max_health // 4),
-            )
-            self.fighter.health += recovery
-        else:
-            recovery = min(
-                max(0, self.fighter.max_mana - self.fighter.mana),
-                max(1, self.fighter.max_mana // 4),
-            )
-            self.fighter.mana += recovery
-        self.stage_intermission = False
-        self._start_next_campaign_stage()
 
     def _spawn_rudolf_clones(self, fighter: Fighter) -> None:
         if not fighter.rudolf_clones_pending:
@@ -5418,7 +5438,45 @@ class BattleScene:
             reduced = int(blocked)
             self._stage_damage_reduction_remainder = blocked - reduced
             amount = max(0, amount - reduced)
+        previous_health = getattr(target, "health", None)
         target.receive_damage(amount, ignore_invulnerability=ignore_invulnerability)
+        if (
+            previous_health is not None
+            and getattr(target, "health", previous_health) < previous_health
+        ):
+            self._register_impact_feedback(target)
+
+    def _register_impact_feedback(self, target: Fighter, *, blocked: bool = False) -> None:
+        impact_effects = getattr(self, "impact_feedback_effects", None)
+        if impact_effects is None:
+            impact_effects = []
+            self.impact_feedback_effects = impact_effects
+        get_hitbox = getattr(target, "world_hitbox_rect", None)
+        if get_hitbox is not None:
+            hitbox = get_hitbox()
+            impact_effects.append(
+                ImpactFeedbackEffect(hitbox.centerx, hitbox.centery, blocked)
+            )
+        if len(impact_effects) > MAX_IMPACT_FEEDBACK_EFFECTS:
+            del impact_effects[:-MAX_IMPACT_FEEDBACK_EFFECTS]
+        self.hit_stop_timer = max(
+            getattr(self, "hit_stop_timer", 0.0),
+            HIT_STOP_ON_BLOCK if blocked else HIT_STOP_ON_HIT,
+        )
+
+    def _update_impact_feedback(self, dt: float) -> None:
+        impact_effects = getattr(self, "impact_feedback_effects", [])
+        for effect in tuple(impact_effects):
+            if effect.update(dt):
+                impact_effects.remove(effect)
+
+    def _consume_hit_stop(self, dt: float) -> float:
+        hit_stop_timer = getattr(self, "hit_stop_timer", 0.0)
+        if hit_stop_timer <= 0.0:
+            return dt
+        hit_stop = min(dt, hit_stop_timer)
+        self.hit_stop_timer = hit_stop_timer - hit_stop
+        return dt - hit_stop
 
     def _break_whiskey_item(self, item: ConsumableItem, spawn_fire: bool) -> bool:
         if item.item_id != "consumables/whiskey" or item not in self.consumable_items:
@@ -5548,12 +5606,60 @@ class BattleScene:
     @staticmethod
     def _melee_attack_rect(attacker: Fighter, attack_range: int = 72) -> pygame.Rect:
         attack_rect = attacker.world_hitbox_rect()
+        timing = attacker.basic_attack_timing
+        if timing is not None and attacker._is_timed_basic_attack_state():
+            if attacker.facing > 0:
+                attack_rect.x -= round(timing.rear_reach)
+            else:
+                attack_rect.x -= round(timing.forward_reach)
+            attack_rect.width += round(timing.forward_reach + timing.rear_reach)
+            return attack_rect
         if attacker.name == "dark_bat" and attacker.state == "sp_move_attack_1":
             attack_rect.width += DARK_BAT_SP_MOVE_ATTACK_REACH
             if attacker.facing < 0:
                 attack_rect.x -= DARK_BAT_SP_MOVE_ATTACK_REACH
             return attack_rect
         return attack_rect.inflate(attack_range, 0)
+
+    @staticmethod
+    def _select_melee_target(
+        attacker: Fighter,
+        defenders: list[Fighter],
+        attack_rect: pygame.Rect,
+        lane_tolerance: float,
+    ) -> Fighter | None:
+        attacker_center_x = attacker.world_hitbox_rect().centerx
+        timing = (
+            attacker.basic_attack_timing
+            if attacker._is_timed_basic_attack_state()
+            else None
+        )
+        candidates: list[tuple[int, float, float, int, Fighter]] = []
+        for target in defenders:
+            if (
+                target.is_dead
+                or target.state == "henry_float"
+                or abs(attacker.lane_y - target.lane_y) > lane_tolerance
+            ):
+                continue
+            target_rect = target.world_hitbox_rect()
+            if not attack_rect.colliderect(target_rect):
+                continue
+            center_delta_x = target_rect.centerx - attacker_center_x
+            forward_distance = center_delta_x * attacker.facing
+            if timing is not None and forward_distance < -timing.rear_reach:
+                continue
+            lane_delta = abs(attacker.lane_y - target.lane_y)
+            candidates.append(
+                (
+                    0 if forward_distance >= 0 else 1,
+                    center_delta_x**2 + lane_delta**2,
+                    lane_delta,
+                    abs(center_delta_x),
+                    target,
+                )
+            )
+        return min(candidates, key=lambda candidate: candidate[:4])[4] if candidates else None
 
     def _damage_heavy_boxes_with_melee(self) -> None:
         for attacker in self._fighters():
@@ -5563,6 +5669,11 @@ class BattleScene:
                 or not attacker.attack_started
                 or attacker.has_applied_attack_damage
                 or (attacker.state == "jump_throw" and not attacker.jump_attack_active)
+            ):
+                continue
+            if (
+                attacker.basic_attack_timing is not None
+                and not attacker.basic_attack_is_active
             ):
                 continue
             luis_contact_attack = attacker.name == "luis" and attacker.state in {"sp_move_attack_1", "sp_vert_attack_1"}
@@ -5576,7 +5687,12 @@ class BattleScene:
             attack_rect = self._melee_attack_rect(attacker, attack_range)
             for item in self._heavy_box_obstacles():
                 if (
-                    abs(attacker.lane_y - item.lane_y) <= 36.0
+                    abs(attacker.lane_y - item.lane_y)
+                    <= (
+                        attacker.basic_attack_timing.lane_tolerance
+                        if attacker.basic_attack_timing is not None
+                        else DEFAULT_BASIC_ATTACK_LANE_TOLERANCE
+                    )
                     and attack_rect.colliderect(item.world_rect())
                     and self._break_heavy_box(item)
                 ):
@@ -5943,10 +6059,12 @@ class BattleScene:
             item.drop_at_hit()
             if target.state == "block" and target.block_strength > 0:
                 target.block_strength = 0
+                self._register_impact_feedback(target, blocked=True)
                 target.block_hold_timer = 0.0
                 self.audio.play("hit_guard")
             elif target.state == "block":
                 target._start_block_break()
+                self._register_impact_feedback(target, blocked=True)
                 self.audio.play("hit_guard")
             else:
                 previous_health = target.health
@@ -6260,11 +6378,21 @@ class BattleScene:
                 or (attacker.name == "freeze" and attacker.state == "sp_move_attack_2")
             ):
                 continue
+            if (
+                attacker.basic_attack_timing is not None
+                and not attacker.basic_attack_is_active
+            ):
+                continue
             attack_rect = self._melee_attack_rect(attacker)
             for column in columns:
                 if column.finished:
                     continue
-                if abs(attacker.lane_y - column.lane_y) <= 36 and attack_rect.colliderect(column.rect()):
+                lane_tolerance = (
+                    attacker.basic_attack_timing.lane_tolerance
+                    if attacker.basic_attack_timing is not None
+                    else DEFAULT_BASIC_ATTACK_LANE_TOLERANCE
+                )
+                if abs(attacker.lane_y - column.lane_y) <= lane_tolerance and attack_rect.colliderect(column.rect()):
                     column.break_apart(attacker.facing)
 
     def _handle_combat(self) -> None:
@@ -6327,6 +6455,17 @@ class BattleScene:
                 continue
             if not attacker.attack_started:
                 continue
+            if attacker.basic_attack_timing is not None:
+                if attacker.basic_attack_is_recovering:
+                    attacker.has_applied_attack_damage = True
+                    attacker.attack_started = False
+                    if attacker.name == "freeze" and attacker.state == "basic_attack":
+                        self.audio.play_freeze_basic_miss()
+                    elif attacker.name != "armored_bandit":
+                        self.audio.play_hit_miss()
+                    continue
+                if not attacker.basic_attack_is_active:
+                    continue
             luis_contact_attack = attacker.name == "luis" and attacker.state in {"sp_move_attack_1", "sp_vert_attack_1"}
             mark_plow_attack = attacker.name == "mark" and attacker.state == "sp_move_attack_1"
             if attacker.attack_timer <= 0 and not (
@@ -6339,18 +6478,20 @@ class BattleScene:
             if attacker.name == "dark_bat" and attacker.state == "jump_throw" and attacker.jump_attack_active:
                 attack_range = 96
             attack_rect = self._melee_attack_rect(attacker, attack_range)
-            defender = next(
-                (
-                    target
-                    for target in defenders
-                    if not target.is_dead
-                    and target.state != "henry_float"
-                    and abs(attacker.lane_y - target.lane_y) <= 36
-                    and attack_rect.colliderect(target.world_hitbox_rect())
-                ),
-                None,
+            defender = self._select_melee_target(
+                attacker,
+                defenders,
+                attack_rect,
+                attacker.basic_attack_timing.lane_tolerance
+                if attacker.basic_attack_timing is not None
+                else DEFAULT_BASIC_ATTACK_LANE_TOLERANCE,
             )
             if defender is None:
+                if (
+                    attacker.basic_attack_timing is not None
+                    and not attacker.basic_attack_is_recovering
+                ):
+                    continue
                 if luis_contact_attack or mark_plow_attack:
                     continue
                 attacker.has_applied_attack_damage = True
@@ -6368,11 +6509,13 @@ class BattleScene:
             attacker.attack_started = False
             if defender.state == "block" and defender.block_strength > 0:
                 defender.block_strength = 0
+                self._register_impact_feedback(defender, blocked=True)
                 defender.block_hold_timer = 0.0
                 self.audio.play("hit_guard")
                 continue
             if defender.state == "block" and defender.block_strength == 0:
                 defender._start_block_break()
+                self._register_impact_feedback(defender, blocked=True)
                 self.audio.play("hit_guard")
                 continue
 
@@ -6431,11 +6574,13 @@ class BattleScene:
                 continue
             if defender.state == "block" and defender.block_strength > 0:
                 defender.block_strength = 0
+                self._register_impact_feedback(defender, blocked=True)
                 defender.block_hold_timer = 0.0
                 self.audio.play("hit_guard")
                 continue
             if defender.state == "block" and defender.block_strength == 0:
                 defender._start_block_break()
+                self._register_impact_feedback(defender, blocked=True)
                 self.audio.play("hit_guard")
                 continue
             self._deal_damage(attacker, defender, attacker.touch_damage)
@@ -6466,11 +6611,13 @@ class BattleScene:
                     continue
                 if target.state == "block" and target.block_strength > 0:
                     target.block_strength = 0
+                    self._register_impact_feedback(target, blocked=True)
                     target.block_hold_timer = 0.0
                     self.audio.play("hit_guard")
                     continue
                 if target.state == "block":
                     target._start_block_break()
+                    self._register_impact_feedback(target, blocked=True)
                     self.audio.play("hit_guard")
                     continue
                 self._deal_damage(fighter, target, fighter.touch_damage)
@@ -6496,11 +6643,13 @@ class BattleScene:
                 fighter.woody_vert_dash_hit_targets.add(id(target))
                 if target.state == "block" and target.block_strength > 0:
                     target.block_strength = 0
+                    self._register_impact_feedback(target, blocked=True)
                     target.block_hold_timer = 0.0
                     self.audio.play("hit_guard")
                     continue
                 if target.state == "block":
                     target._start_block_break()
+                    self._register_impact_feedback(target, blocked=True)
                     self.audio.play("hit_guard")
                     continue
                 self._deal_damage(fighter, target, fighter.touch_damage)
@@ -7246,10 +7395,12 @@ class BattleScene:
         projectile.hit_targets.add(id(target))
         if target.state == "block" and target.block_strength > 0:
             target.block_strength = 0
+            self._register_impact_feedback(target, blocked=True)
             target.block_hold_timer = 0.0
             self.audio.play("hit_guard")
         elif target.state == "block":
             target._start_block_break()
+            self._register_impact_feedback(target, blocked=True)
             self.audio.play("hit_guard")
         else:
             self._deal_damage(projectile.owner, target, projectile.damage)
@@ -7393,10 +7544,12 @@ class BattleScene:
             wind.hit_targets.add(id(target))
         if target.state == "block" and target.block_strength > 0:
             target.block_strength = 0
+            self._register_impact_feedback(target, blocked=True)
             target.block_hold_timer = 0.0
             self.audio.play("hit_guard")
         elif target.state == "block":
             target._start_block_break()
+            self._register_impact_feedback(target, blocked=True)
             self.audio.play("hit_guard")
         else:
             self._deal_damage(fighter, target, fighter.touch_damage)
@@ -7622,10 +7775,12 @@ class BattleScene:
                         self._break_buzz_ball(projectile)
                         if target.state == "block" and target.block_strength > 0:
                             target.block_strength = 0
+                            self._register_impact_feedback(target, blocked=True)
                             target.block_hold_timer = 0.0
                             self.audio.play("hit_guard")
                         elif target.state == "block":
                             target._start_block_break()
+                            self._register_impact_feedback(target, blocked=True)
                             self.audio.play("hit_guard")
                         else:
                             previous_health = target.health
@@ -7659,10 +7814,12 @@ class BattleScene:
                             continue
                         if target.state == "block" and target.block_strength > 0:
                             target.block_strength = 0
+                            self._register_impact_feedback(target, blocked=True)
                             target.block_hold_timer = 0.0
                             self.audio.play("hit_guard")
                         elif target.state == "block":
                             target._start_block_break()
+                            self._register_impact_feedback(target, blocked=True)
                             self.audio.play("hit_guard")
                         else:
                             previous_health = target.health
@@ -7784,10 +7941,12 @@ class BattleScene:
                                     continue
                                 if target.state == "block" and target.block_strength > 0:
                                     target.block_strength = 0
+                                    self._register_impact_feedback(target, blocked=True)
                                     target.block_hold_timer = 0.0
                                     self.audio.play("hit_guard")
                                 elif target.state == "block":
                                     target._start_block_break()
+                                    self._register_impact_feedback(target, blocked=True)
                                     self.audio.play("hit_guard")
                                 else:
                                     self._deal_damage(projectile.owner, target, 1)
@@ -7985,10 +8144,12 @@ class BattleScene:
                 ):
                     if target.state == "block" and target.block_strength > 0:
                         target.block_strength = 0
+                        self._register_impact_feedback(target, blocked=True)
                         target.block_hold_timer = 0.0
                         self.audio.play("hit_guard")
                     elif target.state == "block":
                         target._start_block_break()
+                        self._register_impact_feedback(target, blocked=True)
                         self.audio.play("hit_guard")
                     else:
                         self._deal_damage(projectile.owner, target, projectile.damage)
@@ -8005,10 +8166,12 @@ class BattleScene:
                 ):
                     if target.state == "block" and target.block_strength > 0:
                         target.block_strength = 0
+                        self._register_impact_feedback(target, blocked=True)
                         target.block_hold_timer = 0.0
                         self.audio.play("hit_guard")
                     elif target.state == "block":
                         target._start_block_break()
+                        self._register_impact_feedback(target, blocked=True)
                         self.audio.play("hit_guard")
                     else:
                         self._deal_damage(projectile.owner, target, projectile.damage)
@@ -8031,10 +8194,12 @@ class BattleScene:
                             continue
                         if target.state == "block" and target.block_strength > 0:
                             target.block_strength = 0
+                            self._register_impact_feedback(target, blocked=True)
                             target.block_hold_timer = 0.0
                             self.audio.play("hit_guard")
                         elif target.state == "block":
                             target._start_block_break()
+                            self._register_impact_feedback(target, blocked=True)
                             self.audio.play("hit_guard")
                         else:
                             self._deal_damage(projectile.owner, target, projectile.damage)
@@ -8062,10 +8227,12 @@ class BattleScene:
                             continue
                         if target.state == "block" and target.block_strength > 0:
                             target.block_strength = 0
+                            self._register_impact_feedback(target, blocked=True)
                             target.block_hold_timer = 0.0
                             self.audio.play("hit_guard")
                         elif target.state == "block":
                             target._start_block_break()
+                            self._register_impact_feedback(target, blocked=True)
                             self.audio.play("hit_guard")
                         else:
                             self._deal_damage(projectile.owner, target, projectile.damage)
@@ -8094,10 +8261,12 @@ class BattleScene:
                         projectile.register_hit(target)
                         if target.state == "block" and target.block_strength > 0:
                             target.block_strength = 0
+                            self._register_impact_feedback(target, blocked=True)
                             target.block_hold_timer = 0.0
                             self.audio.play("hit_guard")
                         elif target.state == "block":
                             target._start_block_break()
+                            self._register_impact_feedback(target, blocked=True)
                             self.audio.play("hit_guard")
                         else:
                             self._deal_damage(projectile.owner, target, projectile.damage)
@@ -8120,10 +8289,12 @@ class BattleScene:
                     projectile.hit_targets.add(id(target))
                     if target.state == "block" and target.block_strength > 0:
                         target.block_strength = 0
+                        self._register_impact_feedback(target, blocked=True)
                         target.block_hold_timer = 0.0
                         self.audio.play("hit_guard")
                     elif target.state == "block":
                         target._start_block_break()
+                        self._register_impact_feedback(target, blocked=True)
                         self.audio.play("hit_guard")
                     else:
                         self._deal_damage(projectile.owner, target, projectile.damage)
@@ -8158,10 +8329,12 @@ class BattleScene:
                         continue
                     if target.state == "block" and target.block_strength > 0:
                         target.block_strength = 0
+                        self._register_impact_feedback(target, blocked=True)
                         target.block_hold_timer = 0.0
                         self.audio.play("hit_guard")
                     elif target.state == "block" and target.block_strength == 0:
                         target._start_block_break()
+                        self._register_impact_feedback(target, blocked=True)
                         self.audio.play("hit_guard")
                     else:
                         self._deal_damage(projectile.owner, target, projectile.damage)
@@ -8179,10 +8352,12 @@ class BattleScene:
                         continue
                     if target.state == "block" and target.block_strength > 0:
                         target.block_strength = 0
+                        self._register_impact_feedback(target, blocked=True)
                         target.block_hold_timer = 0.0
                         self.audio.play("hit_guard")
                     elif target.state == "block":
                         target._start_block_break()
+                        self._register_impact_feedback(target, blocked=True)
                         self.audio.play("hit_guard")
                     else:
                         self._deal_damage(projectile.owner, target, projectile.damage)
@@ -8202,10 +8377,12 @@ class BattleScene:
                         continue
                     if target.state == "block" and target.block_strength > 0:
                         target.block_strength = 0
+                        self._register_impact_feedback(target, blocked=True)
                         target.block_hold_timer = 0.0
                         self.audio.play("hit_guard")
                     elif target.state == "block":
                         target._start_block_break()
+                        self._register_impact_feedback(target, blocked=True)
                         self.audio.play("hit_guard")
                     else:
                         self._deal_damage(projectile.owner, target, projectile.damage)
@@ -8227,10 +8404,12 @@ class BattleScene:
                         continue
                     if target.state == "block" and target.block_strength > 0:
                         target.block_strength = 0
+                        self._register_impact_feedback(target, blocked=True)
                         target.block_hold_timer = 0.0
                         self.audio.play("hit_guard")
                     elif target.state == "block":
                         target._start_block_break()
+                        self._register_impact_feedback(target, blocked=True)
                         self.audio.play("hit_guard")
                     else:
                         self._deal_damage(projectile.owner, target, projectile.damage)
@@ -8331,10 +8510,12 @@ class BattleScene:
 
                 if target.state == "block" and target.block_strength > 0:
                     target.block_strength = 0
+                    self._register_impact_feedback(target, blocked=True)
                     target.block_hold_timer = 0.0
                     self.audio.play("hit_guard")
                 elif target.state == "block" and target.block_strength == 0:
                     target._start_block_break()
+                    self._register_impact_feedback(target, blocked=True)
                     self.audio.play("hit_guard")
                 else:
                     if knocked_and_vulnerable:
@@ -8450,6 +8631,81 @@ class BattleScene:
                 self._draw_hud_bar(surface, x, 18, panel_width, 28, enemy.health, enemy.max_health, (194, 58, 58), f"{enemy.definition['display_name']} HP")
                 self._draw_hud_bar(surface, x, 52, panel_width, 24, enemy.mana, enemy.max_mana, (72, 122, 235), "MP")
 
+    def _control_prompt_lines(self) -> list[str]:
+        left = KEY_BINDINGS.label("move_left")
+        right = KEY_BINDINGS.label("move_right")
+        up = KEY_BINDINGS.label("move_up")
+        down = KEY_BINDINGS.label("move_down")
+        attack = KEY_BINDINGS.label("attack")
+        jump = KEY_BINDINGS.label("jump")
+        defend = KEY_BINDINGS.label("defend")
+        core = (
+            f"KEYBOARD  Move {left}/{right}  Lane {up}/{down}  "
+            f"Run: double-tap {left}/{right}  Attack {attack}  "
+            f"Jump {jump}  Defend {defend}"
+        )
+        available_moves = self.fighter.animations
+        specials = []
+        if "sp_move_attack_1" in available_moves:
+            specials.append(f"{attack}+{defend}+{left}/{right}: Move I")
+        if "sp_move_attack_2" in available_moves:
+            specials.append(f"{attack}+{jump}+{left}/{right}: Move II")
+        if "sp_vert_attack_1" in available_moves:
+            specials.append(f"{attack}+{defend}+{up}: Up I")
+        if "sp_vert_attack_2" in available_moves:
+            specials.append(f"{attack}+{jump}+{up}: Up II")
+
+        special_lines = []
+        current_line = "Specials: "
+        for special in specials or ["None for this fighter"]:
+            separator = "" if current_line == "Specials: " else "  |  "
+            candidate = current_line + separator + special
+            if (
+                current_line != "Specials: "
+                and self.small_font.size(candidate)[0] > SCREEN_WIDTH - 48
+            ):
+                special_lines.append(current_line)
+                current_line = "Specials: " + special
+            else:
+                current_line = candidate
+        special_lines.append(current_line)
+        return [core, *special_lines]
+
+    def _draw_control_prompts(self, surface: pygame.Surface) -> None:
+        if (
+            self.paused
+            or self.stage_mode_failed
+            or getattr(self, "stage_level_up_slot", None) is not None
+            and self.stage_level_up_slot.active
+        ):
+            return
+        lines = [
+            self.small_font.render(text, True, (225, 233, 243))
+            for text in self._control_prompt_lines()
+        ]
+        panel_width = min(
+            SCREEN_WIDTH - 32,
+            max(line.get_width() for line in lines) + 24,
+        )
+        panel_height = sum(line.get_height() for line in lines) + 18
+        panel = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
+        pygame.draw.rect(
+            panel,
+            (9, 14, 23, 205),
+            panel.get_rect(),
+            border_radius=8,
+        )
+        y = 8
+        for line in lines:
+            panel.blit(line, (12, y))
+            y += line.get_height()
+        surface.blit(
+            panel,
+            panel.get_rect(
+                midbottom=(surface.get_width() // 2, surface.get_height() - 12)
+            ),
+        )
+
     def _stage_run_hud_labels(self) -> tuple[str, str, str | None]:
         encounter = self._endless_encounter(self.stage_index + 1)
         progress = (
@@ -8496,14 +8752,10 @@ class BattleScene:
             return
 
         show_title = self.stage_card_timer > 0.0
-        if not (
-            show_title
-            or self.stage_intermission
-            or self.stage_mode_failed
-        ):
+        if not (show_title or self.stage_mode_failed):
             return
 
-        if show_title and not self.stage_intermission and not self.stage_mode_failed:
+        if show_title and not self.stage_mode_failed:
             encounter = self._endless_encounter(self.stage_index + 1)
             banner = pygame.Rect(
                 (SCREEN_WIDTH - STAGE_TITLE_BANNER_WIDTH) // 2,
@@ -8560,49 +8812,6 @@ class BattleScene:
         card = pygame.Rect(460, 330, 1000, 420)
         pygame.draw.rect(surface, (24, 32, 44), card, border_radius=18)
         pygame.draw.rect(surface, (220, 169, 91), card, width=3, border_radius=18)
-
-        if self.stage_intermission:
-            health_recovery = min(
-                max(0, self.fighter.max_health - self.fighter.health),
-                max(1, self.fighter.max_health // 4),
-            )
-            mana_recovery = min(
-                max(0, self.fighter.max_mana - self.fighter.mana),
-                max(1, self.fighter.max_mana // 4),
-            )
-            act = self.stage_act_font.render(
-                f"SUPPLY BREAK - AFTER STAGE {self.stage_index + 1}",
-                True,
-                (255, 214, 139),
-            )
-            heading = self.stage_title_font.render("FIELD SUPPLIES", True, TEXT_COLOR)
-            surface.blit(act, act.get_rect(center=(card.centerx, 385)))
-            surface.blit(heading, heading.get_rect(center=(card.centerx, 458)))
-
-            options = (
-                f"HEAL +{health_recovery} HP" if health_recovery else "HEALTH FULL",
-                f"RESTORE +{mana_recovery} MP" if mana_recovery else "MANA FULL",
-            )
-            option_rects = (
-                pygame.Rect(card.x + 74, 512, 400, 94),
-                pygame.Rect(card.right - 474, 512, 400, 94),
-            )
-            for index, (option, rect) in enumerate(zip(options, option_rects)):
-                selected = index == self.stage_intermission_choice
-                fill = (79, 76, 53) if selected else (34, 43, 56)
-                border = (255, 214, 139) if selected else (104, 121, 139)
-                pygame.draw.rect(surface, fill, rect, border_radius=12)
-                pygame.draw.rect(surface, border, rect, width=3 if selected else 1, border_radius=12)
-                label = self.stage_choice_font.render(option, True, TEXT_COLOR)
-                surface.blit(label, label.get_rect(center=rect.center))
-            prompt = self.stage_subtitle_font.render(
-                f"{KEY_BINDINGS.label('move_left')} / {KEY_BINDINGS.label('move_right')} to choose  -  "
-                f"{KEY_BINDINGS.label('attack')} to continue",
-                True,
-                (195, 205, 218),
-            )
-            surface.blit(prompt, prompt.get_rect(center=(card.centerx, 660)))
-            return
 
         if self.stage_mode_failed:
             act_text = "RUN ENDED"
@@ -8684,20 +8893,14 @@ class BattleScene:
             if pygame.display.get_init():
                 self._update_pause_card_hover(dt, pygame.mouse.get_pos())
             return
+        self._update_impact_feedback(dt)
+        simulation_dt = self._consume_hit_stop(dt)
         self._pause_hover_candidate_key = None
         self._pause_hover_dwell = 0.0
         self._pause_card_hover_progress = {}
         if self.stage_mode and self.stage_mode_failed:
             if inputs.attack_just_pressed:
                 self.return_to_menu_requested = True
-            return
-        if self.stage_mode and self.stage_intermission:
-            if inputs.left_just_pressed:
-                self.stage_intermission_choice = (self.stage_intermission_choice - 1) % 2
-            elif inputs.right_just_pressed:
-                self.stage_intermission_choice = (self.stage_intermission_choice + 1) % 2
-            if inputs.attack_just_pressed:
-                self._confirm_recovery_choice()
             return
         if self.stage_mode:
             self._ensure_stage_level_up_slot()
@@ -8720,6 +8923,7 @@ class BattleScene:
                 for fighter in self._fighters():
                     fighter.animation_player.update(dt, facing=fighter.facing)
                 return
+        dt = simulation_dt
         if self.stage_mode:
             self._age_stage_enemy_corpses(dt)
         if self.stage_mode and self.stage_card_timer > 0.0:
@@ -9414,6 +9618,8 @@ class BattleScene:
                 projectile.draw(surface, camera_x)
             elif isinstance(projectile, AshleyMagicalBarrierEffect):
                 projectile.draw_reflect_overlay(surface, camera_x)
+        for effect in getattr(self, "impact_feedback_effects", []):
+            effect.draw(surface, camera_x)
 
         self._draw_marker(surface, self.fighter, camera_x, "P1")
         self._draw_hud(surface)
@@ -9421,5 +9627,6 @@ class BattleScene:
         self._draw_stage_mode_card(surface)
         self._draw_stage_milestone_reward(surface)
         self._draw_stage_level_up_slot(surface)
+        self._draw_control_prompts(surface)
         if self.paused:
             self._draw_pause_menu(surface)
