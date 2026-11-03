@@ -29,7 +29,12 @@ class MainMenuScene:
     KEYBINDINGS_BACK = pygame.Rect(SCREEN_WIDTH // 2 - 150, 930, 300, 54)
     KEYBINDING_ROW_HEIGHT = 42
 
-    def __init__(self, difficulty: str = DEFAULT_DIFFICULTY) -> None:
+    def __init__(
+        self,
+        difficulty: str = DEFAULT_DIFFICULTY,
+        *,
+        audio: AudioBank | None = None,
+    ) -> None:
         self.title_font = pygame.font.Font(None, 72)
         self.option_font = pygame.font.Font(None, 40)
         self.credit_font = pygame.font.Font(None, 24)
@@ -69,8 +74,7 @@ class MainMenuScene:
         self.background_tiles = self._load_background_tiles()
         self.title_logo = self._load_title_logo()
         sounds_root = Path(__file__).resolve().parents[2] / "assets" / "sounds"
-        self.audio = AudioBank(sounds_root)
-        self.audio.play("menu_start")
+        self.audio = audio if audio is not None else AudioBank(sounds_root)
         self.history_releases = self._load_update_history()
         self.history_lines, self.history_content_height = self._build_history_layout()
 
@@ -196,10 +200,16 @@ class MainMenuScene:
         preferred_names = (
             f"{directory.name}.bmp",
             f"{directory.name}.png",
+            f"{directory.name}.jpg",
+            f"{directory.name}.jpeg",
             f"{directory.name}_profile.bmp",
             f"{directory.name}_profile.png",
+            f"{directory.name}_profile.jpg",
+            f"{directory.name}_profile.jpeg",
             f"{directory.name.capitalize()}.bmp",
             f"{directory.name.capitalize()}.png",
+            f"{directory.name.capitalize()}.jpg",
+            f"{directory.name.capitalize()}.jpeg",
         )
 
         for filename in preferred_names:
@@ -211,7 +221,7 @@ class MainMenuScene:
             path
             for path in directory.iterdir()
             if path.is_file()
-            and path.suffix.lower() in {".bmp", ".png"}
+            and path.suffix.lower() in {".bmp", ".png", ".jpg", ".jpeg"}
         )
         if fallback_images:
             return fallback_images[0]

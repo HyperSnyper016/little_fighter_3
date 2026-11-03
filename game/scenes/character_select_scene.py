@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pygame
 
-from game.constants import SCREEN_HEIGHT, SCREEN_WIDTH, TEXT_COLOR
+from game.constants import GROUND_Y, SCREEN_HEIGHT, SCREEN_WIDTH, TEXT_COLOR
 from game.data.archetypes import resolve_character_profile
 from game.data.characters import (
     CHARACTER_CATEGORIES,
@@ -17,27 +17,138 @@ from game.data.characters import (
 from game.systems.animation import AnimationPlayer
 from game.systems.assets import load_character_animations
 from game.systems.keybindings import KEY_BINDINGS
-from game.systems.stage import STAGE_CONFIGS
 
-PROFILE_SIZE = (132, 132)
-ROSTER_PANEL = pygame.Rect(42, 842, SCREEN_WIDTH - 84, 220)
-ROSTER_CARD_TOP = 862
-ROSTER_CARD_HEIGHT = 184
-ROSTER_CARD_GAP = 14
-CATEGORY_TOP = 132
-CATEGORY_HEIGHT = 44
+PROFILE_SIZE = (68, 68)
+PROFILE_FILENAME_ALIASES = {
+    "luis": ("louis.png",),
+    "luis_liberated": ("liberated_louis.png",),
+}
+ROSTER_PANEL = pygame.Rect(42, 824, SCREEN_WIDTH - 84, 238)
+ROSTER_CARD_TOP = 872
+ROSTER_CARD_HEIGHT = 86
+ROSTER_CARD_GAP = 4
+ROSTER_GRID_COLUMNS = 14
+ROSTER_MARGIN = 12
+ROSTER_CATEGORY_GAP = 8
+SELECTION_GLOW_PERIOD = 1.4
+BACK_BUTTON = pygame.Rect(1280, 45, 120, 62)
 CONFIRM_BUTTON = pygame.Rect(SCREEN_WIDTH - 352, 45, 292, 62)
-LEFT_INFO_PANEL = pygame.Rect(68, 286, 430, 430)
-RIGHT_INFO_PANEL = pygame.Rect(SCREEN_WIDTH - 500, 286, 430, 430)
-PREVIEW_CENTER = (SCREEN_WIDTH // 2, 820)
-PREVIEW_MAX_SIZE = (500, 560)
+INFO_PANEL = pygame.Rect(1120, 230, 760, 530)
+INFO_COLLAPSED_HEIGHT = 320
+SIGNATURE_MAX_SIZE = (INFO_PANEL.width - 48, 60)
+PREVIEW_CENTER = (450, 850)
+PREVIEW_MAX_SIZE = (760, 640)
 PREVIEW_SWITCH_DELAY = 0.12
+BACKGROUND_DIR = (
+    Path(__file__).resolve().parents[2]
+    / "assets"
+    / "sprites"
+    / "ui"
+    / "character_selection"
+    / "background"
+)
+FAR_SKY_PATH = BACKGROUND_DIR / "far_sky.jpg"
+DISTANT_SKYLINE_PATH = BACKGROUND_DIR / "distant_skyline.png"
+PARTICLES_PATH = BACKGROUND_DIR / "particals.png"
+FAST_PARTICLES_PATH = BACKGROUND_DIR / "particals_2.png"
+GROUND_TILE_PATH = BACKGROUND_DIR / "Gemini_Generated_Image_qefwajqefwajqefw.jpg"
+GROUND_TILE_TOP_TRIM = 80
+GROUND_SCROLL_WORLD_SCALE = 1.0
+GROUND_SCROLL_RESPONSE = 0.42
+FAR_SKY_PARALLAX = 0.1
+SKYLINE_PARALLAX = 0.36
+SLOW_PARTICLE_PARALLAX = 0.12
+FAST_PARTICLE_PARALLAX = 0.3
+SLOW_PARTICLE_DRIFT_SPEED = 3.0
+FAST_PARTICLE_DRIFT_SPEED = 14.0
+PARTICLE_TINT = (110, 75, 38)
+SLOW_PARTICLE_TINT = (50, 54, 60)
+SELECTION_GROUND_Y = GROUND_Y - 40
+
+CATEGORY_ACCENTS = (
+    (229, 160, 82),
+    (126, 174, 207),
+    (206, 112, 103),
+    (127, 196, 171),
+    (214, 174, 99),
+    (158, 138, 205),
+    (190, 107, 154),
+    (218, 111, 80),
+    (146, 161, 175),
+)
+CATEGORY_ACCENT_BY_NAME = {
+    category: CATEGORY_ACCENTS[index % len(CATEGORY_ACCENTS)]
+    for index, (category, _) in enumerate(CHARACTER_GROUPS)
+}
 
 SPECIAL_MOVE_LABELS = {
     "sp_move_attack_1": "Moving Special I",
     "sp_move_attack_2": "Moving Special II",
     "sp_vert_attack_1": "Vertical Special I",
     "sp_vert_attack_2": "Vertical Special II",
+}
+
+
+@dataclass(frozen=True)
+class PreviewForwardMotion:
+    movement_stat: str | None = None
+    multiplier: float = 1.0
+    active_frames: frozenset[int] | None = None
+    start_frame: int | None = None
+    fixed_speed: float | None = None
+
+
+@dataclass(frozen=True)
+class PreviewForwardStep:
+    frames: frozenset[int]
+    movement_stat: str | None = None
+    multiplier: float = 1.0
+    fixed_distance: float | None = None
+
+
+# Mirrors forward movement in Fighter.update for animations shown by the preview.
+PREVIEW_FORWARD_MOTIONS = {
+    ("bat", "sp_vert_attack_1"): PreviewForwardMotion("walk_speed"),
+    ("davis", "sp_vert_attack_1"): PreviewForwardMotion("walk_speed", 0.5),
+    ("deep", "sp_vert_attack_2"): PreviewForwardMotion("walk_speed", 0.4),
+    ("deep", "sp_move_attack_2"): PreviewForwardMotion(fixed_speed=220.0),
+    ("davis", "sp_move_attack_2"): PreviewForwardMotion(
+        "run_speed",
+        active_frames=frozenset({1, 2}),
+    ),
+    ("firen", "sp_vert_attack_1"): PreviewForwardMotion("run_speed"),
+    ("jack", "sp_vert_attack_1"): PreviewForwardMotion("walk_speed", 0.5),
+    ("luis", "sp_vert_attack_1"): PreviewForwardMotion("run_speed"),
+    ("luis_liberated", "sp_vert_attack_1"): PreviewForwardMotion("run_speed"),
+    ("mark", "sp_move_attack_1"): PreviewForwardMotion("run_speed", 1.5),
+    ("denis", "sp_move_attack_2"): PreviewForwardMotion("run_speed", 1.25),
+    ("woody", "sp_vert_attack_1"): PreviewForwardMotion(
+        "run_speed",
+        2.5,
+        start_frame=3,
+    ),
+}
+
+PREVIEW_FORWARD_STEPS = {
+    ("luis", "sp_move_attack_1"): PreviewForwardStep(
+        frozenset({1, 3, 5}),
+        "run_speed",
+        0.08,
+    ),
+    ("axle", "sp_move_attack_2"): PreviewForwardStep(
+        frozenset({1, 3}),
+        "walk_speed",
+        0.1,
+    ),
+    ("axle", "sp_vert_attack_1"): PreviewForwardStep(
+        frozenset({1, 3}),
+        "walk_speed",
+        0.1,
+    ),
+    ("woody", "sp_vert_attack_2"): PreviewForwardStep(
+        frozenset({5}),
+        fixed_distance=240.0,
+    ),
 }
 
 
@@ -445,51 +556,38 @@ class CharacterSelectScene:
         self.section_font = pygame.font.SysFont("bahnschrift", 26, bold=True)
         self.body_font = pygame.font.SysFont("segoeui", 22)
         self.small_font = pygame.font.SysFont("segoeui", 18)
-        self.tab_font = pygame.font.SysFont("bahnschrift", 18, bold=True)
-        self.card_font = pygame.font.SysFont("bahnschrift", 24, bold=True)
         self.badge_font = pygame.font.SysFont("segoeui", 16, bold=True)
         self.button_font = pygame.font.SysFont("bahnschrift", 24, bold=True)
         self.characters = self._discover_characters()
         self.character_index = {character["key"]: index for index, character in enumerate(self.characters)}
-        self.category_members = {
-            category: [
-                self.character_index[key]
-                for key in keys
-                if key in self.character_index
-            ]
-            for category, keys in CHARACTER_GROUPS
-        }
+        available_categories = {character["category"] for character in self.characters}
         self.categories = [
-            category for category, _ in CHARACTER_GROUPS
-            if self.category_members[category]
+            category
+            for category, _ in CHARACTER_GROUPS
+            if category in available_categories
         ]
-        self.category_tab_rects: list[pygame.Rect] = []
-        self._build_category_tab_rects()
 
         self.selected_index = 0
         if initial_character is not None:
             self.selected_index = self.character_index.get(initial_character, -1)
             if self.selected_index == -1:
                 raise ValueError(f"Selected character is unavailable: {initial_character}")
-        self.current_category = (
-            self.characters[self.selected_index]["category"]
-            if self.characters
-            else self.categories[0] if self.categories else ""
-        )
-        self.last_selected_by_category: dict[str, str] = {}
-        if self.characters:
-            selected_key = self.characters[self.selected_index]["key"]
-            self.last_selected_by_category[self.current_category] = selected_key
-
         self.selected_character = self.characters[self.selected_index]["key"] if self.characters else None
         self.selected_opponents: set[str] = set()
         self.selection_confirmed = False
+        self.back_requested = False
         self._up_pressed = False
         self._down_pressed = False
         self._left_pressed = False
         self._right_pressed = False
+        self._tab_pressed = False
+        self._back_pressed = False
         self._confirm_pressed = confirm_already_pressed
         self._toggle_pressed = toggle_already_pressed
+        self.moveset_expanded = False
+        self.moveset_focused = False
+        self.moveset_hovered = False
+        self.moveset_toggle_rect = pygame.Rect(0, 0, 0, 0)
         self._elapsed_time = 0.0
         self._last_clicked_character: str | None = None
         self._last_click_time = 0.0
@@ -514,14 +612,50 @@ class CharacterSelectScene:
             tuple[str, str],
             tuple[list[pygame.Surface], list[pygame.Surface]],
         ] = {}
-        self.preview_glow = pygame.Surface((720, 190), pygame.SRCALPHA)
-        pygame.draw.ellipse(self.preview_glow, (244, 180, 75, 42), self.preview_glow.get_rect())
+        self.far_sky_tile = self._load_background_layer(FAR_SKY_PATH)
+        self.skyline_tile = self._load_background_layer(DISTANT_SKYLINE_PATH)
+        self.slow_particle_tile = self._load_background_layer(
+            PARTICLES_PATH,
+            tint=SLOW_PARTICLE_TINT,
+        )
+        self.fast_particle_tile = self._load_background_layer(
+            FAST_PARTICLES_PATH,
+            tint=PARTICLE_TINT,
+        )
+        self.ground_tile = self._load_ground_tile()
+        self.far_sky_scroll_offset = 0.0
+        self.skyline_scroll_offset = 0.0
+        self.slow_particle_scroll_offset = 0.0
+        self.fast_particle_scroll_offset = self.fast_particle_tile.get_width() / 2
+        self.ground_scroll_offset = 0.0
+        self.ground_scroll_speed = 0.0
+        self.preview_forward_displacement = 0.0
 
-        maps_root = Path(__file__).resolve().parents[2] / "assets" / "maps"
-        stage_directory, stage_type = STAGE_CONFIGS.get(map_name, STAGE_CONFIGS["City"])
-        self.backdrop = stage_type(maps_root / stage_directory)
         if self.selected_character is not None:
             self._load_preview(self.selected_character)
+
+    @staticmethod
+    def _load_background_layer(
+        path: Path,
+        tint: tuple[int, int, int] | None = None,
+    ) -> pygame.Surface:
+        image = pygame.image.load(str(path)).convert_alpha()
+        if tint is not None:
+            image.fill(tint, special_flags=pygame.BLEND_RGB_ADD)
+        return pygame.transform.smoothscale(image, (SCREEN_WIDTH, SCREEN_HEIGHT))
+
+    @staticmethod
+    def _load_ground_tile() -> pygame.Surface:
+        image = pygame.image.load(str(GROUND_TILE_PATH)).convert()
+        if image.get_height() <= GROUND_TILE_TOP_TRIM:
+            raise ValueError(f"Ground tile is too short to trim: {GROUND_TILE_PATH}")
+        ground_rect = pygame.Rect(
+            0,
+            GROUND_TILE_TOP_TRIM,
+            image.get_width(),
+            image.get_height() - GROUND_TILE_TOP_TRIM,
+        )
+        return image.subsurface(ground_rect).copy()
 
     def _discover_characters(self) -> list[dict]:
         characters: list[dict] = []
@@ -543,6 +677,7 @@ class CharacterSelectScene:
             profile = pygame.image.load(str(profile_path)).convert()
             profile.set_colorkey((0, 0, 0))
             profile = pygame.transform.smoothscale(profile, PROFILE_SIZE)
+            signature = self._load_character_signature(directory)
             characters.append(
                 {
                     "key": character_key,
@@ -553,6 +688,7 @@ class CharacterSelectScene:
                         CHARACTERS[character_key],
                     )[0].label,
                     "profile": profile,
+                    "signature": signature,
                 }
             )
         category_order = {category: index for index, (category, _) in enumerate(CHARACTER_GROUPS)}
@@ -573,6 +709,7 @@ class CharacterSelectScene:
             f"{directory.name.capitalize()}.png",
             f"{directory.name.capitalize()}.jpg",
             f"{directory.name.capitalize()}.jpeg",
+            *PROFILE_FILENAME_ALIASES.get(directory.name.lower(), ()),
         )
         for filename in preferred_names:
             candidate = directory / filename
@@ -613,56 +750,95 @@ class CharacterSelectScene:
         )
         return nested_frames[0] if nested_frames else None
 
-    def _build_category_tab_rects(self) -> None:
-        if not self.categories:
-            return
-        margin = 48
-        gap = 8
-        tab_width = (SCREEN_WIDTH - margin * 2 - gap * (len(self.categories) - 1)) // len(self.categories)
-        self.category_tab_rects = [
-            pygame.Rect(margin + index * (tab_width + gap), CATEGORY_TOP, tab_width, CATEGORY_HEIGHT)
-            for index in range(len(self.categories))
-        ]
+    @staticmethod
+    def _load_character_signature(directory: Path) -> pygame.Surface | None:
+        signature_path = directory / "signature.png"
+        if not signature_path.is_file():
+            return None
 
-    def _category_character_indices(self) -> list[int]:
-        return self.category_members.get(self.current_category, [])
+        signature = pygame.image.load(str(signature_path))
+        bounds = signature.get_bounding_rect(min_alpha=8)
+        if not bounds.width or not bounds.height:
+            raise ValueError(f"Signature image is fully transparent: {signature_path}")
+        signature = signature.subsurface(bounds).copy()
+        scale = min(
+            SIGNATURE_MAX_SIZE[0] / signature.get_width(),
+            SIGNATURE_MAX_SIZE[1] / signature.get_height(),
+            1.0,
+        )
+        if scale < 1.0:
+            signature = pygame.transform.smoothscale(
+                signature,
+                (
+                    max(1, round(signature.get_width() * scale)),
+                    max(1, round(signature.get_height() * scale)),
+                ),
+            )
+        return signature
 
     def _roster_card_rect(self, visible_index: int) -> pygame.Rect:
-        character_indices = self._category_character_indices()
-        count = len(character_indices)
-        gap = ROSTER_CARD_GAP
-        card_width = min(440, (ROSTER_PANEL.width - 36 - gap * max(0, count - 1)) // max(1, count))
-        row_width = count * card_width + max(0, count - 1) * gap
-        x = (SCREEN_WIDTH - row_width) // 2 + visible_index * (card_width + gap)
-        return pygame.Rect(x, ROSTER_CARD_TOP, card_width, ROSTER_CARD_HEIGHT)
+        row, column = divmod(visible_index, ROSTER_GRID_COLUMNS)
+        row_start = row * ROSTER_GRID_COLUMNS
+        row_end = min(row_start + ROSTER_GRID_COLUMNS, len(self.characters))
+        category_breaks = [
+            index
+            for index in range(row_start + 1, row_end)
+            if self.characters[index]["category"] != self.characters[index - 1]["category"]
+        ]
+        row_count = row_end - row_start
+        available_width = ROSTER_PANEL.width - ROSTER_MARGIN * 2
+        card_width = (
+            available_width
+            - ROSTER_CARD_GAP * max(0, row_count - 1)
+            - ROSTER_CATEGORY_GAP * len(category_breaks)
+        ) // max(1, row_count)
+        row_width = (
+            row_count * card_width
+            + ROSTER_CARD_GAP * max(0, row_count - 1)
+            + ROSTER_CATEGORY_GAP * len(category_breaks)
+        )
+        breaks_before = sum(index <= visible_index for index in category_breaks)
+        x = (
+            ROSTER_PANEL.x
+            + ROSTER_MARGIN
+            + (available_width - row_width) // 2
+            + column * (card_width + ROSTER_CARD_GAP)
+            + breaks_before * ROSTER_CATEGORY_GAP
+        )
+        y = ROSTER_CARD_TOP + row * (ROSTER_CARD_HEIGHT + ROSTER_CARD_GAP)
+        return pygame.Rect(x, y, card_width, ROSTER_CARD_HEIGHT)
 
     def _set_selected_index(self, index: int, *, defer_preview: bool = False) -> None:
         if not self.characters:
             return
         index %= len(self.characters)
         character = self.characters[index]
-        if character["category"] != self.current_category:
-            return
         changed = index != self.selected_index
         self.selected_index = index
         self.selected_character = character["key"]
-        self.last_selected_by_category[self.current_category] = self.selected_character
         if changed and self.preview_player is not None:
             self.preview_pending_key = self.selected_character
             self.preview_pending_elapsed = 0.0
             if not defer_preview:
                 self._load_preview(self.selected_character)
 
-    def _change_category(self, direction: int) -> None:
-        if not self.categories:
+    def _move_selection(self, horizontal: int, vertical: int) -> None:
+        if not self.characters:
             return
-        current_index = self.categories.index(self.current_category)
-        self.current_category = self.categories[(current_index + direction) % len(self.categories)]
-        remembered_key = self.last_selected_by_category.get(self.current_category)
-        character_index = self.character_index.get(remembered_key, -1)
-        if character_index not in self.category_members[self.current_category]:
-            character_index = self.category_members[self.current_category][0]
-        self._set_selected_index(character_index)
+        row, column = divmod(self.selected_index, ROSTER_GRID_COLUMNS)
+        row_count = (len(self.characters) + ROSTER_GRID_COLUMNS - 1) // ROSTER_GRID_COLUMNS
+        if horizontal:
+            row_start = row * ROSTER_GRID_COLUMNS
+            characters_in_row = min(ROSTER_GRID_COLUMNS, len(self.characters) - row_start)
+            column = (column + horizontal) % characters_in_row
+        else:
+            row = (row + vertical) % row_count
+            characters_in_row = min(
+                ROSTER_GRID_COLUMNS,
+                len(self.characters) - row * ROSTER_GRID_COLUMNS,
+            )
+            column = min(column, characters_in_row - 1)
+        self._set_selected_index(row * ROSTER_GRID_COLUMNS + column)
 
     def _available_preview_animations(self, character_key: str) -> list[tuple[str, str]]:
         definition = CHARACTERS[character_key]
@@ -868,7 +1044,7 @@ class CharacterSelectScene:
                     travel_frames,
                     impact_frames,
                     (start_x, start_y + offset_y),
-                    min(RIGHT_INFO_PANEL.left - 32, start_x + spec.travel_distance),
+                    min(INFO_PANEL.left - 32, start_x + spec.travel_distance),
                     spec.travel_duration,
                 )
             )
@@ -913,6 +1089,7 @@ class CharacterSelectScene:
         )
 
     def _update_preview(self, dt: float) -> None:
+        self.preview_forward_displacement = 0.0
         if self.preview_pending_key is not None:
             self.preview_pending_elapsed += dt
             if self.preview_pending_elapsed >= PREVIEW_SWITCH_DELAY:
@@ -924,6 +1101,12 @@ class CharacterSelectScene:
         previous_frame_index = self.preview_player.frame_index
         self.preview_player.update(dt, 1)
         character_key = self.preview_character_key
+        self.preview_forward_displacement = self._preview_frame_step_distance(
+            character_key,
+            animation_name,
+            previous_frame_index,
+            self.preview_player.frame_index,
+        )
         if character_key is not None:
             for projectile_spec in PREVIEW_PROJECTILES.get((character_key, animation_name), ()):
                 for trigger_frame in projectile_spec.trigger_frames:
@@ -962,6 +1145,93 @@ class CharacterSelectScene:
             clone.update(dt)
         self.preview_clones = [clone for clone in self.preview_clones if not clone.finished]
 
+    @staticmethod
+    def _crossed_animation_frames(
+        previous_frame: int,
+        current_frame: int,
+        frame_count: int,
+    ) -> tuple[int, ...]:
+        if current_frame == previous_frame or frame_count <= 0:
+            return ()
+        if current_frame > previous_frame:
+            return tuple(range(previous_frame + 1, current_frame + 1))
+        return tuple(range(previous_frame + 1, frame_count)) + tuple(range(current_frame + 1))
+
+    def _preview_frame_step_distance(
+        self,
+        character_key: str | None,
+        animation_name: str,
+        previous_frame: int,
+        current_frame: int,
+    ) -> float:
+        if character_key is None or self.preview_player is None:
+            return 0.0
+        step = PREVIEW_FORWARD_STEPS.get((character_key, animation_name))
+        if step is None:
+            return 0.0
+        frames = self._crossed_animation_frames(
+            previous_frame,
+            current_frame,
+            len(self.preview_player.animations[animation_name]["surfaces"]),
+        )
+        if step.fixed_distance is not None:
+            distance_per_step = step.fixed_distance
+        else:
+            movement = CHARACTERS[character_key].get("movement", {})
+            distance_per_step = movement.get(step.movement_stat or "", 0.0) * step.multiplier
+        return sum(distance_per_step for frame in frames if frame in step.frames)
+
+    def _preview_forward_world_speed(self) -> float:
+        if self.preview_player is None or self.preview_character_key is None:
+            return 0.0
+        character_key = self.preview_character_key
+        animation_name = self.preview_player.current_name
+        movement = CHARACTERS[character_key].get("movement", {})
+        if animation_name == "walk":
+            return movement.get("walk_speed", 0.0)
+        if animation_name == "run":
+            return movement.get("run_speed", 0.0) * 1.25
+
+        motion = PREVIEW_FORWARD_MOTIONS.get((character_key, animation_name))
+        if motion is None:
+            return 0.0
+        frame_index = self.preview_player.frame_index
+        if motion.active_frames is not None and frame_index not in motion.active_frames:
+            return 0.0
+        if motion.start_frame is not None and frame_index < motion.start_frame:
+            return 0.0
+        if motion.fixed_speed is not None:
+            return motion.fixed_speed
+        return movement.get(motion.movement_stat or "", 0.0) * motion.multiplier
+
+    def _update_ground_scroll(self, dt: float) -> None:
+        target_speed = self._preview_forward_world_speed() * GROUND_SCROLL_WORLD_SCALE
+
+        response = 1.0 - math.exp(-dt / GROUND_SCROLL_RESPONSE)
+        self.ground_scroll_speed += (target_speed - self.ground_scroll_speed) * response
+        frame_scroll_distance = self.preview_forward_displacement * GROUND_SCROLL_WORLD_SCALE
+        self.ground_scroll_offset = (
+            self.ground_scroll_offset + self.ground_scroll_speed * dt + frame_scroll_distance
+        ) % self.ground_tile.get_width()
+        self.far_sky_scroll_offset = (
+            self.far_sky_scroll_offset
+            + (self.ground_scroll_speed * dt + frame_scroll_distance) * FAR_SKY_PARALLAX
+        ) % self.far_sky_tile.get_width()
+        self.skyline_scroll_offset = (
+            self.skyline_scroll_offset
+            + (self.ground_scroll_speed * dt + frame_scroll_distance) * SKYLINE_PARALLAX
+        ) % self.skyline_tile.get_width()
+        self.slow_particle_scroll_offset = (
+            self.slow_particle_scroll_offset
+            + SLOW_PARTICLE_DRIFT_SPEED * dt
+            + (self.ground_scroll_speed * dt + frame_scroll_distance) * SLOW_PARTICLE_PARALLAX
+        ) % self.slow_particle_tile.get_width()
+        self.fast_particle_scroll_offset = (
+            self.fast_particle_scroll_offset
+            + FAST_PARTICLE_DRIFT_SPEED * dt
+            + (self.ground_scroll_speed * dt + frame_scroll_distance) * FAST_PARTICLE_PARALLAX
+        ) % self.fast_particle_tile.get_width()
+
     def update(
         self,
         dt: float,
@@ -971,52 +1241,64 @@ class CharacterSelectScene:
     ) -> None:
         self._elapsed_time += dt
         self._update_preview(dt)
+        self._update_ground_scroll(dt)
         keys = pygame.key.get_pressed()
         up_pressed = KEY_BINDINGS.is_pressed("move_up", keys)
         down_pressed = KEY_BINDINGS.is_pressed("move_down", keys)
         left_pressed = KEY_BINDINGS.is_pressed("move_left", keys)
         right_pressed = KEY_BINDINGS.is_pressed("move_right", keys)
         confirm_pressed = KEY_BINDINGS.is_pressed("menu_confirm", keys)
+        back_pressed = KEY_BINDINGS.is_pressed("back_pause", keys)
         toggle_pressed = KEY_BINDINGS.is_pressed("toggle_opponent", keys)
+        tab_pressed = keys[pygame.K_TAB]
+
+        back_clicked = mouse_click is not None and BACK_BUTTON.collidepoint(mouse_click)
+        if back_clicked or (back_pressed and not self._back_pressed):
+            self.back_requested = True
 
         if self.characters:
-            if up_pressed and not self._up_pressed:
-                self._change_category(-1)
-            elif down_pressed and not self._down_pressed:
-                self._change_category(1)
-            elif left_pressed and not self._left_pressed:
-                members = self._category_character_indices()
-                member_position = members.index(self.selected_index)
-                self._set_selected_index(members[(member_position - 1) % len(members)])
-            elif right_pressed and not self._right_pressed:
-                members = self._category_character_indices()
-                member_position = members.index(self.selected_index)
-                self._set_selected_index(members[(member_position + 1) % len(members)])
+            if tab_pressed and not self._tab_pressed:
+                self.moveset_focused = not self.moveset_focused
 
+            moving_roster = (
+                (up_pressed and not self._up_pressed)
+                or (down_pressed and not self._down_pressed)
+                or (left_pressed and not self._left_pressed)
+                or (right_pressed and not self._right_pressed)
+            )
+            if self.moveset_focused and moving_roster:
+                self.moveset_focused = False
+
+            if not self.moveset_focused and up_pressed and not self._up_pressed:
+                self._move_selection(0, -1)
+            elif not self.moveset_focused and down_pressed and not self._down_pressed:
+                self._move_selection(0, 1)
+            elif not self.moveset_focused and left_pressed and not self._left_pressed:
+                self._move_selection(-1, 0)
+            elif not self.moveset_focused and right_pressed and not self._right_pressed:
+                self._move_selection(1, 0)
+
+            self.moveset_hovered = (
+                mouse_pos is not None
+                and self.moveset_toggle_rect.collidepoint(mouse_pos)
+            )
             if mouse_pos is not None:
-                for index, tab_rect in enumerate(self.category_tab_rects):
-                    if tab_rect.collidepoint(mouse_pos):
-                        if mouse_click is not None:
-                            self._change_category_to(index)
+                for character_index in range(len(self.characters)):
+                    if self._roster_card_rect(character_index).collidepoint(mouse_pos):
+                        self.moveset_focused = False
+                        self._set_selected_index(character_index, defer_preview=True)
                         break
-                else:
-                    for visible_index, character_index in enumerate(self._category_character_indices()):
-                        if self._roster_card_rect(visible_index).collidepoint(mouse_pos):
-                            self._set_selected_index(character_index, defer_preview=True)
-                            break
 
-            if mouse_click is not None:
-                clicked_tab = next(
-                    (index for index, rect in enumerate(self.category_tab_rects) if rect.collidepoint(mouse_click)),
-                    None,
-                )
-                if clicked_tab is not None:
-                    self._change_category_to(clicked_tab)
-                elif CONFIRM_BUTTON.collidepoint(mouse_click):
+            if mouse_click is not None and not back_clicked:
+                if CONFIRM_BUTTON.collidepoint(mouse_click):
                     self.selection_confirmed = bool(self.selected_opponents) if self.opponent_selection else True
+                elif self.moveset_toggle_rect.collidepoint(mouse_click):
+                    self.moveset_expanded = not self.moveset_expanded
+                    self.moveset_focused = True
                 else:
-                    for visible_index, character_index in enumerate(self._category_character_indices()):
-                        if self._roster_card_rect(visible_index).collidepoint(mouse_click):
+                    for character_index in range(len(self.characters)):
+                        if self._roster_card_rect(character_index).collidepoint(mouse_click):
+                            self.moveset_focused = False
                             self._set_selected_index(character_index)
                             if self.opponent_selection:
                                 self._toggle_opponent(self.selected_character)
@@ -1031,7 +1313,9 @@ class CharacterSelectScene:
                             break
 
             if confirm_pressed and not self._confirm_pressed:
-                if self.opponent_selection:
+                if self.moveset_focused:
+                    self.moveset_expanded = not self.moveset_expanded
+                elif self.opponent_selection:
                     self.selection_confirmed = bool(self.selected_opponents)
                 else:
                     self.selection_confirmed = True
@@ -1042,22 +1326,10 @@ class CharacterSelectScene:
         self._down_pressed = down_pressed
         self._left_pressed = left_pressed
         self._right_pressed = right_pressed
+        self._tab_pressed = tab_pressed
+        self._back_pressed = back_pressed
         self._confirm_pressed = confirm_pressed
         self._toggle_pressed = toggle_pressed
-
-    def _change_category_to(self, category_index: int) -> None:
-        if not self.categories:
-            return
-        category_index %= len(self.categories)
-        category = self.categories[category_index]
-        if category == self.current_category:
-            return
-        self.current_category = category
-        remembered_key = self.last_selected_by_category.get(category)
-        character_index = self.character_index.get(remembered_key, -1)
-        if character_index not in self.category_members[category]:
-            character_index = self.category_members[category][0]
-        self._set_selected_index(character_index)
 
     def _toggle_opponent(self, character: str | None) -> None:
         if character is None:
@@ -1097,12 +1369,24 @@ class CharacterSelectScene:
         pygame.draw.rect(surface, (157, 177, 199), rect, 1, border_radius=14)
 
     def _draw_background(self, surface: pygame.Surface) -> None:
-        self.backdrop.draw(surface, self.backdrop.world_width / 2)
-        shade = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        shade.fill((5, 10, 20, 166))
-        surface.blit(shade, (0, 0))
-        surface.blit(self.preview_glow, (PREVIEW_CENTER[0] - self.preview_glow.get_width() // 2, 720))
-        pygame.draw.line(surface, (134, 160, 183), (0, 820), (SCREEN_WIDTH, 820), 1)
+        surface.fill((0, 0, 0))
+        for tile, offset in (
+            (self.far_sky_tile, self.far_sky_scroll_offset),
+            (self.skyline_tile, self.skyline_scroll_offset),
+            (self.slow_particle_tile, self.slow_particle_scroll_offset),
+            (self.fast_particle_tile, self.fast_particle_scroll_offset),
+        ):
+            tile_width = tile.get_width()
+            tile_x = -(round(offset) % tile_width)
+            while tile_x < SCREEN_WIDTH:
+                surface.blit(tile, (tile_x, 0))
+                tile_x += tile_width
+
+        tile_width = self.ground_tile.get_width()
+        tile_x = -(round(self.ground_scroll_offset) % tile_width)
+        while tile_x < SCREEN_WIDTH:
+            surface.blit(self.ground_tile, (tile_x, SELECTION_GROUND_Y))
+            tile_x += tile_width
 
     def _draw_header(self, surface: pygame.Surface) -> None:
         title_text = "CHOOSE YOUR OPPONENTS" if self.opponent_selection else "CHOOSE YOUR FIGHTER"
@@ -1117,12 +1401,10 @@ class CharacterSelectScene:
         mode_surface = self.badge_font.render(mode, True, (255, 214, 139))
         surface.blit(mode_surface, mode_surface.get_rect(midright=(CONFIRM_BUTTON.left - 22, 76)))
 
-        subtitle = self.subtitle_font.render(
-            "Click a fighter or use arrows to browse; each preview cycles through their moves",
-            True,
-            (189, 204, 218),
-        )
-        surface.blit(subtitle, (64, 100))
+        pygame.draw.rect(surface, (28, 43, 58), BACK_BUTTON, border_radius=12)
+        pygame.draw.rect(surface, (119, 153, 177), BACK_BUTTON, 2, border_radius=12)
+        back_button = self.button_font.render("BACK", True, (236, 242, 247))
+        surface.blit(back_button, back_button.get_rect(center=BACK_BUTTON.center))
 
         if self.opponent_selection:
             button_text = f"START BATTLE  {len(self.selected_opponents)}"
@@ -1143,20 +1425,6 @@ class CharacterSelectScene:
         pygame.draw.rect(surface, button_outline, CONFIRM_BUTTON, 2, border_radius=12)
         button = self.button_font.render(button_text, True, button_text_color)
         surface.blit(button, button.get_rect(center=CONFIRM_BUTTON.center))
-
-    def _draw_category_tabs(self, surface: pygame.Surface) -> None:
-        for index, rect in enumerate(self.category_tab_rects):
-            selected = self.categories[index] == self.current_category
-            fill = (126, 73, 42) if selected else (15, 24, 36)
-            outline = (255, 190, 92) if selected else (88, 111, 133)
-            pygame.draw.rect(surface, fill, rect, border_radius=9)
-            pygame.draw.rect(surface, outline, rect, 2 if selected else 1, border_radius=9)
-            label_text = self.categories[index].upper()
-            label_font = self.tab_font
-            if label_font.size(label_text)[0] > rect.width - 12:
-                label_font = pygame.font.SysFont("bahnschrift", 14, bold=True)
-            label = label_font.render(label_text, True, (255, 232, 193) if selected else (194, 208, 221))
-            surface.blit(label, label.get_rect(center=rect.center))
 
     def _draw_stat_bar(
         self,
@@ -1179,25 +1447,40 @@ class CharacterSelectScene:
                 border_radius=6,
             )
 
-    def _draw_character_details(self, surface: pygame.Surface, character: dict) -> None:
-        self._draw_panel(surface, LEFT_INFO_PANEL, (9, 17, 29, 225))
-        category_surface = self.badge_font.render(
-            f"{character['category'].upper()}  |  {character['archetype'].upper()}",
+    def _draw_character_info(self, surface: pygame.Surface, character: dict) -> None:
+        panel = INFO_PANEL.copy()
+        panel.height = INFO_PANEL.height if self.moveset_expanded else INFO_COLLAPSED_HEIGHT
+        self._draw_panel(surface, panel, (9, 17, 29, 238))
+
+        category = f"{character['category'].upper()}  |  {character['archetype'].upper()}"
+        category_surface = self.badge_font.render(category, True, (255, 209, 129))
+        surface.blit(category_surface, (panel.x + 24, panel.y + 20))
+        selected_index = self.selected_index + 1
+        roster_position = self.small_font.render(
+            f"FIGHTER  {selected_index:02d} / {len(self.characters):02d}",
             True,
-            (255, 209, 129),
+            (148, 174, 196),
         )
-        surface.blit(category_surface, (LEFT_INFO_PANEL.x + 26, LEFT_INFO_PANEL.y + 24))
-        name = character["display_name"].upper()
-        name_font = self.name_font
-        if name_font.size(name)[0] > LEFT_INFO_PANEL.width - 48:
-            name_font = pygame.font.SysFont("bahnschrift", 38, bold=True)
-        name_surface = name_font.render(name, True, (250, 248, 241))
-        surface.blit(name_surface, (LEFT_INFO_PANEL.x + 24, LEFT_INFO_PANEL.y + 52))
+        surface.blit(roster_position, roster_position.get_rect(topright=(panel.right - 24, panel.y + 20)))
+
+        signature = character.get("signature")
+        if signature is not None:
+            signature_rect = signature.get_rect(
+                midleft=(panel.x + 24, panel.y + 82),
+            )
+            surface.blit(signature, signature_rect)
+        else:
+            name = character["display_name"].upper()
+            name_font = self.name_font
+            if name_font.size(name)[0] > panel.width - 48:
+                name_font = pygame.font.SysFont("bahnschrift", 38, bold=True)
+            name_surface = name_font.render(name, True, (250, 248, 241))
+            surface.blit(name_surface, (panel.x + 24, panel.y + 52))
         pygame.draw.line(
             surface,
             (225, 157, 75),
-            (LEFT_INFO_PANEL.x + 24, LEFT_INFO_PANEL.y + 116),
-            (LEFT_INFO_PANEL.right - 24, LEFT_INFO_PANEL.y + 116),
+            (panel.x + 24, panel.y + 116),
+            (panel.right - 24, panel.y + 116),
             2,
         )
 
@@ -1205,12 +1488,13 @@ class CharacterSelectScene:
         _, stats, movement = resolve_character_profile(character["key"], definition)
         max_health = int(stats.get("max_health", 0))
         max_mana = int(stats.get("max_mana", 0))
+        stat_width = 350
         self._draw_stat_bar(
             surface,
             "HP",
             max_health,
             max_health,
-            pygame.Rect(LEFT_INFO_PANEL.x + 28, LEFT_INFO_PANEL.y + 168, LEFT_INFO_PANEL.width - 56, 14),
+            pygame.Rect(panel.x + 28, panel.y + 158, stat_width, 16),
             (217, 79, 78),
         )
         self._draw_stat_bar(
@@ -1218,56 +1502,83 @@ class CharacterSelectScene:
             "MP",
             max_mana,
             max_mana,
-            pygame.Rect(LEFT_INFO_PANEL.x + 28, LEFT_INFO_PANEL.y + 226, LEFT_INFO_PANEL.width - 56, 14),
+            pygame.Rect(panel.x + 28, panel.y + 218, stat_width, 16),
             (77, 147, 229),
         )
 
         walk_speed = round(movement.get("walk_speed", 0))
         run_speed = round(movement.get("run_speed", 0))
-        speed_y = LEFT_INFO_PANEL.y + 276
+        mobility_x = panel.x + 420
+        mobility_y = panel.y + 136
         speed_label = self.small_font.render("MOBILITY", True, (148, 174, 196))
-        surface.blit(speed_label, (LEFT_INFO_PANEL.x + 28, speed_y))
-        speed_text = self.body_font.render(f"WALK  {walk_speed}     RUN  {run_speed}", True, (225, 232, 237))
-        surface.blit(speed_text, (LEFT_INFO_PANEL.x + 28, speed_y + 27))
-
-        selected_index = self.selected_index + 1
-        roster_position = self.small_font.render(f"FIGHTER  {selected_index:02d} / {len(self.characters):02d}", True, (148, 174, 196))
-        surface.blit(roster_position, (LEFT_INFO_PANEL.x + 28, LEFT_INFO_PANEL.bottom - 52))
-
-    def _draw_moves(self, surface: pygame.Surface, character: dict) -> None:
-        self._draw_panel(surface, RIGHT_INFO_PANEL, (9, 17, 29, 225))
-        heading = self.section_font.render("MOVESET", True, (250, 248, 241))
-        surface.blit(heading, (RIGHT_INFO_PANEL.x + 24, RIGHT_INFO_PANEL.y + 22))
-        current = self.badge_font.render(
+        surface.blit(speed_label, (mobility_x, mobility_y))
+        speed_text = self.body_font.render(
+            f"WALK  {walk_speed}     RUN  {run_speed}",
+            True,
+            (225, 232, 237),
+        )
+        surface.blit(speed_text, (mobility_x, mobility_y + 28))
+        preview = self.badge_font.render(
             f"PREVIEW: {self.preview_label}",
             True,
             (255, 209, 129),
         )
-        surface.blit(current, (RIGHT_INFO_PANEL.x + 24, RIGHT_INFO_PANEL.y + 60))
-        pygame.draw.line(
-            surface,
-            (82, 106, 130),
-            (RIGHT_INFO_PANEL.x + 24, RIGHT_INFO_PANEL.y + 92),
-            (RIGHT_INFO_PANEL.right - 24, RIGHT_INFO_PANEL.y + 92),
-            1,
+        surface.blit(preview, (mobility_x, mobility_y + 70))
+
+        self.moveset_toggle_rect = pygame.Rect(
+            panel.x + 24,
+            panel.y + 256,
+            panel.width - 48,
+            44,
+        )
+        toggle_outline = (255, 190, 92) if self.moveset_focused or self.moveset_hovered else (82, 106, 130)
+        toggle_fill = (40, 35, 31) if self.moveset_focused or self.moveset_hovered else (17, 27, 40)
+        pygame.draw.rect(surface, toggle_fill, self.moveset_toggle_rect, border_radius=8)
+        pygame.draw.rect(surface, toggle_outline, self.moveset_toggle_rect, 2, border_radius=8)
+
+        heading = self.section_font.render("MOVESET", True, (250, 248, 241))
+        surface.blit(heading, (self.moveset_toggle_rect.x + 18, self.moveset_toggle_rect.y + 7))
+        toggle_hint = self.small_font.render(
+            f"CLICK OR TAB + {KEY_BINDINGS.label('menu_confirm')}",
+            True,
+            (167, 188, 207),
+        )
+        surface.blit(
+            toggle_hint,
+            toggle_hint.get_rect(midright=(self.moveset_toggle_rect.right - 150, self.moveset_toggle_rect.centery)),
+        )
+        toggle_text = self.badge_font.render(
+            "COLLAPSE  -" if self.moveset_expanded else "EXPAND  +",
+            True,
+            (255, 232, 193),
+        )
+        surface.blit(
+            toggle_text,
+            toggle_text.get_rect(midright=(self.moveset_toggle_rect.right - 16, self.moveset_toggle_rect.centery)),
         )
 
+        if not self.moveset_expanded:
+            return
         moves = self._move_list(character["key"])
         if not moves:
             empty = self.body_font.render("No move animations listed.", True, (188, 202, 216))
-            surface.blit(empty, (RIGHT_INFO_PANEL.x + 24, RIGHT_INFO_PANEL.y + 124))
+            surface.blit(empty, (panel.x + 30, self.moveset_toggle_rect.bottom + 14))
             return
-        y = RIGHT_INFO_PANEL.y + 116
-        for move_type, name in moves:
-            tag = self.badge_font.render(move_type, True, (255, 209, 129) if move_type == "SPECIAL" else (131, 202, 228))
-            surface.blit(tag, (RIGHT_INFO_PANEL.x + 24, y))
-            move_name = self.body_font.render(name, True, (232, 237, 241))
-            surface.blit(move_name, (RIGHT_INFO_PANEL.x + 24, y + 23))
-            y += 58
+        y = self.moveset_toggle_rect.bottom + 8
+        for move_type, move_name in moves:
+            row = pygame.Rect(panel.x + 24, y, panel.width - 48, 36)
+            pygame.draw.line(surface, (49, 67, 83), row.bottomleft, row.bottomright, 1)
+            tag = self.badge_font.render(
+                move_type,
+                True,
+                (255, 209, 129) if move_type == "SPECIAL" else (131, 202, 228),
+            )
+            surface.blit(tag, (row.x + 18, row.y + 8))
+            name_surface = self.body_font.render(move_name, True, (232, 237, 241))
+            surface.blit(name_surface, (row.x + 146, row.y + 4))
+            y += 40
 
     def _draw_preview(self, surface: pygame.Surface) -> None:
-        label = self.badge_font.render("FIGHTER SHOWCASE", True, (221, 231, 239))
-        surface.blit(label, label.get_rect(center=(PREVIEW_CENTER[0], 234)))
         if self.preview_player is None:
             return
         for projectile in self.preview_projectiles:
@@ -1282,47 +1593,92 @@ class CharacterSelectScene:
     def _draw_roster(self, surface: pygame.Surface) -> None:
         self._draw_panel(surface, ROSTER_PANEL, (6, 12, 21, 239))
         section = self.badge_font.render(
-            f"ROSTER  /  {self.current_category.upper()}",
+            f"FIGHTER ROSTER  /  {len(self.characters)}",
             True,
-            (201, 216, 228),
+            (240, 223, 195),
         )
-        surface.blit(section, (ROSTER_PANEL.x + 18, ROSTER_PANEL.y + 2))
+        surface.blit(section, (ROSTER_PANEL.x + 16, ROSTER_PANEL.y + 8))
         controls = self.small_font.render(
-            f"{KEY_BINDINGS.label('move_left')}/{KEY_BINDINGS.label('move_right')} fighter   "
-            f"{KEY_BINDINGS.label('move_up')}/{KEY_BINDINGS.label('move_down')} category   "
-            f"{KEY_BINDINGS.label('menu_confirm')} confirm",
+            f"{KEY_BINDINGS.label('move_left')}/{KEY_BINDINGS.label('move_right')}/"
+            f"{KEY_BINDINGS.label('move_up')}/{KEY_BINDINGS.label('move_down')} browse   "
+            f"{KEY_BINDINGS.label('menu_confirm')} confirm   "
+            f"{KEY_BINDINGS.label('back_pause')} back",
             True,
             (167, 188, 207),
         )
-        surface.blit(controls, controls.get_rect(midright=(ROSTER_PANEL.right - 18, ROSTER_PANEL.y + 13)))
+        surface.blit(controls, controls.get_rect(midright=(ROSTER_PANEL.right - 16, ROSTER_PANEL.y + 16)))
 
-        for visible_index, character_index in enumerate(self._category_character_indices()):
-            character = self.characters[character_index]
-            rect = self._roster_card_rect(visible_index)
+        legend_x = ROSTER_PANEL.x + 16
+        legend_y = ROSTER_PANEL.y + 30
+        legend_font = pygame.font.SysFont("segoeui", 12, bold=True)
+        for category in self.categories:
+            accent = CATEGORY_ACCENT_BY_NAME[category]
+            pygame.draw.rect(surface, accent, pygame.Rect(legend_x, legend_y + 3, 8, 8), border_radius=2)
+            label = legend_font.render(category.upper(), True, accent)
+            surface.blit(label, (legend_x + 12, legend_y))
+            legend_x += label.get_width() + 28
+
+        pulse = self._selection_glow_strength()
+        if self.characters:
+            self._draw_selection_glow(
+                surface,
+                self._roster_card_rect(self.selected_index),
+                pulse,
+            )
+        for character_index, character in enumerate(self.characters):
+            rect = self._roster_card_rect(character_index)
             selected = character_index == self.selected_index
             chosen = character["key"] in self.selected_opponents
-            fill = (93, 56, 37) if selected else (33, 44, 58)
-            outline = (255, 190, 92) if selected else (105, 210, 148) if chosen else (76, 96, 116)
-            pygame.draw.rect(surface, fill, rect, border_radius=12)
-            pygame.draw.rect(surface, outline, rect, 3 if selected or chosen else 1, border_radius=12)
+            accent = CATEGORY_ACCENT_BY_NAME[character["category"]]
+            fill = (74, 47, 35) if selected else (25, 32, 42)
+            if selected:
+                outline = (255, round(180 + pulse * 65), round(72 + pulse * 64))
+            else:
+                outline = (105, 210, 148) if chosen else (62, 76, 91)
+            pygame.draw.rect(surface, fill, rect, border_radius=6)
+            pygame.draw.rect(surface, accent, pygame.Rect(rect.x, rect.y, rect.width, 4), border_radius=2)
+            outline_width = 2 + round(pulse * 2) if selected else 3 if chosen else 1
+            pygame.draw.rect(surface, outline, rect, outline_width, border_radius=6)
             image_rect = character["profile"].get_rect(
-                center=(rect.centerx, rect.top + 70),
-                width=PROFILE_SIZE[0],
-                height=PROFILE_SIZE[1],
+                center=rect.center,
             )
             surface.blit(character["profile"], image_rect)
-            name = self.card_font.render(character["display_name"].upper(), True, (250, 248, 241))
-            surface.blit(name, name.get_rect(center=(rect.centerx, rect.bottom - 26)))
-            number = self.badge_font.render(f"{visible_index + 1:02d}", True, (255, 209, 129) if selected else (151, 171, 190))
-            surface.blit(number, (rect.x + 10, rect.y + 8))
             if chosen:
-                selected_label = self.badge_font.render("SELECTED", True, (169, 240, 190))
-                surface.blit(selected_label, selected_label.get_rect(midright=(rect.right - 10, rect.y + 18)))
+                pygame.draw.circle(surface, (169, 240, 190), (rect.right - 8, rect.y + 11), 4)
+
+    def _selection_glow_strength(self) -> float:
+        return (math.sin(math.tau * self._elapsed_time / SELECTION_GLOW_PERIOD) + 1.0) / 2.0
+
+    @staticmethod
+    def _draw_selection_glow(
+        surface: pygame.Surface,
+        rect: pygame.Rect,
+        strength: float,
+    ) -> None:
+        padding = 10
+        glow = pygame.Surface(
+            (rect.width + padding * 2, rect.height + padding * 2),
+            pygame.SRCALPHA,
+        )
+        base_rect = pygame.Rect(padding, padding, rect.width, rect.height)
+        glow_layers = (
+            (round(10 + strength * 4), 18 + round(strength * 18)),
+            (round(6 + strength * 2), 30 + round(strength * 28)),
+            (round(2 + strength * 2), 48 + round(strength * 42)),
+        )
+        for expansion, alpha in glow_layers:
+            pygame.draw.rect(
+                glow,
+                (255, 174, 78, alpha),
+                base_rect.inflate(expansion, expansion),
+                2,
+                border_radius=9,
+            )
+        surface.blit(glow, (rect.x - padding, rect.y - padding))
 
     def draw(self, surface: pygame.Surface) -> None:
         self._draw_background(surface)
         self._draw_header(surface)
-        self._draw_category_tabs(surface)
         if not self.characters:
             empty = self.subtitle_font.render(
                 "No playable fighters found in assets\\sprites\\characters",
@@ -1334,6 +1690,5 @@ class CharacterSelectScene:
 
         character = self.characters[self.selected_index]
         self._draw_preview(surface)
-        self._draw_character_details(surface, character)
-        self._draw_moves(surface, character)
+        self._draw_character_info(surface, character)
         self._draw_roster(surface)

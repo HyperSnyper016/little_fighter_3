@@ -23,12 +23,17 @@ class MapSelectScene:
         *,
         test_mode: bool = False,
         confirm_already_pressed: bool = False,
+        initial_map: str | None = None,
     ) -> None:
         self.player_character = player_character
         self.test_mode = test_mode
         self.map_names = tuple(STAGE_CONFIGS)
         self.preview_size = self.PREVIEW_SIZE if len(self.map_names) <= 2 else (520, 293)
         self.selected_index = 0
+        if initial_map is not None:
+            if initial_map not in self.map_names:
+                raise ValueError(f"Selected map is unavailable: {initial_map}")
+            self.selected_index = self.map_names.index(initial_map)
         self.selected_map = self.map_names[self.selected_index]
         self.selection_confirmed = False
         self.back_requested = False

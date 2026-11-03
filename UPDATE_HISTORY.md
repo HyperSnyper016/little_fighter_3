@@ -309,3 +309,12 @@ Append each new release at the bottom with its version and player-facing changes
 ### Changed
 - Expand the Stage Mode HUD with wave, level, XP, and transition details.
 - Organize card artwork into perk and curse categories, with animated curse-card glows.
+
+## v0.26.0 - Refresh character selection and expand Stage Mode
+### Added
+- Add XP orbs, progressive leveling, and ranked perk-card rewards for Stage Mode.
+- Add animated character previews, signature art, moveset details, and roster navigation to character selection.
+- Add tests for character specials, Stage Mode progression, card offers, XP orbs, and scene behavior.
+### Changed
+- Refresh character-select and menu backgrounds and improve map-selection navigation.
+- Convert selected character artwork to optimized image formats.

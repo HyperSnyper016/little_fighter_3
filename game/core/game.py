@@ -25,6 +25,7 @@ class Game:
         self.font = pygame.font.Font(None, 28)
         self.difficulty = DEFAULT_DIFFICULTY
         self.scene = MainMenuScene(self.difficulty)
+        self.audio = self.scene.audio
         self.sprites_root = Path(__file__).resolve().parents[2] / "assets" / "sprites" / "characters"
         self.input_state = FighterInput()
         self.left_tap_time = 0.0
@@ -112,7 +113,7 @@ class Game:
                     else:
                         self.scene.paused = True
                 if self.scene.paused and KEY_BINDINGS.was_pressed("return_to_menu", pressed_actions):
-                    self.scene = MainMenuScene()
+                    self.scene = MainMenuScene(audio=self.audio)
                 elif self.scene.test_mode and KEY_BINDINGS.was_pressed("defeat_enemy", pressed_actions):
                     for fighter in (self.scene.enemy,):
                         if fighter is not None and not fighter.is_dead:
@@ -132,7 +133,13 @@ class Game:
                 )
                 self.difficulty = self.scene.difficulty
             elif isinstance(self.scene, CharacterSelectScene):
+                selected_opponents = self.scene.selected_opponents.copy()
                 self.scene.update(dt, pygame.mouse.get_pos(), mouse_click, mouse_wheel_y)
+                if (
+                    self.scene.opponent_selection
+                    and self.scene.selected_opponents != selected_opponents
+                ):
+                    self.audio.play("menu_accept")
             elif isinstance(self.scene, MapSelectScene):
                 self.scene.update(dt, pygame.mouse.get_pos(), mouse_click)
             else:
@@ -147,13 +154,26 @@ class Game:
                     stage_mode=self.scene.stage_mode_requested,
                     test_mode=self.scene.test_mode_requested,
                 )
+            elif isinstance(self.scene, CharacterSelectScene) and self.scene.back_requested:
+                if self.scene.opponent_selection:
+                    if self.scene.player_character is None:
+                        raise RuntimeError("Opponent selection is missing the chosen player character.")
+                    self.scene = MapSelectScene(
+                        self.scene.player_character,
+                        initial_map=self.scene.map_name,
+                    )
+                else:
+                    self.scene = MainMenuScene(self.difficulty, audio=self.audio)
             elif isinstance(self.scene, CharacterSelectScene) and self.scene.selection_confirmed and self.scene.selected_character:
+                if not self.scene.opponent_selection:
+                    self.audio.play("menu_accept")
                 if self.scene.stage_mode:
                     self.scene = BattleScene(
                         self.scene.selected_character,
                         stage_mode=True,
                         difficulty=self.difficulty,
                     )
+                    self.audio.play("menu_start")
                 elif self.scene.test_mode:
                     self.scene = MapSelectScene(
                         self.scene.selected_character,
@@ -169,6 +189,7 @@ class Game:
                         map_name=self.scene.map_name,
                         difficulty=self.difficulty,
                     )
+                    self.audio.play("menu_start")
                 else:
                     self.scene = MapSelectScene(
                         self.scene.selected_character,
@@ -184,12 +205,14 @@ class Game:
                         initial_character=self.scene.player_character,
                     )
                 elif self.scene.selection_confirmed:
+                    self.audio.play("menu_accept")
                     if self.scene.test_mode:
                         self.scene = BattleScene(
                             self.scene.player_character,
                             test_mode=True,
                             map_name=self.scene.selected_map,
                         )
+                        self.audio.play("menu_start")
                     else:
                         self.scene = CharacterSelectScene(
                             self.sprites_root,
@@ -199,7 +222,7 @@ class Game:
                             map_name=self.scene.selected_map,
                         )
             elif isinstance(self.scene, BattleScene) and self.scene.return_to_menu_requested:
-                self.scene = MainMenuScene(self.difficulty)
+                self.scene = MainMenuScene(self.difficulty, audio=self.audio)
             self.screen.fill(BG_COLOR)
             self.scene.draw(self.screen)
             if isinstance(self.scene, BattleScene) and self.scene.test_mode:

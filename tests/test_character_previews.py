@@ -12,6 +12,7 @@ from game.scenes.character_select_scene import (
     PreviewCompanion,
     PreviewClone,
     PreviewProjectile,
+    SIGNATURE_MAX_SIZE,
 )
 
 
@@ -186,6 +187,33 @@ class CharacterPreviewEffectTests(unittest.TestCase):
             scene._resolve_profile_path(character_directory),
             character_directory / "ashley.png",
         )
+
+    def test_luis_portraits_are_selected_for_both_forms(self) -> None:
+        characters_directory = Path(__file__).resolve().parents[1] / "assets" / "sprites" / "characters"
+        scene = CharacterSelectScene.__new__(CharacterSelectScene)
+        portrait_files = {
+            "luis": "louis.png",
+            "luis_liberated": "liberated_louis.png",
+        }
+
+        for character, portrait in portrait_files.items():
+            with self.subTest(character=character):
+                character_directory = characters_directory / character
+                self.assertEqual(
+                    scene._resolve_profile_path(character_directory),
+                    character_directory / portrait,
+                )
+
+    def test_signature_image_is_loaded_and_fitted_when_present(self) -> None:
+        characters_directory = Path(__file__).resolve().parents[1] / "assets" / "sprites" / "characters"
+        scene = CharacterSelectScene.__new__(CharacterSelectScene)
+
+        signature = scene._load_character_signature(characters_directory / "bandit")
+
+        self.assertIsNotNone(signature)
+        self.assertLessEqual(signature.get_width(), SIGNATURE_MAX_SIZE[0])
+        self.assertLessEqual(signature.get_height(), SIGNATURE_MAX_SIZE[1])
+        self.assertIsNone(scene._load_character_signature(characters_directory / "luis"))
 
 
 if __name__ == "__main__":
